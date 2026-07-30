@@ -12,4 +12,5 @@ The repository-level requirements are defined in
 
 | Version | Status | Date | Summary |
 | --- | --- | --- | --- |
+| [`v0.2.0-dev`](./v0.2.0-dev.md) | Planning | 2026-07-30 | Desktop GUI architecture and acceptance plan |
 | [`v0.1.0-dev`](./v0.1.0-dev.md) | Development MVP | 2026-07-30 | First runnable capture, restore, handoff, and sync loop |

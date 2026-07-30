@@ -154,6 +154,8 @@ Run 和 payload object 不可变；catalog 只是索引，可以从 `refs/runs` 
 
 - [产品需求文档](./docs/PRD.md)
 - [技术规格](./docs/SPEC.md)
+- [GUI 实现规划](./docs/GUI_IMPLEMENTATION_PLAN.md)
+- [GUI 验收计划](./docs/GUI_ACCEPTANCE.md)
 - [开发规则](./AGENTS.md)
 - [版本 Devlogs](./docs/devlogs/README.md)
 - [Manifest v1 Schema](./schemas/manifest-v1.schema.json)
