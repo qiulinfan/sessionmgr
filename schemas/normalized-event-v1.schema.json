@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sessionmgr.dev/schemas/normalized-event-v1.schema.json",
+  "title": "Session Manager Normalized Event v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "session_id",
+    "sequence",
+    "timestamp",
+    "actor",
+    "kind",
+    "summary",
+    "source"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "actor": {
+      "enum": ["user", "assistant", "tool", "system"]
+    },
+    "kind": {
+      "enum": [
+        "message",
+        "tool_call",
+        "tool_result",
+        "decision",
+        "file_change",
+        "verification",
+        "checkpoint",
+        "error"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "checkpoint_id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "object",
+      "required": ["raw_object", "record"],
+      "properties": {
+        "raw_object": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "record": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}
