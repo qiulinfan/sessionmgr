@@ -13,7 +13,7 @@ GUI 将实现为一个本地桌面应用：
 - 桌面壳：Wails v2 稳定版；
 - 后端：现有 Go domain、Git、Capsule、Store 和 adapter；
 - 前端：React + TypeScript + Vite；
-- 新入口：`cmd/sessionmgr-gui/`；
+- 新入口：`gui/` 独立 Go module，避免桌面依赖进入 CLI module；
 - 现有 `sessionmgr` CLI 继续保留；
 - CLI 和 GUI 必须调用同一个 typed service 层，不能复制业务逻辑；
 - 第一阶段继续支持 macOS 和 Linux，Windows 后续验证；
@@ -258,7 +258,7 @@ CLI 与 GUI 的安全策略会漂移。因此 GUI 之前必须先抽出共享 se
 ```mermaid
 flowchart LR
     CLI["cmd/sessionmgr"] --> CLIAdapter["internal/cli"]
-    GUI["cmd/sessionmgr-gui"] --> Bridge["internal/gui"]
+    GUI["gui/ (Wails module)"] --> Bridge["Wails typed bridge"]
     Frontend["React + TypeScript"] <--> Bridge
     CLIAdapter --> Service["internal/service"]
     Bridge --> Service
@@ -274,8 +274,19 @@ flowchart LR
 
 ```text
 cmd/
-├── sessionmgr/
-└── sessionmgr-gui/
+└── sessionmgr/
+gui/
+├── app.go
+├── main.go
+├── go.mod
+├── wails.json
+└── frontend/
+    ├── src/
+    │   ├── App.tsx
+    │   ├── bridge.ts
+    │   └── ...
+    ├── package.json
+    └── vite.config.ts
 internal/
 ├── cli/
 ├── service/
@@ -286,28 +297,11 @@ internal/
 │   ├── runs.go
 │   ├── sync.go
 │   └── operations.go
-├── gui/
-│   ├── app.go
-│   ├── bindings.go
-│   ├── dialogs.go
-│   └── events.go
 └── ...
-frontend/
-├── src/
-│   ├── app/
-│   ├── components/
-│   ├── features/
-│   │   ├── capture/
-│   │   ├── restore/
-│   │   ├── runs/
-│   │   ├── operations/
-│   │   └── stores/
-│   ├── bridge/
-│   ├── test/
-│   └── styles/
-├── package.json
-└── vite.config.ts
 ```
+
+`gui/` 使用独立 Go module，并通过本地 `replace` 引用根 module。这样 Wails、
+WebView 和 CGO 依赖不会进入 CLI/Core 的 module graph。
 
 ### 5.3 Service API
 
@@ -707,9 +701,12 @@ GUI 的每个完成页提供：
 | 验收污染真实数据 | 强制 sandbox home 和 fixture Codex root |
 | GUI native toolchain 污染 CLI | 独立入口/build target，CI 持续验证 CLI 无 CGO |
 
-## 13. 仍需在实现 spike 中确认
+## 13. Spike 结果和仍需确认事项
 
-- Wails v2 精确版本和与当前 Go/Node/Vite 的兼容矩阵；
+- 已确认：Wails v2.12.0、React 18.3.1、Vite 8.1.5、
+  TypeScript 5.7.3 和 Vitest 4.1.10 可在 macOS arm64 + Go 1.26.5 +
+  Node 24.18.0 上完成 build/test/native launch；仓库最低 Go 1.24 仍需 CI
+  matrix 单独复验；
 - macOS signing/notarization 的发布账号与流程；
 - Linux baseline 和最终包格式；
 - Wails event 在窗口 reload 后的 catch-up 语义；

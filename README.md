@@ -19,6 +19,10 @@ Run = Workspace checkpoints + Agent sessions + Runtime context + Lineage
 - Safety：阻止路径逃逸、覆盖、危险 symlink 和携带高置信度秘密的远程 push；
 - Catalog：使用可重建的 SQLite 索引浏览 Run、机器、Agent 和 lineage。
 
+`v0.2.0-dev` 还包含一个 Wails + React 桌面 GUI 原型，用于可视化验收只读
+Dashboard 和 Capture preflight。Preview 模式只读取内置 fixture，不会修改真实
+Session Manager home、Codex session 或工作区。
+
 ## 环境要求
 
 - Go 1.24 或更高版本；
@@ -41,6 +45,17 @@ make check
 CGO_ENABLED=0 go build -trimpath -o bin/sessionmgr ./cmd/sessionmgr
 CGO_ENABLED=0 go test ./...
 ```
+
+GUI 开发预览（需要 Wails v2.12 和 Node.js）：
+
+```bash
+cd gui/frontend && npm ci
+cd ..
+SESSIONMGR_GUI_PREVIEW=1 wails dev
+```
+
+前端也可以单独启动：`cd gui/frontend && npm run dev`。没有 Wails bridge 时会自动
+使用同一套明确标注的 Preview 数据。
 
 ## 快速开始
 
