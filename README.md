@@ -1,177 +1,127 @@
 # sessionmgr
 
-Session Manager 是一个本地优先、跨机器、跨 Agent 平台的 AI 编程工作留档与迁移工具。
+`sessionmgr` 把本机 Codex sessions 导出成可以由 Git 管理的 Markdown 文件。
 
-它保存的不是孤立的聊天记录，而是一次完整的 Agent Run：
+它只做三件事：
 
-```text
-Run = Workspace checkpoints + Agent sessions + Runtime context + Lineage
+1. 记住一个用户指定的导出目录；
+2. 按规范化后的 Git 远程仓库组织 sessions；
+3. 每次只显示这次真正导出的变化。
+
+## GUI
+
+直接运行程序或执行：
+
+```bash
+sessionmgr
+# 等价于
+sessionmgr gui
 ```
 
-当前 MVP 已实现可运行的 CLI 闭环：
+程序会在随机 loopback 端口启动本地页面并打开默认浏览器。GUI 可以：
 
-- Capture：保存本地 commits、staged/unstaged 修改、untracked 文件和 Codex 原始 session；
-- Verify：使用 SHA-256 对 manifest 和所有 payload object 做离线校验；
-- Restore：在隔离的新 worktree 中依次恢复 commits、index、worktree 和 untracked 文件；
-- Native Resume：实验性导入 Codex JSONL session，失败时保留 handoff 降级路径；
-- Handoff：生成事实、推断和建议相分离的通用 Markdown；
-- Sync：支持本地目录 Store，以及通过 SSH 传输的 `tar → zstd → age` 加密 Capsule；
-- Safety：阻止路径逃逸、覆盖、危险 symlink 和携带高置信度秘密的远程 push；
-- Catalog：使用可重建的 SQLite 索引浏览 Run、机器、Agent 和 lineage。
+- 选择、保存并恢复导出目录；
+- 导出全部 Git 仓库或当前 Git 仓库的 sessions；
+- 只显示本次新增、更新或重命名的 Markdown 快照；
+- 没有变化时显示明确的“已经是最新状态”。
 
-`v0.2.0-dev` 还包含一个 Wails + React 桌面 GUI 原型，用于可视化验收只读
-Dashboard 和 Capture preflight。Preview 模式只读取内置 fixture，不会修改真实
-Session Manager home、Codex session 或工作区。
+目录选择器在 macOS 使用系统对话框，在 Windows 使用 Folder Browser，在 Linux
+优先使用 Zenity 或 KDialog；任何平台都可以直接输入路径。
 
-## 环境要求
+GUI 只监听 `127.0.0.1`/`::1`，API 使用每次启动随机生成的 token。页面和 API 都
+内嵌在同一个 Go 二进制中，不需要 Node、WebView 或单独的服务。
 
-- Go 1.24 或更高版本；
-- Git；
-- macOS 或 Linux；
-- 使用 SSH Store 时需要 `ssh`、`scp`，以及已配置的 SSH 登录能力。
+## CLI
 
-SQLite 使用纯 Go 实现，构建不依赖 CGO。
+配置一次导出目录：
 
-## 构建与测试
+```bash
+sessionmgr config set-directory /path/to/session-archive
+sessionmgr config show
+```
+
+以后直接导出：
+
+```bash
+sessionmgr export
+```
+
+默认导出全部能够识别 hosted Git remote 的 sessions。也可以缩小范围：
+
+```bash
+sessionmgr export --repo /path/to/repo
+sessionmgr export --session <codex-session-id>
+```
+
+临时指定并持久保存一个新目录：
+
+```bash
+sessionmgr export --directory /new/archive/path
+```
+
+CLI 的人类输出只包含本次 changeset：`NEW`、`UPDATED`、`RENAMED`。重复执行且没有
+变化时只输出：
+
+```text
+No changes.
+```
+
+`export`、`config`、`list` 支持 `--json`。`archive` 仍作为 `export` 的兼容别名。
+
+## 持久配置
+
+配置使用 schema v1 JSON，位置来自 Go 的系统标准配置目录：
+
+- macOS：`~/Library/Application Support/sessionmgr/config.json`
+- Linux：`$XDG_CONFIG_HOME/sessionmgr/config.json`，通常是 `~/.config/sessionmgr/config.json`
+- Windows：`%AppData%\sessionmgr\config.json`
+
+测试或便携环境可以用 `SESSIONMGR_CONFIG=/custom/config.json` 覆盖配置文件位置。
+
+## 文件模型
+
+```text
+<configured-directory>/
+└── repositories/
+    └── <repo-name>--<repository-sha256>/
+        ├── repository.md
+        └── sessions/
+            └── <codex-session-id>/
+                └── <session-title>--<snapshot-sha256>.md
+```
+
+- repository key 来自去掉协议和凭据后的 hosted Git remote；同一仓库的 SSH 与
+  HTTPS clone 使用同一个键。
+- 没有 hosted remote 的 session 不会被猜测归类，而是明确跳过并给出 warning。
+- session 内容更新或名称改变时新增一个不可变 hash 文件。
+- 相同快照重复导出是 no-op；不同机器产生的文件可由普通 Git 合并。
+- 文件名保留当前 session 标题，完整 hash 负责唯一性。
+
+## 内容与安全边界
+
+Markdown 保存用户/助手对话、时间、Git commit/branch 和少量计数。它不复制
+developer/system 指令、tool 参数、tool 输出、认证数据库、内部 reasoning 或环境变量
+值；常见 token、私钥、credential URL 和 secret assignment 会替换成明确的
+`[REDACTED ...]`。
+
+原始 Codex JSONL 始终只读并保留在 Codex home。生成内容仍应在提交到公开 Git
+仓库前人工审阅，因为自由文本可能包含无法自动识别的敏感信息。
+
+## 构建与验证
+
+要求 Go 1.24 或更高版本，以及 Git：
 
 ```bash
 make check
-./bin/sessionmgr version
+make dist
 ```
 
-也可以直接运行：
+`make dist` 生成 macOS、Linux、Windows 的 AMD64/ARM64 单文件程序。仓库内也保留
+一个把导出目录设为本仓库 `sessions/` 的便捷脚本：
 
 ```bash
-CGO_ENABLED=0 go build -trimpath -o bin/sessionmgr ./cmd/sessionmgr
-CGO_ENABLED=0 go test ./...
+./scripts/export-codex-sessions
 ```
 
-GUI 开发预览（需要 Wails v2.12 和 Node.js）：
-
-```bash
-cd gui/frontend && npm ci
-cd ..
-SESSIONMGR_GUI_PREVIEW=1 wails dev
-```
-
-前端也可以单独启动：`cd gui/frontend && npm run dev`。没有 Wails bridge 时会自动
-使用同一套明确标注的 Preview 数据。
-
-## 快速开始
-
-初始化本机目录、machine ID 和 age identity：
-
-```bash
-sessionmgr init
-sessionmgr doctor
-```
-
-在 Git worktree 中归档最近的 Codex session：
-
-```bash
-sessionmgr capture --latest --title "Implement parser"
-```
-
-显式加入 ignored 文件：
-
-```bash
-sessionmgr capture --latest --include-ignored 'fixtures/private/**'
-```
-
-浏览与验证：
-
-```bash
-sessionmgr list
-sessionmgr show <run-id>
-sessionmgr verify <run-id> --deep
-```
-
-默认恢复到仓库旁边的 `.sessionmgr-worktrees/`：
-
-```bash
-sessionmgr restore <run-id> --repo /path/to/repo
-```
-
-尝试实验性的 Codex 原生恢复：
-
-```bash
-sessionmgr restore <run-id> --repo /path/to/repo --native-session
-```
-
-单独生成 handoff：
-
-```bash
-sessionmgr handoff <run-id> --to generic
-```
-
-所有主要命令都支持 `--json`，进度和错误写入 stderr。
-
-## Store 配置
-
-默认配置位于 `~/.sessionmgr/config.toml`，也可以通过 `SESSIONMGR_HOME` 覆盖根目录。
-
-目录 Store 示例：
-
-```toml
-[[stores]]
-name = "portable-disk"
-type = "file"
-url = "/Volumes/Backup/sessionmgr-store"
-```
-
-SSH Store 示例：
-
-```toml
-[[stores]]
-name = "personal-ssh"
-type = "ssh"
-url = "ssh://devbox.example.com/~/sessionmgr-store"
-age_recipients = ["age1..."]
-```
-
-`sessionmgr init` 会输出本机 age recipient。把需要解密 Capsule 的设备 recipient 加入 Store 配置，然后执行：
-
-```bash
-sessionmgr push <run-id> --store personal-ssh
-sessionmgr pull --store personal-ssh
-```
-
-SSH push 会先上传加密 Capsule，验证完成后才原子更新 Run ref。目标端的 `~/.sessionmgr/keys/identity.txt` 不会被上传。
-
-## 数据目录
-
-```text
-~/.sessionmgr/
-├── config.toml
-├── catalog.sqlite
-├── machine-id
-├── objects/
-├── runs/
-├── refs/
-├── keys/
-├── tmp/
-├── handoff/
-└── operation-reports/
-```
-
-Run 和 payload object 不可变；catalog 只是索引，可以从 `refs/runs` 和 manifest 重建。
-
-## 当前能力边界
-
-- MVP 支持一个 Run 对应一个主 Git workspace；
-- Codex 是首个无损 session adapter；
-- Codex 没有稳定的跨版本导入协议，因此 native restore 明确标记为 experimental；
-- 不迁移 Agent 登录、Git credentials、环境变量或设备身份数据库；
-- 不支持两个设备同时编辑并自动合并同一个原生 session；
-- submodule、Git LFS、shallow clone 和 sparse checkout 会产生 capability warning。
-
-## 文档
-
-- [产品需求文档](./docs/PRD.md)
-- [技术规格](./docs/SPEC.md)
-- [GUI 实现规划](./docs/GUI_IMPLEMENTATION_PLAN.md)
-- [GUI 验收计划](./docs/GUI_ACCEPTANCE.md)
-- [开发规则](./AGENTS.md)
-- [版本 Devlogs](./docs/devlogs/README.md)
-- [Manifest v1 Schema](./schemas/manifest-v1.schema.json)
-- [Normalized Event v1 Schema](./schemas/normalized-event-v1.schema.json)
+产品契约见 [PRD](./docs/PRD.md)，格式与算法见 [SPEC](./docs/SPEC.md)，工程证据见
+[v0.3 devlog](./docs/devlogs/v0.3.0-dev.md)。
