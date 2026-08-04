@@ -97,9 +97,17 @@ No changes.
 - 相同快照重复导出是 no-op；不同机器产生的文件可由普通 Git 合并。
 - 文件名保留当前 session 标题，完整 hash 负责唯一性。
 
+导出不会锁住 Codex 的源文件。所有 JSONL 共用一次短暂稳定观察窗口；在窗口内仍在
+变化、读取时被替换、被操作系统报告为锁定，或尾部记录不完整的 session 会记入 JSON
+结果的 `busy` 计数并留到下次处理。`busy` 不产生 warning 或失败退出码。
+
+每个 Markdown 快照包含明确的时间轴：创建时间、第一条和最后一条可读消息时间、最后
+一条源事件时间、标题更新时间，以及用户/助手消息数量。正文保持源文件顺序，并在每条
+消息标题上显示其原始 UTC 时间；源记录没有 timestamp 时不会使用文件时间猜测。
+
 ## 内容与安全边界
 
-Markdown 保存用户/助手对话、时间、Git commit/branch 和少量计数。它不复制
+Markdown 保存用户/助手对话、完整消息时间轴、Git commit/branch 和少量计数。它不复制
 developer/system 指令、tool 参数、tool 输出、认证数据库、内部 reasoning 或环境变量
 值；常见 token、私钥、credential URL 和 secret assignment 会替换成明确的
 `[REDACTED ...]`。

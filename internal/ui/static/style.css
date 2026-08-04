@@ -112,6 +112,7 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .counter { display: grid; place-items: center; min-width: 42px; height: 42px; border-radius: 50%; background: var(--ink); color: white; font-weight: 700; }
 .empty { margin-top: 24px; padding: 34px 20px; border: 1px dashed var(--line); border-radius: 16px; color: var(--muted); text-align: center; }
 .empty.success { color: var(--green); background: rgba(220, 236, 228, .45); }
+.empty.busy { color: var(--blue); background: rgba(55, 108, 165, .08); }
 .empty.error { color: #9d3428; background: rgba(157, 52, 40, .06); }
 .hidden { display: none !important; }
 .warnings { margin-top: 18px; padding: 12px 16px; border-left: 3px solid var(--amber); color: #7b4813; background: rgba(217, 143, 57, .09); font-size: 13px; }

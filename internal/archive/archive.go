@@ -62,12 +62,38 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, err
 		}
 	}
+	window := opts.StabilityWindow
+	if window == 0 {
+		window = defaultStabilityWindow
+	} else if window < 0 {
+		window = 0
+	}
+	stable, busy, observationIssues, observeErr := observeStableSources(ctx, files, window)
+	if observeErr != nil {
+		return result, observeErr
+	}
+	result.Busy += busy
+	for _, issue := range observationIssues {
+		result.Skipped++
+		result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(issue.path), issue.err))
+	}
 	for _, path := range files {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		raw, readErr := readStable(ctx, path)
+		expected, ok := stable[path]
+		if !ok {
+			continue
+		}
+		raw, readErr := readObservedSource(ctx, path, expected)
 		if readErr != nil {
+			if errors.Is(readErr, context.Canceled) || errors.Is(readErr, context.DeadlineExceeded) {
+				return result, readErr
+			}
+			if sourceErrorIsBusy(readErr) {
+				result.Busy++
+				continue
+			}
 			result.Skipped++
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(path), readErr))
 			continue
@@ -121,7 +147,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			result.Unchanged++
 		}
 	}
-	if opts.SessionID != "" && result.Matched == 0 {
+	if opts.SessionID != "" && result.Matched == 0 && result.Busy == 0 {
 		return result, fmt.Errorf("Codex session %q was not found for the selected repository scope", opts.SessionID)
 	}
 	if result.Skipped > 0 {

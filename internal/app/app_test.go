@@ -75,3 +75,35 @@ func TestConfiguredExportShowsOnlyCurrentChanges(t *testing.T) {
 		t.Fatalf("unexpected list JSON: %s", stdout.String())
 	}
 }
+
+func TestCLIReportsBusySessionWithoutFailing(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	source := filepath.Join(codexHome, "sessions", "2026", "08", "05", "active.jsonl")
+	if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte(`{"timestamp":"2026-08-05T01:00:00Z"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SESSIONMGR_CONFIG", filepath.Join(root, "config.json"))
+	var stdout, stderr bytes.Buffer
+	code, err := Run(context.Background(), []string{
+		"export", "--directory", filepath.Join(root, "exports"),
+		"--codex-home", codexHome, "--json",
+	}, &stdout, &stderr)
+	if err != nil || code != 0 {
+		t.Fatalf("busy export failed: code=%d err=%v stderr=%s", code, err, stderr.String())
+	}
+	var result struct {
+		Busy    int `json:"busy"`
+		Skipped int `json:"skipped"`
+		Created int `json:"created"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Busy != 1 || result.Skipped != 0 || result.Created != 0 {
+		t.Fatalf("unexpected busy JSON: %s", stdout.String())
+	}
+}

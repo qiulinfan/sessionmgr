@@ -68,13 +68,13 @@ host 转小写；path 保留大小写；协议、userinfo、query、fragment 和
 local/file/empty remote 不生成 key。若 session metadata 没有 remote，转换器只允许从
 其仍可访问的 CWD 查询 hosted `remote.origin.url`；仍没有则跳过。
 
-## 4. Snapshot hash v1
+## 4. Snapshot hash / renderer v2
 
 ```text
 source_hash = sha256(raw_jsonl_bytes)
 
 snapshot_hash = sha256(
-  "sessionmgr-markdown-v1\0" +
+  "sessionmgr-markdown-v2\0" +
   repository_key + "\0" +
   source_hash + "\0" +
   redacted_display_title + "\0" +
@@ -99,9 +99,16 @@ scalars。
 `repository.md` schema v1：`schema_version`、`repository_key`、`repository_name`、
 `canonical_remote`。
 
-snapshot schema v1：repository/session identity、snapshot/source hash、时间、Codex/Git
-hints，以及 `source_records`、`malformed_records`、`omitted_records`、`tool_calls`、
-`redactions` 计数。
+snapshot schema v1：repository/session identity、snapshot/source hash、Codex/Git hints，
+以及以下 renderer-v2 字段：
+
+- `created_at`、`first_message_at`、`last_message_at`、`last_event_at`、
+  `title_updated_at` 与用于排序的总体 `updated_at`；
+- `source_records`、`malformed_records`、`omitted_records`、`tool_calls`、`messages`、
+  `user_messages`、`assistant_messages` 与 `redactions` 计数。
+
+时间字段没有可信源 timestamp 时省略。renderer v1 的 `started_at` 仍可由读取器检查；
+renderer v2 不修改或删除任何既有 v1 文件。
 
 ## 6. Codex parsing
 
@@ -115,7 +122,30 @@ hints，以及 `source_records`、`malformed_records`、`omitted_records`、`too
 tool arguments/results、developer/system message 和 reasoning payload 不进入正文。raw
 bytes 保留在 Codex home；导出器只读源数据。
 
-## 7. Incremental changeset
+`created_at` 来自 `session_meta`；`first_message_at`/`last_message_at` 是所选可读消息中
+最早/最晚的原始 timestamp；`last_event_at` 是所有可解析源记录中的最大 timestamp。
+消息正文保持 JSONL 文件顺序，标题格式为 `序号 · Role · timestamp`；无 timestamp
+时只省略时间，不使用 filesystem metadata 补值。
+
+## 7. Active-session stability
+
+discovery 完成后，对所有候选文件执行一次批量观察：
+
+1. 使用 `Lstat` 记录 regular-file identity、size 与 mtime；
+2. 全部文件共享等待 350ms；
+3. 再次记录 fingerprint；变化或消失的 source 记为 `busy`；
+4. 打开稳定文件，并确认 handle identity 与观察对象相同；
+5. 读取后同时检查 handle 与 pathname fingerprint；
+6. 验证最后一个非空 JSONL record 是完整 JSON；
+7. 任一步出现 source mutation、replacement、OS sharing/lock violation 或 incomplete
+   tail 时记为 `busy`，不解析和发布。
+
+该算法不主动申请文件锁。Unix advisory lock 不是可靠 liveness signal；Windows
+sharing/lock violation 会显式映射为 `busy`。permission 和其他 I/O 错误仍是 `skipped`。
+`busy` 不加入 warnings，也不使命令失败；human output 仍只显示 changeset，JSON result
+增加 `busy` counter。
+
+## 8. Incremental changeset
 
 导出开始时一次读取目标目录内已有 snapshot frontmatter，并按
 `repository_key + session_id` 建立 history map。
@@ -130,9 +160,9 @@ otherwise                                          -> updated
 ```
 
 publish 返回 unchanged 时不进入 changeset。human CLI 与 GUI 只遍历 `changes[]`；扫描、
-matched、unchanged 和 skipped 计数仍保留在 JSON result 供自动化诊断。
+matched、unchanged、busy 和 skipped 计数仍保留在 JSON result 供自动化诊断。
 
-## 8. Immutable publication
+## 9. Immutable publication
 
 1. 在目标目录创建临时文件；
 2. 写入、`fsync`、关闭；
@@ -142,7 +172,7 @@ matched、unchanged 和 skipped 计数仍保留在 JSON result 供自动化诊�
 
 该流程不静默覆盖现有 snapshot、repository descriptor 或用户文件。
 
-## 9. Local GUI
+## 10. Local GUI
 
 GUI 使用标准库 `net/http` 和 `embed`：
 
@@ -175,7 +205,7 @@ API：
 - `POST /api/pick-directory`：调用平台目录对话框；
 - `POST /api/export`：执行 all/current scope 并返回当前 changeset。
 
-## 10. 平台适配
+## 11. 平台适配
 
 | 能力 | macOS | Linux | Windows |
 | --- | --- | --- | --- |
@@ -186,10 +216,13 @@ API：
 核心只依赖 Go standard library 和运行时 Git。`make cross-check` 编译 darwin/arm64、
 linux/amd64、windows/amd64；`make dist` 额外产出三系统 AMD64/ARM64 binaries。
 
-## 11. 兼容性
+## 12. 兼容性
 
 v0.3 是从旧 Run/Capsule 产品有意重置的 breaking version，不读取旧 manifest、Store、
 SQLite、encryption 或 GUI 状态。旧 `~/.sessionmgr` 保持原样。
 
 同一 v0.3 development line 的早期 `archive --output` 用法继续工作，但默认目录现在来自
 持久配置；首次使用必须通过 GUI、`config set-directory` 或 `export --directory` 指定。
+
+renderer v2 为既有 source 产生新的 immutable snapshot hash；第一次使用 v2 时，旧 v1
+session 可能各新增一个 `updated` changeset。旧文件仍可列出且不会被重写。

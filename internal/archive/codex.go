@@ -5,13 +5,30 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 )
+
+const defaultStabilityWindow = 350 * time.Millisecond
+
+var errSourceBusy = errors.New("session source is busy")
+
+type sourceFingerprint struct {
+	size    int64
+	modTime time.Time
+	info    os.FileInfo
+}
+
+type sourceIssue struct {
+	path string
+	err  error
+}
 
 type titleRecord struct {
 	Title     string
@@ -84,28 +101,154 @@ func loadTitles(home string) (map[string]titleRecord, error) {
 	return result, scanner.Err()
 }
 
-func readStable(ctx context.Context, path string) ([]byte, error) {
-	for attempt := 0; attempt < 2; attempt++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		before, err := os.Stat(path)
+func observeStableSources(ctx context.Context, paths []string, window time.Duration) (map[string]sourceFingerprint, int, []sourceIssue, error) {
+	first := make(map[string]sourceFingerprint, len(paths))
+	issues := make([]sourceIssue, 0)
+	busy := 0
+	for _, path := range paths {
+		fingerprint, err := fingerprintSource(path)
 		if err != nil {
-			return nil, err
+			if sourceErrorIsBusy(err) {
+				busy++
+			} else {
+				issues = append(issues, sourceIssue{path: path, err: err})
+			}
+			continue
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		after, err := os.Stat(path)
-		if err != nil {
-			return nil, err
-		}
-		if before.Size() == after.Size() && before.ModTime() == after.ModTime() {
-			return data, nil
+		first[path] = fingerprint
+	}
+	if len(first) == 0 {
+		return map[string]sourceFingerprint{}, busy, issues, nil
+	}
+	if window > 0 {
+		timer := time.NewTimer(window)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, busy, issues, ctx.Err()
+		case <-timer.C:
 		}
 	}
-	return nil, fmt.Errorf("source changed while being read")
+	stable := make(map[string]sourceFingerprint, len(first))
+	for _, path := range paths {
+		before, ok := first[path]
+		if !ok {
+			continue
+		}
+		after, err := fingerprintSource(path)
+		if err != nil {
+			if sourceErrorIsBusy(err) {
+				busy++
+			} else {
+				issues = append(issues, sourceIssue{path: path, err: err})
+			}
+			continue
+		}
+		if !sameFingerprint(before, after) {
+			busy++
+			continue
+		}
+		stable[path] = after
+	}
+	return stable, busy, issues, nil
+}
+
+func fingerprintSource(path string) (sourceFingerprint, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return sourceFingerprint{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return sourceFingerprint{}, fmt.Errorf("session source is not a regular file")
+	}
+	return sourceFingerprint{size: info.Size(), modTime: info.ModTime(), info: info}, nil
+}
+
+func readObservedSource(ctx context.Context, path string, expected sourceFingerprint) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	before, err := fingerprintSource(path)
+	if err != nil {
+		if sourceErrorIsBusy(err) {
+			return nil, fmt.Errorf("%w: %v", errSourceBusy, err)
+		}
+		return nil, err
+	}
+	if !sameFingerprint(expected, before) {
+		return nil, fmt.Errorf("%w: source changed before it was opened", errSourceBusy)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		if sourceErrorIsBusy(err) {
+			return nil, fmt.Errorf("%w: %v", errSourceBusy, err)
+		}
+		return nil, err
+	}
+	openedInfo, err := file.Stat()
+	if err != nil {
+		file.Close()
+		if sourceErrorIsBusy(err) {
+			return nil, fmt.Errorf("%w: %v", errSourceBusy, err)
+		}
+		return nil, err
+	}
+	opened := sourceFingerprint{size: openedInfo.Size(), modTime: openedInfo.ModTime(), info: openedInfo}
+	if !sameFingerprint(expected, opened) {
+		file.Close()
+		return nil, fmt.Errorf("%w: source was replaced while being opened", errSourceBusy)
+	}
+	data, readErr := io.ReadAll(file)
+	handleInfo, statErr := file.Stat()
+	closeErr := file.Close()
+	if readErr != nil {
+		if sourceErrorIsBusy(readErr) {
+			return nil, fmt.Errorf("%w: %v", errSourceBusy, readErr)
+		}
+		return nil, readErr
+	}
+	if statErr != nil {
+		if sourceErrorIsBusy(statErr) {
+			return nil, fmt.Errorf("%w: %v", errSourceBusy, statErr)
+		}
+		return nil, statErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	handleAfter := sourceFingerprint{size: handleInfo.Size(), modTime: handleInfo.ModTime(), info: handleInfo}
+	pathAfter, err := fingerprintSource(path)
+	if err != nil {
+		if sourceErrorIsBusy(err) {
+			return nil, fmt.Errorf("%w: %v", errSourceBusy, err)
+		}
+		return nil, err
+	}
+	if !sameFingerprint(expected, handleAfter) || !sameFingerprint(expected, pathAfter) {
+		return nil, fmt.Errorf("%w: source changed while being read", errSourceBusy)
+	}
+	if !completeJSONL(data) {
+		return nil, fmt.Errorf("%w: source ends with an incomplete JSONL record", errSourceBusy)
+	}
+	return data, nil
+}
+
+func sameFingerprint(left, right sourceFingerprint) bool {
+	return left.size == right.size && left.modTime.Equal(right.modTime) && os.SameFile(left.info, right.info)
+}
+
+func completeJSONL(data []byte) bool {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return false
+	}
+	lastBreak := bytes.LastIndexByte(trimmed, '\n')
+	lastRecord := trimmed[lastBreak+1:]
+	return json.Valid(lastRecord)
+}
+
+func sourceErrorIsBusy(err error) bool {
+	return errors.Is(err, errSourceBusy) || errors.Is(err, os.ErrNotExist) || isPlatformBusyError(err)
 }
 
 func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) (Session, error) {
@@ -121,8 +264,8 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 			continue
 		}
 		timestamp := parseTimestamp(stringValue(record["timestamp"]))
-		if timestamp.After(result.UpdatedAt) {
-			result.UpdatedAt = timestamp
+		if timestamp.After(result.LastEventAt) {
+			result.LastEventAt = timestamp
 		}
 		recordType := stringValue(record["type"])
 		payload := mapValue(record["payload"])
@@ -131,7 +274,7 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 			result.ID = firstString(payload["id"], payload["session_id"])
 			result.CWD = stringValue(payload["cwd"])
 			result.CodexVersion = firstString(payload["cli_version"], payload["version"])
-			result.StartedAt = firstTime(payload["timestamp"], record["timestamp"])
+			result.CreatedAt = firstTime(payload["timestamp"], record["timestamp"])
 			git := mapValue(payload["git"])
 			result.Remote = stringValue(git["repository_url"])
 			result.Commit = stringValue(git["commit_hash"])
@@ -171,6 +314,23 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 		result.Messages = responseMessages
 	} else {
 		result.Messages = eventMessages
+	}
+	for _, message := range result.Messages {
+		switch message.Role {
+		case "user":
+			result.UserMessages++
+		case "assistant":
+			result.AssistantMessages++
+		}
+		if message.Timestamp.IsZero() {
+			continue
+		}
+		if result.FirstMessageAt.IsZero() || message.Timestamp.Before(result.FirstMessageAt) {
+			result.FirstMessageAt = message.Timestamp
+		}
+		if message.Timestamp.After(result.LastMessageAt) {
+			result.LastMessageAt = message.Timestamp
+		}
 	}
 	result.OmittedCount = result.RecordCount - len(result.Messages)
 	if result.OmittedCount < 0 {

@@ -4,7 +4,7 @@ import "time"
 
 const (
 	SchemaVersion   = 1
-	RendererVersion = 1
+	RendererVersion = 2
 )
 
 type Options struct {
@@ -13,6 +13,11 @@ type Options struct {
 	Repo      string
 	AllRepos  bool
 	SessionID string
+
+	// StabilityWindow is the shared quiet period used before reading discovered
+	// session files. Zero selects the production default; a negative value
+	// disables the delay for deterministic fixtures that cannot mutate.
+	StabilityWindow time.Duration
 }
 
 type Result struct {
@@ -21,6 +26,7 @@ type Result struct {
 	Matched       int      `json:"matched"`
 	Created       int      `json:"created"`
 	Unchanged     int      `json:"unchanged"`
+	Busy          int      `json:"busy"`
 	Skipped       int      `json:"skipped"`
 	Output        string   `json:"output"`
 	Changes       []Change `json:"changes"`
@@ -52,22 +58,26 @@ type Message struct {
 }
 
 type Session struct {
-	ID             string
-	Title          string
-	TitleUpdatedAt time.Time
-	CWD            string
-	Remote         string
-	Commit         string
-	Branch         string
-	CodexVersion   string
-	StartedAt      time.Time
-	UpdatedAt      time.Time
-	RawHash        string
-	RecordCount    int
-	MalformedCount int
-	OmittedCount   int
-	ToolCallCount  int
-	Messages       []Message
+	ID                string
+	Title             string
+	TitleUpdatedAt    time.Time
+	CWD               string
+	Remote            string
+	Commit            string
+	Branch            string
+	CodexVersion      string
+	CreatedAt         time.Time
+	FirstMessageAt    time.Time
+	LastMessageAt     time.Time
+	LastEventAt       time.Time
+	RawHash           string
+	RecordCount       int
+	MalformedCount    int
+	OmittedCount      int
+	ToolCallCount     int
+	UserMessages      int
+	AssistantMessages int
+	Messages          []Message
 }
 
 type Snapshot struct {

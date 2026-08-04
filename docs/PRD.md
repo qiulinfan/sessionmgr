@@ -53,7 +53,10 @@ hosted Git remote key -> set(session ID -> set(Markdown snapshot hash))
 
 - 扫描 Codex `sessions/` 与 `archived_sessions/` JSONL；
 - 支持全部仓库、当前/指定仓库、指定 session 三种范围；
-- 活跃文件读取前后必须保持 size 和 mtime 一致；
+- 全部候选文件必须共享一个短暂稳定窗口，而不是逐文件等待；
+- 活跃文件在观察与读取前后必须保持 identity、size 和 mtime 一致；
+- locked、变化中、被替换/移动或尾部 JSONL 不完整的文件必须标记 `busy`，本次静默忽略；
+- `busy` 必须在 JSON 计数中可观察，但不得产生 warning 或非零退出码；
 - 不得修改、移动或删除 Codex 源文件。
 
 ### FR-3 Repository identity
@@ -66,8 +69,11 @@ hosted Git remote key -> set(session ID -> set(Markdown snapshot hash))
 
 ### FR-4 Markdown export
 
-- 保存 session 名称、ID、源 hash、快照 hash、时间、Codex 版本和 Git 提示；
+- 保存 session 名称、ID、源 hash、快照 hash、Codex 版本和 Git 提示；
+- 分别保存创建、首条消息、末条消息、末事件、标题更新和总体更新时间；
+- 保存总消息、用户消息和助手消息数量；
 - 保存用户与助手的可读对话；
+- 每条可读消息必须保留文件顺序与原始 timestamp；缺失时间不得用文件 mtime 猜测；
 - tool 调用只保存数量，不保存参数或输出；
 - developer/system 指令、内部 reasoning、认证数据和环境变量值不得进入导出；
 - 常见私钥、token、credential URL 与 secret assignment 必须脱敏；
@@ -129,3 +135,5 @@ hosted Git remote key -> set(session ID -> set(Markdown snapshot hash))
 10. GUI 拒绝非 loopback listen address。
 11. macOS、Linux、Windows no-CGO 构建全部通过。
 12. 原始 Codex JSONL 在导出前后字节一致。
+13. 稳定窗口内发生变化或尾部不完整的 session 只增加 `busy`，不生成快照且导出成功。
+14. Markdown 明确区分创建、首次/最后对话与最后源事件时间，并为每条消息显示时间点。

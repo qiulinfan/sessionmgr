@@ -87,6 +87,33 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	}
 }
 
+func TestGUIBusySourceIsNotAnError(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	source := filepath.Join(codexHome, "sessions", "2026", "08", "05", "active.jsonl")
+	if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte(`{"timestamp":"2026-08-05T01:00:00Z"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := config.Store{Path: filepath.Join(root, "config.json")}
+	if _, err := store.SetExportDirectory(filepath.Join(root, "exports")); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler("test-token", store, codexHome, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := authenticatedRequest(http.MethodPost, "/api/export", map[string]string{"scope": "all"})
+	result := httptest.NewRecorder()
+	handler.ServeHTTP(result, request)
+	response := decodeExportResponse(t, result)
+	if response.Error != "" || response.Result.Busy != 1 || response.Result.Skipped != 0 {
+		t.Fatalf("busy GUI export was not successful: %+v", response)
+	}
+}
+
 func TestGUIRejectsNonLoopbackListener(t *testing.T) {
 	if err := validateListenAddress("0.0.0.0:8080"); err == nil {
 		t.Fatal("non-loopback GUI listener was accepted")

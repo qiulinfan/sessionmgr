@@ -37,7 +37,7 @@ func TestArchiveCreatesSetOfImmutableSessionSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := Export(context.Background(), Options{CodexHome: codexHome, Output: output, AllRepos: true})
+	result, err := Export(context.Background(), Options{CodexHome: codexHome, Output: output, AllRepos: true, StabilityWindow: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestArchiveCreatesSetOfImmutableSessionSnapshots(t *testing.T) {
 		t.Fatalf("expected one repository set, got %v, %v", repositories, err)
 	}
 
-	repeated, err := Export(context.Background(), Options{CodexHome: codexHome, Output: output, AllRepos: true})
+	repeated, err := Export(context.Background(), Options{CodexHome: codexHome, Output: output, AllRepos: true, StabilityWindow: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestArchiveCreatesSetOfImmutableSessionSnapshots(t *testing.T) {
 		titleLine("session-b", "Other machine", "2026-08-05T02:01:00Z"),
 		titleLine("session-a", "Renamed title", "2026-08-05T03:00:00Z"),
 	)
-	renamed, err := Export(context.Background(), Options{CodexHome: codexHome, Output: output, AllRepos: true})
+	renamed, err := Export(context.Background(), Options{CodexHome: codexHome, Output: output, AllRepos: true, StabilityWindow: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestArchiveCreatesSetOfImmutableSessionSnapshots(t *testing.T) {
 	if err := updatedSource.Close(); err != nil {
 		t.Fatal(err)
 	}
-	updated, err := Export(context.Background(), Options{CodexHome: codexHome, Output: output, AllRepos: true})
+	updated, err := Export(context.Background(), Options{CodexHome: codexHome, Output: output, AllRepos: true, StabilityWindow: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +130,82 @@ func TestArchiveCreatesSetOfImmutableSessionSnapshots(t *testing.T) {
 	}
 	if len(history) != 4 {
 		t.Fatalf("history returned %d snapshots, want 4", len(history))
+	}
+}
+
+func TestExportIgnoresIncompleteBusySessionWithoutError(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	source := filepath.Join(codexHome, "sessions", "2026", "08", "05", "active.jsonl")
+	if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte(`{"timestamp":"2026-08-05T01:00:00Z"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Export(context.Background(), Options{
+		CodexHome: codexHome, Output: filepath.Join(root, "archive"),
+		AllRepos: true, SessionID: "possibly-active", StabilityWindow: -1,
+	})
+	if err != nil {
+		t.Fatalf("busy-only export returned an error: %v", err)
+	}
+	if result.Busy != 1 || result.Skipped != 0 || len(result.Warnings) != 0 || len(result.Changes) != 0 {
+		t.Fatalf("busy source was not silently classified: %+v", result)
+	}
+}
+
+func TestObservationWindowClassifiesMutationAsBusy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "active.jsonl")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutated := make(chan error, 1)
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+		if err == nil {
+			_, err = file.WriteString("{}\n")
+			closeErr := file.Close()
+			if err == nil {
+				err = closeErr
+			}
+		}
+		mutated <- err
+	}()
+	stable, busy, issues, err := observeStableSources(context.Background(), []string{path}, 100*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mutationErr := <-mutated; mutationErr != nil {
+		t.Fatal(mutationErr)
+	}
+	if busy != 1 || len(stable) != 0 || len(issues) != 0 {
+		t.Fatalf("mutation was not classified as busy: stable=%v busy=%d issues=%v", stable, busy, issues)
+	}
+}
+
+func TestParseSessionDerivesConversationTimeline(t *testing.T) {
+	raw := []byte(`{"timestamp":"2026-08-05T01:00:00Z","type":"session_meta","payload":{"id":"timeline"}}
+{"timestamp":"2026-08-05T01:01:00Z","type":"event_msg","payload":{"type":"user_message","message":"question"}}
+{"timestamp":"2026-08-05T01:02:00Z","type":"event_msg","payload":{"type":"agent_message","message":"answer"}}
+{"timestamp":"2026-08-05T01:03:00Z","type":"response_item","payload":{"type":"function_call"}}
+`)
+	session, err := parseSession(raw, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := func(hour, minute int) time.Time {
+		return time.Date(2026, 8, 5, hour, minute, 0, 0, time.UTC)
+	}
+	if !session.CreatedAt.Equal(want(1, 0)) ||
+		!session.FirstMessageAt.Equal(want(1, 1)) ||
+		!session.LastMessageAt.Equal(want(1, 2)) ||
+		!session.LastEventAt.Equal(want(1, 3)) {
+		t.Fatalf("unexpected timeline: %+v", session)
+	}
+	if session.UserMessages != 1 || session.AssistantMessages != 1 || len(session.Messages) != 2 {
+		t.Fatalf("unexpected message counts: %+v", session)
 	}
 }
 

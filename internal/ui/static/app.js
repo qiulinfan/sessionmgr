@@ -39,10 +39,16 @@ function renderChanges(payload) {
   changes.replaceChildren();
   warnings.replaceChildren();
   const items = payload.result.changes || [];
+  const busy = payload.result.busy || 0;
   resultCount.textContent = String(items.length);
   if (items.length === 0) {
-    message.className = "empty success";
-    message.textContent = "没有变化，导出目录已经是最新状态。";
+    if (busy > 0) {
+      message.className = "empty busy";
+      message.textContent = `没有导出变化；${busy} 个正在写入的 session 已留到下次。`;
+    } else {
+      message.className = "empty success";
+      message.textContent = "没有变化，导出目录已经是最新状态。";
+    }
   } else {
     message.className = "hidden";
     for (const item of items) {

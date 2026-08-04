@@ -36,7 +36,7 @@ func makeSnapshot(repo Repository, session Session) Snapshot {
 		session.Messages[index].Text, count = redact(session.Messages[index].Text)
 		redactions += count
 	}
-	updated := session.UpdatedAt
+	updated := session.LastEventAt
 	if session.TitleUpdatedAt.After(updated) {
 		updated = session.TitleUpdatedAt
 	}
@@ -76,7 +76,10 @@ func renderSnapshot(snapshot Snapshot) []byte {
 	fmt.Fprintf(&output, "session_title: %s\n", quote(session.Title))
 	fmt.Fprintf(&output, "snapshot_hash: %s\n", quote(snapshot.Hash))
 	fmt.Fprintf(&output, "source_hash: %s\n", quote(session.RawHash))
-	writeTime(&output, "started_at", session.StartedAt)
+	writeTime(&output, "created_at", session.CreatedAt)
+	writeTime(&output, "first_message_at", session.FirstMessageAt)
+	writeTime(&output, "last_message_at", session.LastMessageAt)
+	writeTime(&output, "last_event_at", session.LastEventAt)
 	writeTime(&output, "updated_at", snapshot.SourceUpdate)
 	writeTime(&output, "title_updated_at", session.TitleUpdatedAt)
 	if session.CodexVersion != "" {
@@ -92,6 +95,9 @@ func renderSnapshot(snapshot Snapshot) []byte {
 	fmt.Fprintf(&output, "malformed_records: %d\n", session.MalformedCount)
 	fmt.Fprintf(&output, "omitted_records: %d\n", session.OmittedCount)
 	fmt.Fprintf(&output, "tool_calls: %d\n", session.ToolCallCount)
+	fmt.Fprintf(&output, "messages: %d\n", len(session.Messages))
+	fmt.Fprintf(&output, "user_messages: %d\n", session.UserMessages)
+	fmt.Fprintf(&output, "assistant_messages: %d\n", session.AssistantMessages)
 	fmt.Fprintf(&output, "redactions: %d\n", snapshot.Redactions)
 	fmt.Fprintln(&output, "---")
 	fmt.Fprintf(&output, "\n# %s\n\n", session.Title)
@@ -101,16 +107,16 @@ func renderSnapshot(snapshot Snapshot) []byte {
 		fmt.Fprintln(&output, "\n_No user or assistant messages could be rendered from this session._")
 		return []byte(output.String())
 	}
-	for _, message := range session.Messages {
+	for index, message := range session.Messages {
 		role := "Assistant"
 		if message.Role == "user" {
 			role = "User"
 		}
-		fmt.Fprintf(&output, "\n### %s\n", role)
+		fmt.Fprintf(&output, "\n### %d · %s", index+1, role)
 		if !message.Timestamp.IsZero() {
-			fmt.Fprintf(&output, "\n_%s_\n", formatTime(message.Timestamp))
+			fmt.Fprintf(&output, " · %s", formatTime(message.Timestamp))
 		}
-		fmt.Fprintf(&output, "\n%s\n", strings.TrimSpace(message.Text))
+		fmt.Fprintf(&output, "\n\n%s\n", strings.TrimSpace(message.Text))
 	}
 	return []byte(output.String())
 }
