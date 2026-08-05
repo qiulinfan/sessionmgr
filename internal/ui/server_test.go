@@ -228,6 +228,7 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	}
 	script := scriptResult.Body.Bytes()
 	if !bytes.Contains(script, []byte("function groupChanges")) || !bytes.Contains(script, []byte("repository-tree")) ||
+		!bytes.Contains(script, []byte("repository.localDirectory")) || !bytes.Contains(script, []byte("repository-session-list")) ||
 		!bytes.Contains(script, []byte("sessionmgr-language")) || !bytes.Contains(script, []byte("filtered_internal")) ||
 		!bytes.Contains(script, []byte("include_archived")) || !bytes.Contains(script, []byte("include_non_git")) ||
 		!bytes.Contains(script, []byte("filtered_non_git")) || !bytes.Contains(script, []byte("badgeFull")) {

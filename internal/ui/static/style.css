@@ -151,6 +151,7 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 .device-summary:hover { background: var(--surface-raised); }
 .device-summary .folder-icon::before, .device-summary .folder-icon::after { color: var(--blue); }
 .session-list { display: grid; gap: 8px; padding: 4px 10px 6px 22px; }
+.repository-session-list { padding: 8px 12px 0; }
 .session-change { min-width: 0; padding: 13px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
 .session-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .session-change h3 { min-width: 0; margin: 1px 0 0; font-size: 15px; overflow-wrap: anywhere; }
@@ -175,6 +176,7 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
   .tree-children { margin-left: 14px; }
   .device-tree { margin-right: 7px; }
   .session-list { padding-left: 12px; padding-right: 6px; }
+  .repository-session-list { padding-left: 8px; }
   .session-heading { display: grid; }
   .badge { grid-row: 1; justify-self: start; }
   .session-change h3 { grid-row: 2; }

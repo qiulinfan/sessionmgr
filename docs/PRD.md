@@ -165,8 +165,9 @@ hosted Git remote key | device-local directory key
 - 每次启动必须生成随机 API token；
 - GUI 必须支持保存目录、系统目录选择、导出范围、包括 archived sessions 与包括非 Git目录
   的独立显式勾选项，以及 changeset 展示；非 Git选项必须明确说明全量导出；
-- changeset 必须按 repository/device 目录分组，并可逐层展开或收起，不得只显示无分组的
-  session 卡片列表；
+- hosted Git changeset 必须按 repository/device 目录分组，并可逐层展开或收起；非 Git
+  repository 根已经包含 device scope，必须直接显示 session 叶节点，不得把 session 目录
+  误作第二级 device folder；
 - GUI 默认使用接近 GitHub Dark 的黑灰背景、surface、边框和状态色，不得回退为白底；
 - GUI 必须提供 English/中文切换，首次加载默认 English，并在浏览器可用时记住用户选择；
 - 桌面与窄屏布局必须可用；
@@ -252,3 +253,5 @@ hosted Git remote key | device-local directory key
 37. 非 Git Guardian、spawned subagent、runtime context 与敏感内容仍经过和 hosted Git
     session 完全相同的过滤、脱敏与附件策略。
 38. 非 Git source 后来消失时，既有全量归档仍保留，不推导删除或 tombstone。
+39. GUI 中 hosted Git repository 保留 device folder；非 Git repository 下直接显示 session
+    卡片，不为每个 session 生成 folder summary。

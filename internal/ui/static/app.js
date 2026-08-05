@@ -221,19 +221,26 @@ function groupChanges(items, output) {
     const parts = relativePathParts(item.path, output);
     const repositoryLabel = parts.length >= 2 ? `${parts[0]}/${parts[1]}` : item.repository_name;
     const repositoryKey = item.repository_key || repositoryLabel;
+    const localDirectory = String(item.repository_name || "").startsWith("non-git:") ||
+      parts[0]?.startsWith("(non-git)") || parts[0]?.startsWith("non-git-");
     if (!repositories.has(repositoryKey)) {
-      repositories.set(repositoryKey, { label: repositoryLabel, devices: new Map(), count: 0 });
+      repositories.set(repositoryKey, { label: repositoryLabel, localDirectory, devices: new Map(), items: [], count: 0 });
     }
     const repository = repositories.get(repositoryKey);
-    const deviceLabel = parts[2] || item.device_name || "device";
-    if (!repository.devices.has(deviceLabel)) {
-      repository.devices.set(deviceLabel, { label: deviceLabel, items: [] });
-    }
-    repository.devices.get(deviceLabel).items.push({
+    const groupedItem = {
       ...item,
       relativeParts: parts,
       sessionFolder: parts.length >= 2 ? parts.at(-2) : item.title,
-    });
+    };
+    if (repository.localDirectory) {
+      repository.items.push(groupedItem);
+    } else {
+      const deviceLabel = parts[2] || item.device_name || "device";
+      if (!repository.devices.has(deviceLabel)) {
+        repository.devices.set(deviceLabel, { label: deviceLabel, items: [] });
+      }
+      repository.devices.get(deviceLabel).items.push(groupedItem);
+    }
     repository.count += 1;
   }
   return [...repositories.values()];
@@ -310,17 +317,24 @@ function renderChanges(payload) {
 
       const repositoryChildren = document.createElement("div");
       repositoryChildren.className = "tree-children repository-children";
-      for (const device of repository.devices.values()) {
-        const deviceTree = document.createElement("details");
-        deviceTree.className = "tree-group device-tree";
-        deviceTree.open = true;
-        deviceTree.append(treeSummary(device.label, device.items.length, "sessionCount", "device-summary"));
-
+      if (repository.localDirectory) {
         const sessionList = document.createElement("div");
-        sessionList.className = "tree-children session-list";
-        for (const item of device.items) sessionList.append(sessionChange(item));
-        deviceTree.append(sessionList);
-        repositoryChildren.append(deviceTree);
+        sessionList.className = "session-list repository-session-list";
+        for (const item of repository.items) sessionList.append(sessionChange(item));
+        repositoryChildren.append(sessionList);
+      } else {
+        for (const device of repository.devices.values()) {
+          const deviceTree = document.createElement("details");
+          deviceTree.className = "tree-group device-tree";
+          deviceTree.open = true;
+          deviceTree.append(treeSummary(device.label, device.items.length, "sessionCount", "device-summary"));
+
+          const sessionList = document.createElement("div");
+          sessionList.className = "tree-children session-list";
+          for (const item of device.items) sessionList.append(sessionChange(item));
+          deviceTree.append(sessionList);
+          repositoryChildren.append(deviceTree);
+        }
       }
       repositoryTree.append(repositoryChildren);
       changes.append(repositoryTree);

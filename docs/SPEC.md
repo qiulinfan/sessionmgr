@@ -387,11 +387,13 @@ API：
 
 前端首次加载使用 English；用户可切换 English/中文，选择只保存在浏览器本地，不改变
 跨机器 config schema。静态文案以及连接、保存、导出、busy/no-change、计数、change badge
-与附件摘要等动态状态共享同一语言字典。changeset 在客户端按 `repository_key` 和
-`device_name` 分成两级原生 `<details>` 目录树；repository/device summary 可独立展开，
-session 变化作为对应 device 的叶节点显示。非 Git复选框必须明确标注 full export，`full`
-change 使用独立双语 badge。后端 JSON changeset 保持扁平，避免为显示结构改变 CLI/API
-contract。
+与附件摘要等动态状态共享同一语言字典。hosted Git changeset 在客户端按 `repository_key`
+和 `device_name` 分成两级原生 `<details>` 目录树；repository/device summary 可独立展开，
+session 变化作为对应 device 的叶节点显示。local-directory change 仍按 `repository_key`
+聚合，但 `(non-git)<device>/<directory>` repository 根已经表达 device scope，因此 session
+卡片直接挂在 repository summary 下，不再创建 device `<details>`，也不把 session path
+误作 folder summary。非 Git复选框必须明确标注 full export，`full` change 使用独立双语
+badge。后端 JSON changeset 保持扁平，避免为显示结构改变 CLI/API contract。
 
 默认视觉使用 GitHub Dark 风格的固定暗色 palette：页面 `#0d1117`、surface `#161b22`、
 raised surface `#21262d`、border `#30363d`、正文 `#f0f6fc`，操作强调色使用 GitHub green。
