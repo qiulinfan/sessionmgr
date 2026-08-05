@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -120,16 +121,23 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			continue
 		}
 		result.Matched++
+		session = prepareSessionAttachments(ctx, session, repo)
 		snapshot := makeSnapshot(repo, session, opts.DeviceID, opts.DeviceName)
 		key := repo.Key + "\x00" + snapshot.SessionKey
-		created, snapshotPath, documentHash, publishErr := publishSnapshot(output, snapshot, history[key])
+		created, snapshotPath, documentHash, publishErr := publishSnapshot(output, &snapshot, history[key])
 		if publishErr != nil {
 			result.Skipped++
 			result.Warnings = append(result.Warnings, fmt.Sprintf("session %s: %v", session.ID, publishErr))
 			continue
 		}
+		attachments, archivedFiles := attachmentCounts(snapshot.Session)
+		result.Attachments += attachments
+		result.ArchivedAttachments += archivedFiles
 		if created {
 			result.Created++
+			for _, warning := range attachmentWarnings(snapshot.Session) {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("session %s: %s", session.ID, warning))
+			}
 			kind := changeKind(history[key], snapshot)
 			change := Change{
 				Kind: kind, RepositoryKey: repo.Key, RepositoryName: repo.Name,
@@ -137,6 +145,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 				SessionKey: snapshot.SessionKey, Title: snapshot.Session.Title,
 				DocumentHash: documentHash, SourceHash: snapshot.Session.RawHash,
 				UpdatedAt: formatTime(snapshot.SourceUpdate), Path: snapshotPath,
+				Attachments: attachments, ArchivedFiles: archivedFiles,
 			}
 			result.Changes = append(result.Changes, change)
 			history[key] = append(history[key], Entry{
@@ -160,16 +169,13 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	return result, nil
 }
 
-func publishSnapshot(output string, snapshot Snapshot, history []Entry) (bool, string, string, error) {
+func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, string, string, error) {
 	repositoryDir := filepath.Join(output, "repositories", semanticRepositoryDirectory(snapshot.Repository))
 	if err := publishRepositoryMetadata(repositoryDir, snapshot.Repository); err != nil {
 		return false, "", "", fmt.Errorf("publish repository identity: %w", err)
 	}
 	deviceDir := semanticComponent(snapshot.DeviceName, "device")
-	desiredDir := filepath.Join(repositoryDir, "sessions", deviceDir, semanticSessionDirectory(snapshot))
-	document := renderSnapshot(snapshot)
-	documentHash := digestBytes(document)
-	record := sessionRecord(snapshot, documentHash)
+	desiredDir := filepath.Join(repositoryDir, "sessions", deviceDir, semanticSessionDirectory(*snapshot))
 
 	if len(history) > 0 {
 		latest := history[0]
@@ -178,7 +184,18 @@ func publishSnapshot(output string, snapshot Snapshot, history []Entry) (bool, s
 				latest = candidate
 			}
 		}
-		return updatePublishedSession(latest, desiredDir, document, record)
+		var current sessionMetadata
+		if err := readMetadata(filepath.Join(filepath.Dir(latest.Path), sessionMetadataName), &current); err != nil {
+			return false, "", "", fmt.Errorf("read existing session metadata: %w", err)
+		}
+		if err := validateSessionMetadata(current); err != nil {
+			return false, "", "", err
+		}
+		retainPublishedAttachments(&snapshot.Session, current)
+		document := renderSnapshot(*snapshot)
+		documentHash := digestBytes(document)
+		record := sessionRecord(*snapshot, documentHash)
+		return updatePublishedSession(latest, desiredDir, document, record, snapshot.Session)
 	}
 
 	metadataPath := filepath.Join(desiredDir, sessionMetadataName)
@@ -191,27 +208,29 @@ func publishSnapshot(output string, snapshot Snapshot, history []Entry) (bool, s
 			if current.RepositoryKey != snapshot.Repository.Key || current.SessionKey != snapshot.SessionKey {
 				return false, "", "", fmt.Errorf("semantic session path belongs to a different identity: %s", desiredDir)
 			}
-			return updatePublishedSession(entryFromMetadata(current, filepath.Join(desiredDir, conversationName)), desiredDir, document, record)
+			retainPublishedAttachments(&snapshot.Session, current)
+			document := renderSnapshot(*snapshot)
+			documentHash := digestBytes(document)
+			record := sessionRecord(*snapshot, documentHash)
+			return updatePublishedSession(entryFromMetadata(current, filepath.Join(desiredDir, conversationName)), desiredDir, document, record, snapshot.Session)
 		} else if !errors.Is(readErr, os.ErrNotExist) {
 			return false, "", "", fmt.Errorf("read existing session metadata: %w", readErr)
-		}
-		entries, readErr := os.ReadDir(desiredDir)
-		if readErr != nil {
-			return false, "", "", readErr
-		}
-		if len(entries) > 1 || (len(entries) == 1 && entries[0].Name() != conversationName) {
-			return false, "", "", fmt.Errorf("refusing to claim existing semantic session directory: %s", desiredDir)
-		}
-		if len(entries) == 1 {
-			existing, readErr := readOwnedDocument(filepath.Join(desiredDir, conversationName))
-			if readErr != nil || !bytes.Equal(existing, document) {
-				return false, "", "", fmt.Errorf("refusing to claim existing session document: %s", filepath.Join(desiredDir, conversationName))
-			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return false, "", "", err
 	}
+	document := renderSnapshot(*snapshot)
+	documentHash := digestBytes(document)
+	record := sessionRecord(*snapshot, documentHash)
+	if _, err := os.Lstat(desiredDir); err == nil {
+		if err := verifyClaimableSessionDirectory(desiredDir, document, snapshot.Session); err != nil {
+			return false, "", "", err
+		}
+	}
 	if err := os.MkdirAll(desiredDir, 0o755); err != nil {
+		return false, "", "", err
+	}
+	if _, err := publishAttachmentFiles(desiredDir, snapshot.Session, nil); err != nil {
 		return false, "", "", err
 	}
 	documentPath := filepath.Join(desiredDir, conversationName)
@@ -228,7 +247,7 @@ func publishSnapshot(output string, snapshot Snapshot, history []Entry) (bool, s
 	return true, documentPath, documentHash, nil
 }
 
-func updatePublishedSession(previous Entry, desiredDir string, document []byte, record sessionMetadata) (bool, string, string, error) {
+func updatePublishedSession(previous Entry, desiredDir string, document []byte, record sessionMetadata, session Session) (bool, string, string, error) {
 	oldDocumentPath := previous.Path
 	oldDir := filepath.Dir(oldDocumentPath)
 	var current sessionMetadata
@@ -242,6 +261,9 @@ func updatePublishedSession(previous Entry, desiredDir string, document []byte, 
 		current.DeviceID != record.DeviceID || current.SessionID != record.SessionID {
 		return false, "", "", fmt.Errorf("existing session metadata belongs to a different identity: %s", oldDir)
 	}
+	if err := verifyOwnedAttachments(oldDir, current, record); err != nil {
+		return false, "", "", err
+	}
 	existing, err := readOwnedDocument(oldDocumentPath)
 	if err != nil {
 		return false, "", "", err
@@ -254,7 +276,7 @@ func updatePublishedSession(previous Entry, desiredDir string, document []byte, 
 
 	dirChanged := filepath.Clean(oldDir) != filepath.Clean(desiredDir)
 	contentChanged := actualHash != newHash
-	metadataChanged := current != record
+	metadataChanged := !reflect.DeepEqual(current, record)
 	if !dirChanged && !contentChanged && !metadataChanged {
 		return false, oldDocumentPath, newHash, nil
 	}
@@ -272,6 +294,10 @@ func updatePublishedSession(previous Entry, desiredDir string, document []byte, 
 		}
 		oldDocumentPath = filepath.Join(desiredDir, conversationName)
 	}
+	attachmentsChanged, err := publishAttachmentFiles(filepath.Dir(oldDocumentPath), session, &current)
+	if err != nil {
+		return false, "", "", err
+	}
 	if contentChanged {
 		if err := replaceOwnedFile(oldDocumentPath, document); err != nil {
 			return false, "", "", err
@@ -284,7 +310,191 @@ func updatePublishedSession(previous Entry, desiredDir string, document []byte, 
 	if err := replaceOwnedFile(filepath.Join(filepath.Dir(oldDocumentPath), sessionMetadataName), metadata); err != nil {
 		return false, "", "", err
 	}
-	return true, oldDocumentPath, newHash, nil
+	return dirChanged || contentChanged || metadataChanged || attachmentsChanged, oldDocumentPath, newHash, nil
+}
+
+func retainPublishedAttachments(session *Session, current sessionMetadata) {
+	previous := make(map[string]attachmentMetadata, len(current.Attachments))
+	for _, attachment := range current.Attachments {
+		previous[attachmentIdentity(attachment.MessageIndex, attachment.AttachmentIndex)] = attachment
+	}
+	for messageIndex := range session.Messages {
+		for attachmentIndex := range session.Messages[messageIndex].Attachments {
+			attachment := &session.Messages[messageIndex].Attachments[attachmentIndex]
+			old, ok := previous[attachmentIdentity(attachment.MessageIndex, attachment.AttachmentIndex)]
+			if !ok || (old.Status != attachmentStatusArchived && old.Status != attachmentStatusGitTracked) {
+				continue
+			}
+			if attachment.SourceKind != "local_path" && attachment.Status != attachmentStatusBusy && attachment.Status != attachmentStatusUnavailable {
+				continue
+			}
+			sourceValue, localPath := attachment.SourceValue, attachment.LocalPath
+			*attachment = attachmentFromMetadata(old)
+			attachment.SourceValue, attachment.LocalPath = sourceValue, localPath
+		}
+	}
+}
+
+func attachmentIdentity(messageIndex, attachmentIndex int) string {
+	return fmt.Sprintf("%d/%d", messageIndex, attachmentIndex)
+}
+
+func attachmentFromMetadata(value attachmentMetadata) Attachment {
+	return Attachment{
+		MessageIndex: value.MessageIndex, AttachmentIndex: value.AttachmentIndex,
+		Name: value.Name, MIMEType: value.MIMEType, SourceKind: value.SourceKind,
+		Status: value.Status, ArchivePath: value.ArchivePath,
+		RepositoryPath: value.RepositoryPath, GitCommit: value.GitCommit,
+		Size: value.Size, ContentHash: value.ContentHash,
+	}
+}
+
+func verifyOwnedAttachments(directory string, metadata, desired sessionMetadata) error {
+	desiredByPath := make(map[string]attachmentMetadata, len(desired.Attachments))
+	for _, attachment := range desired.Attachments {
+		if attachment.Status == attachmentStatusArchived {
+			desiredByPath[attachment.ArchivePath] = attachment
+		}
+	}
+	for _, attachment := range metadata.Attachments {
+		if attachment.Status != attachmentStatusArchived {
+			continue
+		}
+		path := filepath.Join(directory, filepath.FromSlash(attachment.ArchivePath))
+		data, err := readRegularFileNoSymlink(path)
+		if err != nil {
+			return fmt.Errorf("read archived attachment %q: %w", attachment.Name, err)
+		}
+		actualHash := digestBytes(data)
+		matchesCurrent := int64(len(data)) == attachment.Size && actualHash == attachment.ContentHash
+		wanted, hasDesired := desiredByPath[attachment.ArchivePath]
+		matchesDesired := hasDesired && int64(len(data)) == wanted.Size && actualHash == wanted.ContentHash
+		if !matchesCurrent && !matchesDesired {
+			return fmt.Errorf("refusing to overwrite a modified archived attachment: %s", path)
+		}
+	}
+	return nil
+}
+
+func publishAttachmentFiles(directory string, session Session, current *sessionMetadata) (bool, error) {
+	owned := make(map[string]attachmentMetadata)
+	if current != nil {
+		for _, attachment := range current.Attachments {
+			if attachment.Status == attachmentStatusArchived {
+				owned[attachment.ArchivePath] = attachment
+			}
+		}
+	}
+	changed := false
+	attachmentDirectoryReady := false
+	for _, message := range session.Messages {
+		for _, attachment := range message.Attachments {
+			if attachment.Status != attachmentStatusArchived {
+				continue
+			}
+			if !attachmentDirectoryReady {
+				if err := ensureAttachmentDirectory(directory); err != nil {
+					return false, err
+				}
+				attachmentDirectoryReady = true
+			}
+			path := filepath.Join(directory, filepath.FromSlash(attachment.ArchivePath))
+			if len(attachment.Data) == 0 && attachment.Size != 0 {
+				data, err := readRegularFileNoSymlink(path)
+				if err != nil || digestBytes(data) != attachment.ContentHash {
+					return false, fmt.Errorf("archived attachment %q is missing and its source is unavailable", attachment.Name)
+				}
+				continue
+			}
+			existing, err := readRegularFileNoSymlink(path)
+			if err == nil {
+				if bytes.Equal(existing, attachment.Data) {
+					continue
+				}
+				previous, isOwned := owned[attachment.ArchivePath]
+				if !isOwned || digestBytes(existing) != previous.ContentHash {
+					return false, fmt.Errorf("refusing to overwrite conflicting attachment: %s", path)
+				}
+				if err := replaceOwnedFile(path, attachment.Data); err != nil {
+					return false, err
+				}
+				changed = true
+				continue
+			}
+			if !errors.Is(err, os.ErrNotExist) {
+				return false, err
+			}
+			created, err := publishImmutable(path, attachment.Data)
+			if err != nil {
+				return false, err
+			}
+			changed = changed || created
+		}
+	}
+	return changed, nil
+}
+
+func ensureAttachmentDirectory(sessionDirectory string) error {
+	directory := filepath.Join(sessionDirectory, "attachments")
+	if info, err := os.Lstat(directory); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("attachment path is not an owned directory: %s", directory)
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Mkdir(directory, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("attachment path is not an owned directory: %s", directory)
+	}
+	return nil
+}
+
+func verifyClaimableSessionDirectory(directory string, document []byte, session Session) error {
+	desired := map[string][]byte{conversationName: document}
+	for _, message := range session.Messages {
+		for _, attachment := range message.Attachments {
+			if attachment.Status == attachmentStatusArchived {
+				desired[attachment.ArchivePath] = attachment.Data
+			}
+		}
+	}
+	err := filepath.WalkDir(directory, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == directory {
+			return nil
+		}
+		relative, err := filepath.Rel(directory, path)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		if entry.IsDir() {
+			if relative == "attachments" {
+				return nil
+			}
+			return fmt.Errorf("refusing to claim existing semantic session directory: %s", directory)
+		}
+		want, ok := desired[relative]
+		if !ok {
+			return fmt.Errorf("refusing to claim existing semantic session directory: %s", directory)
+		}
+		actual, err := readRegularFileNoSymlink(path)
+		if err != nil || !bytes.Equal(actual, want) {
+			return fmt.Errorf("refusing to claim conflicting session file: %s", path)
+		}
+		return nil
+	})
+	return err
 }
 
 func entryFromMetadata(value sessionMetadata, path string) Entry {

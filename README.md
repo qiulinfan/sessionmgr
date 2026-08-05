@@ -22,7 +22,7 @@ sessionmgr gui
 
 - 选择、保存并恢复导出目录；
 - 导出全部 Git 仓库或当前 Git 仓库的 sessions；
-- 只显示本次新增、更新或重命名的 Markdown 文档；
+- 只显示本次新增、更新或重命名的 Markdown 文档，并标出该变化中的附件/复制数；
 - 没有变化时显示明确的“已经是最新状态”。
 
 目录选择器在 macOS 使用系统对话框，在 Windows 使用 Folder Browser，在 Linux
@@ -91,7 +91,9 @@ No changes.
             └── <device-name>/
                 └── <created-time>--<session-title>/
                     ├── .sessionmgr-session.json
-                    └── conversation.md
+                    ├── conversation.md
+                    └── attachments/
+                        └── 001-<readable-file-name>
 ```
 
 - repository key 来自去掉协议和凭据后的 hosted Git remote；同一仓库的 SSH 与
@@ -103,6 +105,15 @@ No changes.
   和 document hash 分别保存在两个隐藏的 `.sessionmgr-*.json` 文件中。
 - 每个设备/session 只有一个 `conversation.md`；内容更新时安全更新它，名称改变时重命名
   语义目录，旧版本由 Git 历史保存。
+- 用户在聊天框中结构化投入的图片、音频与可识别文件会跟随对话导出。可见
+  文件名使用稳定序号和可读原名，hash、大小、MIME、状态与消息位置只保存在
+  `.sessionmgr-session.json`。
+- 单附件上限是 50 MiB（包含恰好 50 MiB）。超限、忙碌、缺失、远程-only 或疑似
+  credential/private-key 的文件不会被复制，但不会阻断对话导出；当次状态通过
+  Markdown、hidden manifest 和 warning 说明。
+- 仅当附件 bytes 能证明等于 session 记录 commit 中的 tracked Git blob 时才不重复复制。
+  普通消息里的路径、tool payload 和 agent 自行读取的文件不会被猜测为附件；
+  HTTP(S) 引用也不会被自动下载。
 - 重复导出相同内容是 no-op；不同机器按可读设备目录产生文件，可由普通 Git 合并。
 - 更新前会校验 document hash；手工改过的 Markdown 或语义目录 identity collision 不会
   被覆盖，而会作为 skipped 项提示。
@@ -120,7 +131,8 @@ v0.3 开发早期产生的 hash-named v1/v2 文件仍可用 `sessionmgr list --h
 
 ## 内容与安全边界
 
-Markdown 保存用户/助手对话、完整消息时间轴、Git commit/branch 和少量计数。它不复制
+Markdown 保存用户/助手对话、完整消息时间轴、Git commit/branch 和少量计数。用户明确
+投入的附件保留原始 bytes，因此同样需要在公开提交前审阅。它不复制
 developer/system 指令、tool 参数、tool 输出、认证数据库、内部 reasoning 或环境变量
 值；常见 token、私钥、credential URL 和 secret assignment 会替换成明确的
 `[REDACTED ...]`。

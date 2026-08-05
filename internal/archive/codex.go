@@ -254,12 +254,21 @@ func sourceErrorIsBusy(err error) bool {
 func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) (Session, error) {
 	result := Session{RawHash: digestBytes(raw)}
 	var responseMessages, eventMessages []Message
-	scanner := bufio.NewScanner(bytes.NewReader(raw))
-	scanner.Buffer(make([]byte, 64*1024), 32*1024*1024)
-	for scanner.Scan() {
+	remaining := raw
+	for len(remaining) > 0 {
+		line, rest, found := bytes.Cut(remaining, []byte{'\n'})
+		if found {
+			remaining = rest
+		} else {
+			remaining = nil
+		}
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
 		result.RecordCount++
 		var record map[string]interface{}
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+		if err := json.Unmarshal(line, &record); err != nil {
 			result.MalformedCount++
 			continue
 		}
@@ -283,8 +292,14 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 		if recordType == "response_item" && payloadType == "message" {
 			role := stringValue(payload["role"])
 			if role == "user" || role == "assistant" {
-				if text := contentText(payload["content"]); strings.TrimSpace(text) != "" {
-					responseMessages = append(responseMessages, Message{Role: role, Text: text, Timestamp: timestamp})
+				text, attachments := contentParts(payload["content"])
+				if role != "user" {
+					attachments = nil
+				}
+				if strings.TrimSpace(text) != "" || len(attachments) > 0 {
+					responseMessages = append(responseMessages, Message{
+						Role: role, Text: text, Timestamp: timestamp, Attachments: attachments,
+					})
 				}
 			}
 		}
@@ -293,16 +308,20 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 			if payloadType == "user_message" {
 				role = "user"
 			}
-			if text := firstString(payload["message"], payload["text"]); strings.TrimSpace(text) != "" {
-				eventMessages = append(eventMessages, Message{Role: role, Text: text, Timestamp: timestamp})
+			text := firstString(payload["message"], payload["text"])
+			attachments := []Attachment(nil)
+			if role == "user" {
+				attachments = eventAttachments(payload)
+			}
+			if strings.TrimSpace(text) != "" || len(attachments) > 0 {
+				eventMessages = append(eventMessages, Message{
+					Role: role, Text: text, Timestamp: timestamp, Attachments: attachments,
+				})
 			}
 		}
 		if recordType == "response_item" && (payloadType == "function_call" || payloadType == "custom_tool_call" || payloadType == "tool_call") {
 			result.ToolCallCount++
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return Session{}, err
 	}
 	if result.ID == "" {
 		result.ID = fallbackID
@@ -312,6 +331,7 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 	}
 	if len(responseMessages) > 0 {
 		result.Messages = responseMessages
+		mergeLegacyAttachments(result.Messages, eventMessages)
 	} else {
 		result.Messages = eventMessages
 	}
@@ -352,6 +372,200 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 		result.Title = "Codex session " + result.ID
 	}
 	return result, nil
+}
+
+func contentParts(value interface{}) (string, []Attachment) {
+	items, ok := value.([]interface{})
+	if !ok {
+		return contentText(value), nil
+	}
+	texts := make([]string, 0, len(items))
+	attachments := make([]Attachment, 0)
+	pendingPath := ""
+	for _, value := range items {
+		item := mapValue(value)
+		itemType := stringValue(item["type"])
+		switch itemType {
+		case "input_text", "output_text", "text":
+			text := firstString(item["text"], item["message"])
+			if path, marker := localMediaMarkerPath(text); marker {
+				pendingPath = path
+				continue
+			}
+			if text == "</image>" || text == "</audio>" {
+				pendingPath = ""
+				continue
+			}
+			pendingPath = ""
+			if strings.TrimSpace(text) != "" {
+				texts = append(texts, text)
+			}
+		case "input_image":
+			if attachment, found := attachmentFromValue(
+				firstString(item["image_url"], item["url"]),
+				firstString(item["filename"], item["name"]), pendingPath, "image",
+			); found {
+				attachments = append(attachments, attachment)
+			}
+			pendingPath = ""
+		case "input_audio":
+			if attachment, found := attachmentFromValue(
+				firstString(item["audio_url"], item["url"]),
+				firstString(item["filename"], item["name"]), pendingPath, "audio",
+			); found {
+				attachments = append(attachments, attachment)
+			}
+			pendingPath = ""
+		case "input_file", "file", "attachment":
+			if attachment, found := attachmentFromStructuredMap(item, pendingPath); found {
+				attachments = append(attachments, attachment)
+			}
+			pendingPath = ""
+		default:
+			if text := strings.TrimSpace(contentText(value)); text != "" {
+				texts = append(texts, text)
+			}
+		}
+	}
+	return strings.Join(texts, "\n\n"), attachments
+}
+
+func localMediaMarkerPath(text string) (string, bool) {
+	if !(strings.HasPrefix(text, "<image name=") || strings.HasPrefix(text, "<audio name=")) || !strings.HasSuffix(text, ">") {
+		return "", false
+	}
+	marker := ` path="`
+	index := strings.LastIndex(text, marker)
+	if index < 0 {
+		return "", true
+	}
+	path := strings.TrimSuffix(text[index+len(marker):], `">`)
+	return path, true
+}
+
+func eventAttachments(payload map[string]interface{}) []Attachment {
+	attachments := make([]Attachment, 0)
+	appendValues := func(value interface{}, kind string, local bool) {
+		values, ok := value.([]interface{})
+		if !ok {
+			return
+		}
+		for _, value := range values {
+			if item, ok := value.(map[string]interface{}); ok {
+				if attachment, found := attachmentFromStructuredMap(item, ""); found {
+					attachments = append(attachments, attachment)
+				}
+				continue
+			}
+			source := stringValue(value)
+			if source == "" {
+				continue
+			}
+			if local {
+				attachments = append(attachments, Attachment{
+					Name: attachmentBaseName(source), SourceKind: "local_path", SourceValue: source, LocalPath: source,
+				})
+			} else if attachment, found := attachmentFromValue(source, "", "", kind); found {
+				attachments = append(attachments, attachment)
+			}
+		}
+	}
+	appendValues(payload["images"], "image", false)
+	appendValues(payload["local_images"], "image", true)
+	appendValues(payload["audio"], "audio", false)
+	appendValues(payload["local_audio"], "audio", true)
+	for _, key := range []string{"local_files", "files", "attachments"} {
+		appendValues(payload[key], "file", key == "local_files")
+	}
+	return attachments
+}
+
+func attachmentFromStructuredMap(item map[string]interface{}, fallbackPath string) (Attachment, bool) {
+	name := firstString(item["filename"], item["file_name"], item["name"])
+	localPath := firstString(item["path"], item["local_path"], fallbackPath)
+	mediaType := firstString(item["mime_type"], item["mimeType"])
+	embedded := firstString(item["file_data"], item["data"], item["image_url"], item["audio_url"])
+	if embedded != "" {
+		if !strings.HasPrefix(strings.ToLower(embedded), "data:") && stringValue(item["file_data"]) == embedded {
+			embedded = "data:" + mediaType + ";base64," + embedded
+		}
+		if attachment, found := attachmentFromValue(embedded, name, localPath, "file"); found {
+			attachment.MIMEType = mediaType
+			return attachment, true
+		}
+	}
+	if localPath != "" {
+		return Attachment{
+			Name: attachmentDisplayName(name, localPath), MIMEType: mediaType,
+			SourceKind: "local_path", SourceValue: localPath, LocalPath: localPath,
+		}, true
+	}
+	source := firstString(item["file_url"], item["url"])
+	attachment, found := attachmentFromValue(source, name, fallbackPath, "file")
+	if found && attachment.MIMEType == "" {
+		attachment.MIMEType = mediaType
+	}
+	return attachment, found
+}
+
+func attachmentFromValue(source, name, localPath, kind string) (Attachment, bool) {
+	if source == "" {
+		return Attachment{}, false
+	}
+	sourceKind := "remote_reference"
+	if strings.HasPrefix(strings.ToLower(source), "data:") {
+		sourceKind = "embedded_data"
+	}
+	return Attachment{
+		Name: attachmentDisplayName(name, localPath), SourceKind: sourceKind,
+		SourceValue: source, LocalPath: localPath, MIMEType: mediaKindMIME(kind),
+	}, true
+}
+
+func mediaKindMIME(kind string) string {
+	switch kind {
+	case "image":
+		return "image/*"
+	case "audio":
+		return "audio/*"
+	default:
+		return ""
+	}
+}
+
+func attachmentDisplayName(name, path string) string {
+	if strings.TrimSpace(name) != "" {
+		return attachmentBaseName(name)
+	}
+	return attachmentBaseName(path)
+}
+
+func attachmentBaseName(value string) string {
+	value = strings.ReplaceAll(strings.TrimSpace(value), `\`, "/")
+	value = strings.TrimRight(value, "/")
+	if index := strings.LastIndex(value, "/"); index >= 0 {
+		value = value[index+1:]
+	}
+	return value
+}
+
+func mergeLegacyAttachments(messages, legacy []Message) {
+	responseIndex := 0
+	for _, candidate := range legacy {
+		if candidate.Role != "user" || len(candidate.Attachments) == 0 {
+			continue
+		}
+		for responseIndex < len(messages) && messages[responseIndex].Role != "user" {
+			responseIndex++
+		}
+		if responseIndex >= len(messages) {
+			return
+		}
+		if len(messages[responseIndex].Attachments) == 0 {
+			messages[responseIndex].Attachments = candidate.Attachments
+		}
+		responseIndex++
+	}
 }
 
 func contentText(value interface{}) string {

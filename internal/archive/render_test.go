@@ -52,12 +52,13 @@ func TestRenderSnapshotIncludesConversationTimeline(t *testing.T) {
 	}, "device:a", "workstation")
 	markdown := string(renderSnapshot(snapshot))
 	for _, expected := range []string{
-		"renderer_version: 3",
+		"renderer_version: 4",
 		`created_at: "2026-08-05T01:00:00Z"`,
 		`first_message_at: "2026-08-05T01:01:00Z"`,
 		`last_message_at: "2026-08-05T01:02:00Z"`,
 		`last_event_at: "2026-08-05T01:03:00Z"`,
 		"messages: 2", "user_messages: 1", "assistant_messages: 1",
+		"attachments: 0", "archived_attachments: 0",
 		"### 1 · User · 2026-08-05T01:01:00Z",
 		"### 2 · Assistant · 2026-08-05T01:02:00Z",
 	} {

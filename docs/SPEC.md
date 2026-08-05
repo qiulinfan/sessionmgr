@@ -74,7 +74,7 @@ host 转小写；path 保留大小写；协议、userinfo、query、fragment 和
 local/file/empty remote 不生成 key。若 session metadata 没有 remote，转换器只允许从
 其仍可访问的 CWD 查询 hosted `remote.origin.url`；仍没有则跳过。
 
-## 4. Identity and change hashes / renderer v3
+## 4. Identity and change hashes / renderer v4
 
 ```text
 source_hash = sha256(raw_jsonl_bytes)
@@ -95,7 +95,9 @@ document_hash = sha256(rendered_conversation_md_bytes)
 ├── .sessionmgr-repository.json
 └── sessions/<device-name>/<created-time>--<session-title>/
     ├── .sessionmgr-session.json
-    └── conversation.md
+    ├── conversation.md
+    └── attachments/                  # only when archived bytes exist
+        └── <sequence>-<readable-name>
 ```
 
 可见路径只承担语义：remote 各段、设备名、UTC 创建时间和最新标题经过跨平台安全的
@@ -107,15 +109,19 @@ component 规范化，每段最多 80 UTF-8 bytes。它不通过附加 hash 解�
 
 `.sessionmgr-session.json` 包含 `schema_version`、`layout_version`、`renderer_version`、
 repository identity、device ID/name、native session ID、session key、当前标题、source hash、
-document hash、创建与更新时间。它是可检查的身份 sidecar，不是 secret store。
+document hash、创建与更新时间，以及可选 attachments manifest。manifest 每项保存
+message/attachment 序号、可读原名、MIME、来源类型、状态、相对归档路径、byte 大小和
+content hash；不保存绝对本机路径、data URL 或带 credential/query 的远程 URL。它是可检查
+的身份/所有权 sidecar，不是 secret store。
 
 `conversation.md` 的 frontmatter 不包含 identity/hash。它保存 repository/device/session
-显示名、Codex/Git hints，以及以下 renderer-v3 字段：
+显示名、Codex/Git hints，以及以下 renderer-v4 字段：
 
 - `created_at`、`first_message_at`、`last_message_at`、`last_event_at`、
   `title_updated_at` 与用于排序的总体 `updated_at`；
 - `source_records`、`malformed_records`、`omitted_records`、`tool_calls`、`messages`、
-  `user_messages`、`assistant_messages` 与 `redactions` 计数。
+  `user_messages`、`assistant_messages`、`attachments`、`archived_attachments` 与
+  `redactions` 计数。
 
 时间字段没有可信源 timestamp 时省略。renderer v1 的 `started_at` 仍可由读取器检查；
 renderer v2 不修改或删除任何既有 v1 文件。
@@ -131,6 +137,35 @@ renderer v2 不修改或删除任何既有 v1 文件。
 
 tool arguments/results、developer/system message 和 reasoning payload 不进入正文。raw
 bytes 保留在 Codex home；导出器只读源数据。
+
+### 6.1 Structured chat attachments
+
+附件只能来自 user message 的结构化字段。已确认的 Codex 形式是
+`response_item.message.content` 中的 `input_image` / `input_audio`，以及 legacy
+`event_msg.user_message` 的 `images` / `local_images` / `audio` / `local_audio`。读取器可
+兼容结构化 `input_file`、`local_files`、`files` 和 `attachments`，但不得解析普通消息
+文本中的路径。response-item 与 legacy event 仍只选一组，避免重复。
+
+单文件上限 `MaxAttachmentBytes = 50 * 1024 * 1024`；`size <= MaxAttachmentBytes`
+允许，`size > MaxAttachmentBytes` 记为 `too_large`。data URL 在解码前先做编码长度
+上界检查，解码器再通过 limit reader 强制上限；不得为判断超限而无界解码。
+
+来源优先级与状态：
+
+1. JSONL 内嵌 data URL：解码原始 bytes，状态 `archived`；
+2. 结构化本地路径：`Lstat` 拒绝 symlink/非 regular file，以 identity/size/mtime
+   前后检查稳定读取；忙碌或不可读时分别记 `busy` / `unavailable`；
+3. 若有原始 path、session commit 与可访问 worktree，仅当附件 bytes 的 Git blob ID
+   等于该 commit 中同一 repository-relative path 的 blob ID 时记 `git_tracked`，不复制；
+4. HTTP(S) URL 记 `remote_reference`，不下载；
+5. 超限记 `too_large`；命中已知认证数据库/`.env`/private-key/token/secret
+   形式的内容记 `blocked_sensitive`，不写入原始 bytes 或 content hash。
+
+`busy`、`unavailable`、`remote_reference`、`too_large` 和 `blocked_sensitive` 都是附件级
+warning：对话文档仍
+发布、命令仍成功，下次导出重试尚未 archived/git-tracked 的项。Markdown 在对应
+user message 下用相对路径链接 `archived` 附件，其他状态只显示不含本机绝对路径
+的说明。
 
 `created_at` 来自 `session_meta`；`first_message_at`/`last_message_at` 是所选可读消息中
 最早/最晚的原始 timestamp；`last_event_at` 是所有可解析源记录中的最大 timestamp。
@@ -247,6 +282,9 @@ SQLite、encryption 或 GUI 状态。旧 `~/.sessionmgr` 保持原样。
 同一 v0.3 development line 的早期 `archive --output` 用法继续工作，但默认目录现在来自
 持久配置；首次使用必须通过 GUI、`config set-directory` 或 `export --directory` 指定。
 
-layout/renderer v3 不自动迁移、删除或改写 v1/v2 的 hash-named repository/snapshot 文件。
-`list --history` 仍能检查旧 frontmatter；第一次 v3 导出会另建 semantic current document。
+layout v3 不自动迁移、删除或改写 v1/v2 的 hash-named repository/snapshot 文件。
+renderer v4 在保留 layout v3 的前提下新增可选 attachment manifest/directory；旧 layout-v3
+sidecar 没有 `attachment_schema_version` 或 `attachments` 时仍可读，下次成功导出会安全更新
+Markdown 和 sidecar。`list --history` 仍能检查旧 frontmatter；第一次 layout-v3 导出会
+另建 semantic current document。
 旧归档的删除必须留给一个未来的显式、可 review migration。

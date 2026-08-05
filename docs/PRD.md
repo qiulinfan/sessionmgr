@@ -29,7 +29,7 @@ sessions 转成可读、可由 Git 跟踪历史的文件。
 ## 3. 核心模型
 
 ```text
-hosted Git remote key -> set(device ID + native session ID -> current Markdown)
+hosted Git remote key -> set(device ID + native session ID -> current Markdown + attachments)
 ```
 
 - repository key 必须在同一 hosted repository 的 SSH/HTTPS clone 间稳定；
@@ -82,6 +82,21 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown)
 - 分别保存创建、首条消息、末条消息、末事件、标题更新和总体更新时间；
 - 保存总消息、用户消息和助手消息数量；
 - 保存用户与助手的可读对话；
+- 只归档用户通过聊天框结构化投入的附件；不得从消息正文、tool 参数/输出或 agent 读取过的
+  路径推断附件；
+- 单个附件原始内容不得超过 50 MiB（`50 * 1024 * 1024` bytes）；等于上限允许，超过
+  上限时保留对话并在隐藏清单中记录 `too_large`，不得把该 session 整体判为失败；
+- 已归档附件放在 session 目录的 `attachments/` 中，文件名使用稳定序号与可读原文件名，
+  不含 hash；附件 hash、大小、MIME、来源类型、状态与消息位置保存在
+  `.sessionmgr-session.json`；
+- Codex 已内嵌在 session JSONL 中的附件 bytes 优先作为归档来源；只有旧格式仅保留本地
+  路径时才执行稳定、no-symlink 的 best-effort 读取；不可读或正在变化的附件只产生 warning，
+  不阻断对话导出，并在下次导出重试；
+- 能证明与 session Git commit 中 tracked blob 完全一致的仓库内附件不重复复制，只在对话和
+  sidecar 中记录 repository path/commit；其他附件不得因恰好位于工作树中而省略；
+- 远程 URL 只记录为未归档 reference，禁止自动联网下载；
+- 命中已知认证数据库、`.env`、private-key、token 或 secret assignment 形式的附件必须
+  记为 `blocked_sensitive`，不复制 bytes，也不保存它的 content hash；
 - 每条可读消息必须保留文件顺序与原始 timestamp；缺失时间不得用文件 mtime 猜测；
 - tool 调用只保存数量，不保存参数或输出；
 - developer/system 指令、内部 reasoning、认证数据和环境变量值不得进入导出；
@@ -131,6 +146,8 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown)
 - Capsule、加密、SSH Store 或自定义同步协议；
 - 自动 Git commit/push；
 - lossless replay 或完整 tool trace；
+- 从自由文本猜测本地文件、归档 tool 输入/输出或 agent 自行读取的文件；
+- 自动下载远程附件 URL；
 - 公网 GUI 服务。
 
 ## 6. 验收标准
@@ -153,3 +170,6 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown)
 16. 隐藏 sidecar 中的 session key 可由 device ID 与 Codex native session ID 重新计算验证。
 17. 手工改过的 `conversation.md` 与语义路径 identity collision 均不会被覆盖。
 18. v1/v2 hash-named archive 仍可由 `list --history` 检查，但不会自动删除或改写。
+19. 结构化聊天附件在 `attachments/` 中使用可读名称，并由隐藏 sidecar 的 SHA-256 保护。
+20. 50 MiB 附件可导出；超过 50 MiB、忙碌、缺失或远程-only 的附件不会阻断其对话导出。
+21. 普通消息中的路径、tool payload 和 agent 读取的文件不会被当作附件。

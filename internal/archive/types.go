@@ -3,9 +3,10 @@ package archive
 import "time"
 
 const (
-	SchemaVersion   = 1
-	LayoutVersion   = 3
-	RendererVersion = 3
+	SchemaVersion      = 1
+	LayoutVersion      = 3
+	RendererVersion    = 4
+	MaxAttachmentBytes = int64(50 * 1024 * 1024)
 )
 
 type Options struct {
@@ -24,16 +25,18 @@ type Options struct {
 }
 
 type Result struct {
-	SchemaVersion int      `json:"schema_version"`
-	Sources       int      `json:"sources"`
-	Matched       int      `json:"matched"`
-	Created       int      `json:"created"`
-	Unchanged     int      `json:"unchanged"`
-	Busy          int      `json:"busy"`
-	Skipped       int      `json:"skipped"`
-	Output        string   `json:"output"`
-	Changes       []Change `json:"changes"`
-	Warnings      []string `json:"warnings,omitempty"`
+	SchemaVersion       int      `json:"schema_version"`
+	Sources             int      `json:"sources"`
+	Matched             int      `json:"matched"`
+	Created             int      `json:"created"`
+	Unchanged           int      `json:"unchanged"`
+	Busy                int      `json:"busy"`
+	Skipped             int      `json:"skipped"`
+	Attachments         int      `json:"attachments"`
+	ArchivedAttachments int      `json:"archived_attachments"`
+	Output              string   `json:"output"`
+	Changes             []Change `json:"changes"`
+	Warnings            []string `json:"warnings,omitempty"`
 }
 
 type Change struct {
@@ -48,6 +51,8 @@ type Change struct {
 	SourceHash     string `json:"source_hash"`
 	UpdatedAt      string `json:"updated_at"`
 	Path           string `json:"path"`
+	Attachments    int    `json:"attachments"`
+	ArchivedFiles  int    `json:"archived_attachments"`
 }
 
 type Repository struct {
@@ -57,9 +62,31 @@ type Repository struct {
 }
 
 type Message struct {
-	Role      string
-	Text      string
-	Timestamp time.Time
+	Role        string
+	Text        string
+	Timestamp   time.Time
+	Attachments []Attachment
+}
+
+type Attachment struct {
+	MessageIndex    int
+	AttachmentIndex int
+	Name            string
+	MIMEType        string
+	SourceKind      string
+	Status          string
+	ArchivePath     string
+	RepositoryPath  string
+	GitCommit       string
+	Size            int64
+	ContentHash     string
+
+	// SourceValue and Data exist only while one export is being prepared. They
+	// are never written to Markdown or metadata because they may contain a
+	// machine-local absolute path, a remote URL, or embedded file bytes.
+	SourceValue string
+	LocalPath   string
+	Data        []byte
 }
 
 type Session struct {

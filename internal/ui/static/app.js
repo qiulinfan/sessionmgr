@@ -70,7 +70,14 @@ function renderChanges(payload) {
       path.className = "path";
       path.textContent = item.path;
 
-      card.append(badge, title, repo, path);
+      card.append(badge, title, repo);
+      if ((item.attachments || 0) > 0) {
+        const attachmentSummary = document.createElement("p");
+        attachmentSummary.className = "repo";
+        attachmentSummary.textContent = `附件 ${item.attachments} · 已复制 ${item.archived_attachments || 0}`;
+        card.append(attachmentSummary);
+      }
+      card.append(path);
       changes.append(card);
     }
   }

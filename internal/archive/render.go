@@ -35,6 +35,13 @@ func makeSnapshot(repo Repository, session Session, deviceID, deviceName string)
 		var count int
 		session.Messages[index].Text, count = redact(session.Messages[index].Text)
 		redactions += count
+		for attachmentIndex := range session.Messages[index].Attachments {
+			attachment := &session.Messages[index].Attachments[attachmentIndex]
+			attachment.Name, count = redact(attachment.Name)
+			redactions += count
+			attachment.RepositoryPath, count = redact(attachment.RepositoryPath)
+			redactions += count
+		}
 	}
 	updated := session.LastEventAt
 	if session.TitleUpdatedAt.After(updated) {
@@ -82,6 +89,9 @@ func renderSnapshot(snapshot Snapshot) []byte {
 	fmt.Fprintf(&output, "messages: %d\n", len(session.Messages))
 	fmt.Fprintf(&output, "user_messages: %d\n", session.UserMessages)
 	fmt.Fprintf(&output, "assistant_messages: %d\n", session.AssistantMessages)
+	attachments, archivedAttachments := attachmentCounts(session)
+	fmt.Fprintf(&output, "attachments: %d\n", attachments)
+	fmt.Fprintf(&output, "archived_attachments: %d\n", archivedAttachments)
 	fmt.Fprintf(&output, "redactions: %d\n", snapshot.Redactions)
 	fmt.Fprintln(&output, "---")
 	fmt.Fprintf(&output, "\n# %s\n\n", session.Title)
@@ -100,9 +110,57 @@ func renderSnapshot(snapshot Snapshot) []byte {
 		if !message.Timestamp.IsZero() {
 			fmt.Fprintf(&output, " · %s", formatTime(message.Timestamp))
 		}
-		fmt.Fprintf(&output, "\n\n%s\n", strings.TrimSpace(message.Text))
+		fmt.Fprintln(&output)
+		if text := strings.TrimSpace(message.Text); text != "" {
+			fmt.Fprintf(&output, "\n%s\n", text)
+		}
+		if len(message.Attachments) > 0 {
+			fmt.Fprintln(&output, "\n**Attachments**")
+			for _, attachment := range message.Attachments {
+				fmt.Fprintf(&output, "\n- %s\n", renderAttachment(attachment))
+			}
+		}
 	}
 	return []byte(output.String())
+}
+
+func renderAttachment(attachment Attachment) string {
+	name := markdownEscape(attachment.Name)
+	switch attachment.Status {
+	case attachmentStatusArchived:
+		return fmt.Sprintf("[%s](%s) (%s, %s)", name, attachment.ArchivePath, attachment.MIMEType, humanBytes(attachment.Size))
+	case attachmentStatusGitTracked:
+		return fmt.Sprintf("%s — covered by Git as `%s`", name, strings.ReplaceAll(attachment.RepositoryPath, "`", "\\`"))
+	case attachmentStatusTooLarge:
+		return fmt.Sprintf("%s — not archived: exceeds the 50 MiB limit", name)
+	case attachmentStatusBusy:
+		return fmt.Sprintf("%s — not archived yet: source was busy", name)
+	case attachmentStatusRemoteReference:
+		return fmt.Sprintf("%s — not archived: remote reference", name)
+	case attachmentStatusSensitive:
+		return fmt.Sprintf("%s — not archived: sensitive credential-like content", name)
+	default:
+		return fmt.Sprintf("%s — not archived: source unavailable", name)
+	}
+}
+
+func markdownEscape(value string) string {
+	replacer := strings.NewReplacer("\\", "\\\\", "[", "\\[", "]", "\\]", "*", "\\*", "_", "\\_", "`", "\\`")
+	return replacer.Replace(value)
+}
+
+func humanBytes(size int64) string {
+	const (
+		kiB = int64(1024)
+		miB = 1024 * kiB
+	)
+	if size >= miB {
+		return fmt.Sprintf("%.1f MiB", float64(size)/float64(miB))
+	}
+	if size >= kiB {
+		return fmt.Sprintf("%.1f KiB", float64(size)/float64(kiB))
+	}
+	return fmt.Sprintf("%d B", size)
 }
 
 func redact(value string) (string, int) {

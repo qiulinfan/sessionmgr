@@ -21,7 +21,7 @@ func TestGUIConfigAndIncrementalExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := `{"timestamp":"2026-08-05T01:00:00Z","type":"session_meta","payload":{"id":"gui-session","cwd":"/missing","git":{"repository_url":"https://github.com/example/gui.git"}}}
-{"timestamp":"2026-08-05T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"export through GUI"}}
+{"timestamp":"2026-08-05T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"export through GUI","attachments":[{"filename":"gui-note.txt","mime_type":"text/plain","file_data":"Z3VpIG5vdGUK"}]}}
 {"timestamp":"2026-08-05T01:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"done"}}
 `
 	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
@@ -59,9 +59,18 @@ func TestGUIConfigAndIncrementalExport(t *testing.T) {
 	if len(firstResponse.Result.Changes) != 1 || firstResponse.Result.Changes[0].Kind != "new" {
 		t.Fatalf("first GUI export changes: %+v", firstResponse.Result.Changes)
 	}
+	if firstResponse.Result.Attachments != 1 || firstResponse.Result.ArchivedAttachments != 1 {
+		t.Fatalf("GUI did not return attachment counts: %+v", firstResponse.Result)
+	}
+	if firstResponse.Result.Changes[0].Attachments != 1 || firstResponse.Result.Changes[0].ArchivedFiles != 1 {
+		t.Fatalf("GUI changeset omitted attachment counts: %+v", firstResponse.Result.Changes[0])
+	}
 	changePath := firstResponse.Result.Changes[0].Path
 	if filepath.Base(changePath) != "conversation.md" || strings.Contains(changePath, "sha256") || strings.Contains(changePath, "gui-session") {
 		t.Fatalf("GUI exposed a non-semantic document path: %s", changePath)
+	}
+	if data, err := os.ReadFile(filepath.Join(filepath.Dir(changePath), "attachments", "001-gui-note.txt")); err != nil || string(data) != "gui note\n" {
+		t.Fatalf("GUI attachment was not exported: %q, %v", data, err)
 	}
 	withDevice, err := store.Load()
 	if err != nil || withDevice.DeviceID == "" || withDevice.DeviceName == "" {

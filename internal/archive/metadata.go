@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -28,20 +29,36 @@ type repositoryMetadata struct {
 }
 
 type sessionMetadata struct {
-	SchemaVersion   int    `json:"schema_version"`
-	LayoutVersion   int    `json:"layout_version"`
-	RendererVersion int    `json:"renderer_version"`
-	RepositoryKey   string `json:"repository_key"`
-	RepositoryName  string `json:"repository_name"`
-	DeviceID        string `json:"device_id"`
-	DeviceName      string `json:"device_name"`
-	SessionID       string `json:"session_id"`
-	SessionKey      string `json:"session_key"`
-	Title           string `json:"title"`
-	SourceHash      string `json:"source_hash"`
-	DocumentHash    string `json:"document_hash"`
-	CreatedAt       string `json:"created_at,omitempty"`
-	UpdatedAt       string `json:"updated_at,omitempty"`
+	SchemaVersion           int                  `json:"schema_version"`
+	LayoutVersion           int                  `json:"layout_version"`
+	RendererVersion         int                  `json:"renderer_version"`
+	AttachmentSchemaVersion int                  `json:"attachment_schema_version,omitempty"`
+	RepositoryKey           string               `json:"repository_key"`
+	RepositoryName          string               `json:"repository_name"`
+	DeviceID                string               `json:"device_id"`
+	DeviceName              string               `json:"device_name"`
+	SessionID               string               `json:"session_id"`
+	SessionKey              string               `json:"session_key"`
+	Title                   string               `json:"title"`
+	SourceHash              string               `json:"source_hash"`
+	DocumentHash            string               `json:"document_hash"`
+	CreatedAt               string               `json:"created_at,omitempty"`
+	UpdatedAt               string               `json:"updated_at,omitempty"`
+	Attachments             []attachmentMetadata `json:"attachments,omitempty"`
+}
+
+type attachmentMetadata struct {
+	MessageIndex    int    `json:"message_index"`
+	AttachmentIndex int    `json:"attachment_index"`
+	Name            string `json:"name"`
+	MIMEType        string `json:"mime_type,omitempty"`
+	SourceKind      string `json:"source_kind"`
+	Status          string `json:"status"`
+	ArchivePath     string `json:"archive_path,omitempty"`
+	RepositoryPath  string `json:"repository_path,omitempty"`
+	GitCommit       string `json:"git_commit,omitempty"`
+	Size            int64  `json:"size,omitempty"`
+	ContentHash     string `json:"content_hash,omitempty"`
 }
 
 func repositoryRecord(repo Repository) repositoryMetadata {
@@ -52,14 +69,31 @@ func repositoryRecord(repo Repository) repositoryMetadata {
 }
 
 func sessionRecord(snapshot Snapshot, documentHash string) sessionMetadata {
-	return sessionMetadata{
+	record := sessionMetadata{
 		SchemaVersion: SchemaVersion, LayoutVersion: LayoutVersion, RendererVersion: RendererVersion,
-		RepositoryKey: snapshot.Repository.Key, RepositoryName: snapshot.Repository.Name,
+		AttachmentSchemaVersion: 1,
+		RepositoryKey:           snapshot.Repository.Key, RepositoryName: snapshot.Repository.Name,
 		DeviceID: snapshot.DeviceID, DeviceName: snapshot.DeviceName,
 		SessionID: snapshot.Session.ID, SessionKey: snapshot.SessionKey,
 		Title: snapshot.Session.Title, SourceHash: snapshot.Session.RawHash,
 		DocumentHash: documentHash, CreatedAt: formatTime(snapshot.Session.CreatedAt),
 		UpdatedAt: formatTime(snapshot.SourceUpdate),
+	}
+	for _, message := range snapshot.Session.Messages {
+		for _, attachment := range message.Attachments {
+			record.Attachments = append(record.Attachments, attachmentRecord(attachment))
+		}
+	}
+	return record
+}
+
+func attachmentRecord(value Attachment) attachmentMetadata {
+	return attachmentMetadata{
+		MessageIndex: value.MessageIndex, AttachmentIndex: value.AttachmentIndex,
+		Name: value.Name, MIMEType: value.MIMEType, SourceKind: value.SourceKind,
+		Status: value.Status, ArchivePath: value.ArchivePath,
+		RepositoryPath: value.RepositoryPath, GitCommit: value.GitCommit,
+		Size: value.Size, ContentHash: value.ContentHash,
 	}
 }
 
@@ -123,7 +157,60 @@ func validateSessionMetadata(value sessionMetadata) error {
 	if !validSHA256(value.SourceHash) || !validSHA256(value.DocumentHash) {
 		return fmt.Errorf("invalid source or document hash")
 	}
+	if value.AttachmentSchemaVersion != 0 && value.AttachmentSchemaVersion != 1 {
+		return fmt.Errorf("unsupported attachment metadata schema %d", value.AttachmentSchemaVersion)
+	}
+	if len(value.Attachments) > 0 && value.AttachmentSchemaVersion != 1 {
+		return fmt.Errorf("attachment metadata has no supported schema")
+	}
+	seen := make(map[string]bool, len(value.Attachments))
+	for _, attachment := range value.Attachments {
+		if err := validateAttachmentMetadata(attachment); err != nil {
+			return err
+		}
+		identity := fmt.Sprintf("%d/%d", attachment.MessageIndex, attachment.AttachmentIndex)
+		if seen[identity] {
+			return fmt.Errorf("duplicate attachment identity %s", identity)
+		}
+		seen[identity] = true
+	}
 	return nil
+}
+
+func validateAttachmentMetadata(value attachmentMetadata) error {
+	if value.MessageIndex < 1 || value.AttachmentIndex < 1 || strings.TrimSpace(value.Name) == "" || value.SourceKind == "" {
+		return fmt.Errorf("incomplete attachment metadata")
+	}
+	switch value.Status {
+	case attachmentStatusArchived:
+		if !validAttachmentPath(value.ArchivePath) || !validSHA256(value.ContentHash) || value.Size < 0 || value.Size > MaxAttachmentBytes {
+			return fmt.Errorf("invalid archived attachment metadata")
+		}
+	case attachmentStatusGitTracked:
+		if value.RepositoryPath == "" || value.GitCommit == "" || !validSHA256(value.ContentHash) || value.Size < 0 || value.Size > MaxAttachmentBytes {
+			return fmt.Errorf("invalid Git attachment metadata")
+		}
+		clean := pathpkg.Clean(value.RepositoryPath)
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || pathpkg.IsAbs(clean) || clean != value.RepositoryPath {
+			return fmt.Errorf("unsafe Git attachment path")
+		}
+	case attachmentStatusTooLarge:
+		if value.Size <= MaxAttachmentBytes {
+			return fmt.Errorf("invalid oversized attachment metadata")
+		}
+	case attachmentStatusBusy, attachmentStatusUnavailable, attachmentStatusRemoteReference, attachmentStatusSensitive:
+		if value.ArchivePath != "" {
+			return fmt.Errorf("unarchived attachment has an archive path")
+		}
+	default:
+		return fmt.Errorf("unknown attachment status %q", value.Status)
+	}
+	return nil
+}
+
+func validAttachmentPath(value string) bool {
+	clean := pathpkg.Clean(value)
+	return strings.HasPrefix(clean, "attachments/") && clean == value && !pathpkg.IsAbs(clean) && !strings.Contains(clean, "../")
 }
 
 func validSHA256(value string) bool {

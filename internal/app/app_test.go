@@ -21,7 +21,7 @@ func TestConfiguredExportShowsOnlyCurrentChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := `{"timestamp":"2026-08-05T01:00:00Z","type":"session_meta","payload":{"id":"cli-session","cwd":"/missing","git":{"repository_url":"git@github.com:example/cli.git"}}}
-{"timestamp":"2026-08-05T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"archive me"}}
+{"timestamp":"2026-08-05T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"archive me","attachments":[{"filename":"cli-note.txt","mime_type":"text/plain","file_data":"Y2xpIG5vdGUK"}]}}
 {"timestamp":"2026-08-05T01:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"archived"}}
 `
 	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
@@ -41,13 +41,19 @@ func TestConfiguredExportShowsOnlyCurrentChanges(t *testing.T) {
 		t.Fatalf("export failed: code=%d err=%v stderr=%s", code, err, stderr.String())
 	}
 	var exported struct {
-		Created int `json:"created"`
-		Changes []struct {
+		Created             int `json:"created"`
+		Attachments         int `json:"attachments"`
+		ArchivedAttachments int `json:"archived_attachments"`
+		Changes             []struct {
 			Kind string `json:"kind"`
 		} `json:"changes"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &exported); err != nil || exported.Created != 1 || len(exported.Changes) != 1 || exported.Changes[0].Kind != "new" {
+	if err := json.Unmarshal(stdout.Bytes(), &exported); err != nil || exported.Created != 1 || exported.Attachments != 1 || exported.ArchivedAttachments != 1 || len(exported.Changes) != 1 || exported.Changes[0].Kind != "new" {
 		t.Fatalf("unexpected export JSON: %s (%v)", stdout.String(), err)
+	}
+	attachmentMatches, err := filepath.Glob(filepath.Join(output, "repositories", "github.com", "example", "cli", "sessions", "*", "*", "attachments", "001-cli-note.txt"))
+	if err != nil || len(attachmentMatches) != 1 {
+		t.Fatalf("CLI attachment path missing: %v, %v", attachmentMatches, err)
 	}
 
 	stdout.Reset()
