@@ -283,9 +283,17 @@ func TestNonGitDirectoryRequiresOptInAndIsFullyRepublished(t *testing.T) {
 	if first.SchemaVersion != ExportResultSchemaVersion {
 		t.Fatalf("non-Git export used result schema %d, want %d", first.SchemaVersion, ExportResultSchemaVersion)
 	}
-	wantRepositoryDir := filepath.Join(output, "non-git-test-device", "scratch-notes")
+	wantRepositoryDir := filepath.Join(output, "(non-git)test-device", "scratch-notes")
 	if !strings.HasPrefix(first.Changes[0].Path, wantRepositoryDir+string(filepath.Separator)) {
 		t.Fatalf("non-Git export used an unexpected path: %s", first.Changes[0].Path)
+	}
+	relativeDocument, err := filepath.Rel(wantRepositoryDir, first.Changes[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(relativeDocument, string(filepath.Separator))
+	if len(parts) != 2 || parts[1] != conversationName {
+		t.Fatalf("non-Git export retained a duplicate device directory: %s", relativeDocument)
 	}
 	metadataPath := filepath.Join(wantRepositoryDir, repositoryMetadataName)
 	privatePrefix := []byte(filepath.Dir(localDirectory))
@@ -341,6 +349,106 @@ func TestNonGitDirectoryRequiresOptInAndIsFullyRepublished(t *testing.T) {
 	}
 	if data, readErr := os.ReadFile(documentPath); readErr != nil || string(data) != "manual edit\n" {
 		t.Fatalf("manual edit was not preserved: %q, %v", data, readErr)
+	}
+}
+
+func TestNonGitDraftLayoutMigratesToParenthesizedRootWithoutDuplicateDevice(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	localDirectory := filepath.Join(root, "scratch notes")
+	if err := os.MkdirAll(localDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSessionFixtureWithCWD(t, codexHome, "local-migration", localDirectory, "", "local answer")
+	opts := testExportOptions(codexHome, output)
+	opts.IncludeNonGit = true
+	first, err := Export(context.Background(), opts)
+	if err != nil || len(first.Changes) != 1 {
+		t.Fatalf("initial non-Git export failed: %+v, %v", first, err)
+	}
+
+	newRepositoryDir := filepath.Join(output, "(non-git)test-device", "scratch-notes")
+	draftRoot := filepath.Join(output, "non-git-test-device")
+	draftRepositoryDir := filepath.Join(draftRoot, "scratch-notes")
+	draftDeviceDir := filepath.Join(draftRepositoryDir, "test-device")
+	if err := os.MkdirAll(draftDeviceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(newRepositoryDir, repositoryMetadataName), filepath.Join(draftRepositoryDir, repositoryMetadataName)); err != nil {
+		t.Fatal(err)
+	}
+	newSessionDir := filepath.Dir(first.Changes[0].Path)
+	draftSessionDir := filepath.Join(draftDeviceDir, filepath.Base(newSessionDir))
+	if err := os.Rename(newSessionDir, draftSessionDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(newRepositoryDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Dir(newRepositoryDir)); err != nil {
+		t.Fatal(err)
+	}
+
+	draftEntries, err := List(ListOptions{Output: output})
+	if err != nil || len(draftEntries) != 1 || filepath.Dir(draftEntries[0].Path) != draftSessionDir {
+		t.Fatalf("draft non-Git layout was not readable: %+v, %v", draftEntries, err)
+	}
+	migrated, err := Export(context.Background(), opts)
+	if err != nil || migrated.FullExported != 1 || len(migrated.Changes) != 1 || migrated.Changes[0].Kind != "full" {
+		t.Fatalf("draft non-Git layout did not migrate: %+v, %v", migrated, err)
+	}
+	wantDocument := filepath.Join(newRepositoryDir, filepath.Base(newSessionDir), conversationName)
+	if filepath.Clean(migrated.Changes[0].Path) != filepath.Clean(wantDocument) {
+		t.Fatalf("migrated non-Git document path = %s, want %s", migrated.Changes[0].Path, wantDocument)
+	}
+	if _, err := os.Lstat(filepath.Join(newRepositoryDir, "test-device")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("migration retained a duplicate device directory: %v", err)
+	}
+	if _, err := os.Lstat(draftRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("migration retained the empty draft root: %v", err)
+	}
+	entries, err := List(ListOptions{Output: output})
+	if err != nil || len(entries) != 1 || filepath.Clean(entries[0].Path) != filepath.Clean(wantDocument) {
+		t.Fatalf("migrated non-Git layout was not uniquely listable: %+v, %v", entries, err)
+	}
+}
+
+func TestNonGitDraftCleanupPreservesUnownedFiles(t *testing.T) {
+	root := t.TempDir()
+	localDirectory := filepath.Join(root, "scratch notes")
+	if err := os.MkdirAll(localDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repository, err := localDirectoryRepositoryFromPath(localDirectory, "device:test", "test-device")
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "archive")
+	draftRepositoryDir := filepath.Join(output, semanticLocalRepositoryDirectoryDraft(repository))
+	draftDeviceDir := filepath.Join(draftRepositoryDir, "test-device")
+	if err := os.MkdirAll(draftDeviceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := marshalMetadata(repositoryRecord(repository))
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataPath := filepath.Join(draftRepositoryDir, repositoryMetadataName)
+	if err := os.WriteFile(metadataPath, metadata, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unownedPath := filepath.Join(draftRepositoryDir, "keep.txt")
+	if err := os.WriteFile(unownedPath, []byte("user data\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previousDocument := filepath.Join(draftDeviceDir, "moved-session", conversationName)
+	removeEmptyDraftLocalRepository(output, repository, previousDocument)
+	if data, err := os.ReadFile(unownedPath); err != nil || string(data) != "user data\n" {
+		t.Fatalf("draft cleanup removed or changed an unowned file: %q, %v", data, err)
+	}
+	if _, err := os.Stat(metadataPath); err != nil {
+		t.Fatalf("draft cleanup removed repository metadata beside an unowned file: %v", err)
 	}
 }
 

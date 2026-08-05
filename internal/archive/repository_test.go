@@ -118,8 +118,11 @@ func TestLocalDirectoryRepositoryIdentityIsDeviceScoped(t *testing.T) {
 	if first.Key != repeated.Key || first.Key == otherDevice.Key || first.Kind != repositoryKindLocalDirectory {
 		t.Fatalf("unexpected local identities: first=%+v repeated=%+v other=%+v", first, repeated, otherDevice)
 	}
-	if got := semanticRepositoryDirectory(first); got != filepath.Join("non-git-workstation", "loose-notes") {
+	if got := semanticRepositoryDirectory(first); got != filepath.Join("(non-git)workstation", "loose-notes") {
 		t.Fatalf("unexpected local semantic path %q", got)
+	}
+	if got := semanticLocalRepositoryDirectoryDraft(first); got != filepath.Join("non-git-workstation", "loose-notes") {
+		t.Fatalf("unexpected draft local semantic path %q", got)
 	}
 }
 

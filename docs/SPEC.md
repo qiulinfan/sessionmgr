@@ -102,8 +102,9 @@ directory_key = sha256("local-directory-v1\0" + device_id + "\0" + directory_id)
 该 key 只在当前 device identity 下稳定，不声称跨设备表示同一个目录。绝对 CWD 只作为
 hash 输入，绝不写入 Markdown、repository sidecar、session sidecar 或 CLI/GUI changeset。
 可见 repository name 为 `non-git:<directory-name>`，可见路径为
-`non-git-<device-name>/<directory-name>`。目录名或设备名规范化碰撞由 hidden identity
-检测并拒绝，不增加可见 hash 后缀。
+`(non-git)<device-name>/<directory-name>`。括号前缀明确区分 local identity；根目录已经
+表达 device scope，因此 session 直接位于 directory identity 下，不再重复 device 目录。
+目录名或设备名规范化碰撞由 hidden identity 检测并拒绝，不增加可见 hash 后缀。
 
 ## 4. Identity and change hashes / layout v5 / renderer v6
 
@@ -130,16 +131,17 @@ document_hash = sha256(rendered_conversation_md_bytes)
     └── attachments/                  # only when archived bytes exist
         └── <sequence>-<readable-name>
 
-<export-directory>/non-git-<device-name>/<directory-name>/
+<export-directory>/(non-git)<device-name>/<directory-name>/
 ├── .sessionmgr-repository.json
-└── <device-name>/<created-time>--<session-title>/
+└── <created-time>--<session-title>/
     ├── .sessionmgr-session.json
     ├── conversation.md
     └── attachments/
 ```
 
-可见路径只承担语义：导出根目录下不存在 `repositories/` wrapper，repository 与 device
-之间也不存在 `sessions/` wrapper。canonical remote 的
+可见路径只承担语义：导出根目录下不存在 `repositories/` wrapper，hosted repository 与
+device 之间也不存在 `sessions/` wrapper；local-directory repository 的 device 已在
+`(non-git)<device-name>` 根中表达，不创建第二个 device component。canonical remote 的
 最后一段是 repository 名，其余 host + owner/多级 namespace 以 `-` 合并为第一层；
 例如 `github.com/qiulinfan/sessionmgr` 得到 `github.com-qiulinfan/sessionmgr`。repository
 namespace、设备名、UTC 创建时间和最新标题经过跨平台安全的 component 规范化，
@@ -425,6 +427,12 @@ repository 时创建 repository metadata schema v2；v0.5 reader 同时支持 ho
 local schema v2。v0.4 binary 遇到 local schema v2 会 fail closed，但仍可读取未混入 local
 directory sidecar 的旧 hosted archive。export JSON 从 schema v1 升为 v2，新增两个计数和
 `full` change kind；调用方必须在升级后接受该 schema 才能使用 v0.5 automation。
+
+v0.5 development 期间短暂使用过
+`non-git-<device>/<directory>/<device>/<session>` 草案路径。当前 reader 仍严格识别该路径；
+下一次显式 non-Git 全量导出会先验证 document、attachment、session sidecar 和 repository
+identity，再移动到 `(non-git)<device>/<directory>/<session>`。只有内容完全匹配规范
+repository sidecar 且旧目录已空时，才清理旧草案根；额外文件或人工修改会保留旧目录。
 
 layout v4 只改变 repository 可见路径；layout v5 进一步移除 repository 与 device 之间的
 `sessions/` wrapper。schema v1、repository key、session key 与 attachment schema v1

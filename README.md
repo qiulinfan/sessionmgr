@@ -138,14 +138,13 @@ sessionmgr cleanup-internal --directory /path/to/session-archive --apply
                     └── 001-<readable-file-name>
 
 <configured-directory>/
-└── non-git-<device-name>/
+└── (non-git)<device-name>/
     └── <directory-name>/
         ├── .sessionmgr-repository.json
-        └── <device-name>/
-            └── <created-time>--<session-title>/
-                ├── .sessionmgr-session.json
-                ├── conversation.md
-                └── attachments/
+        └── <created-time>--<session-title>/
+            ├── .sessionmgr-session.json
+            ├── conversation.md
+            └── attachments/
 ```
 
 - repository key 来自去掉协议和凭据后的 hosted Git remote；同一仓库的 SSH 与
@@ -153,11 +152,12 @@ sessionmgr cleanup-internal --directory /path/to/session-archive --apply
 - 导出根目录下直接是 `<host>-<owner-or-namespace>/<repo>`；不再有 `repositories/`
   wrapper，host 与用户/多级 namespace 合并为一层，例如
   `github.com-qiulinfan/sessionmgr`。
-- repository 后直接是 `<device-name>`；当前布局不再创建多余的 `sessions/` wrapper。
+- hosted repository 后直接是 `<device-name>`；当前布局不再创建多余的 `sessions/`
+  wrapper。非 Git根目录已经包含设备名，因此 session 直接放在目录身份下面，不重复设备层。
 - 没有 hosted remote 的 session 默认不导出；`--include-non-git` 或 GUI 对应选项开启后，
   按其稳定 CWD 与当前 device ID 组成的本机目录身份全量导出。
 - 非 Git身份的绝对路径只参与本机 hash 计算，不进入 Markdown 或隐藏 sidecar。可见路径用
-  `non-git-<device-name>/<directory-name>`；同名规范化碰撞仍拒绝覆盖。
+  `(non-git)<device-name>/<directory-name>`；同名规范化碰撞仍拒绝覆盖。
 - 每台机器首次导出时在本地配置中生成持久 device ID；session key 由 device ID 与
   Codex 原生 session ID 共同生成。
 - hash 不出现在可见目录或 Markdown 文件名中。repository/session identity、source hash

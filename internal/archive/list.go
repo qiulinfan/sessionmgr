@@ -142,7 +142,14 @@ func readRepositoryEntries(root, repositoryDir string) ([]Entry, error) {
 	} else {
 		expected = filepath.Join(root, semanticRepositoryDirectory(repo))
 	}
-	if filepath.Clean(repositoryDir) != filepath.Clean(expected) {
+	locationMatches := filepath.Clean(repositoryDir) == filepath.Clean(expected)
+	draftLocalLocation := false
+	if !locationMatches && repository.RepositoryKind == repositoryKindLocalDirectory {
+		draft := filepath.Join(root, semanticLocalRepositoryDirectoryDraft(repo))
+		locationMatches = filepath.Clean(repositoryDir) == filepath.Clean(draft)
+		draftLocalLocation = locationMatches
+	}
+	if !locationMatches {
 		return nil, fmt.Errorf("read %s: repository metadata is outside its semantic path", metadataPath)
 	}
 	var result []Entry
@@ -167,9 +174,12 @@ func readRepositoryEntries(root, repositoryDir string) ([]Entry, error) {
 			return fmt.Errorf("read %s: local-directory session uses unsupported layout %d", path, metadata.LayoutVersion)
 		}
 		sessionDir := filepath.Dir(path)
-		deviceDir := filepath.Dir(sessionDir)
-		if !validSessionMetadataLocation(repositoryDir, repository.LayoutVersion, deviceDir, metadata.LayoutVersion) {
-			return fmt.Errorf("read %s: session metadata is outside its semantic device directory", path)
+		locationValid := validSessionMetadataLocation(repositoryDir, repository.LayoutVersion, filepath.Dir(sessionDir), metadata.LayoutVersion)
+		if repository.RepositoryKind == repositoryKindLocalDirectory {
+			locationValid = validLocalSessionMetadataLocation(repositoryDir, sessionDir, metadata, draftLocalLocation)
+		}
+		if !locationValid {
+			return fmt.Errorf("read %s: session metadata is outside its semantic session directory", path)
 		}
 		if repository.RepositoryKey != metadata.RepositoryKey || repository.RepositoryName != metadata.RepositoryName {
 			return fmt.Errorf("read %s: session and repository identities do not match", path)
@@ -193,6 +203,18 @@ func readRepositoryEntries(root, repositoryDir string) ([]Entry, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+func validLocalSessionMetadataLocation(repositoryDir, sessionDir string, metadata sessionMetadata, draftRepository bool) bool {
+	if metadata.LayoutVersion != LayoutVersion {
+		return false
+	}
+	if !draftRepository {
+		return filepath.Clean(filepath.Dir(sessionDir)) == filepath.Clean(repositoryDir)
+	}
+	draftDeviceDir := filepath.Dir(sessionDir)
+	return filepath.Clean(filepath.Dir(draftDeviceDir)) == filepath.Clean(repositoryDir) &&
+		filepath.Base(draftDeviceDir) == semanticComponent(metadata.DeviceName, "device")
 }
 
 func validSessionMetadataLocation(repositoryDir string, repositoryLayout int, deviceDir string, sessionLayout int) bool {

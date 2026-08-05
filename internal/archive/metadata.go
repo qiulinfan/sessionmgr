@@ -336,7 +336,7 @@ func replaceOwnedFile(path string, data []byte) error {
 
 func semanticRepositoryDirectory(repo Repository) string {
 	if repo.Kind == repositoryKindLocalDirectory {
-		namespace := semanticComponent("non-git-"+repo.DeviceName, "non-git-device")
+		namespace := "(non-git)" + semanticComponent(repo.DeviceName, "device")
 		name := semanticComponent(repo.DirectoryName, "directory")
 		return filepath.Join(namespace, name)
 	}
@@ -346,6 +346,15 @@ func semanticRepositoryDirectory(repo Repository) string {
 	}
 	namespace := semanticComponent(strings.Join(parts[:len(parts)-1], "-"), "repository")
 	name := semanticComponent(parts[len(parts)-1], "repository")
+	return filepath.Join(namespace, name)
+}
+
+// semanticLocalRepositoryDirectoryDraft is the v0.5 development layout used
+// before the local repository root gained an unambiguous parenthesized prefix.
+// It remains readable only so owned draft exports can move to the final layout.
+func semanticLocalRepositoryDirectoryDraft(repo Repository) string {
+	namespace := semanticComponent("non-git-"+repo.DeviceName, "non-git-device")
+	name := semanticComponent(repo.DirectoryName, "directory")
 	return filepath.Join(namespace, name)
 }
 

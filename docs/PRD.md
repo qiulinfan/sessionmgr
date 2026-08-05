@@ -92,7 +92,8 @@ hosted Git remote key | device-local directory key
 - host 与 Git owner/多级 namespace 必须合并为一个跨平台安全 component，例如
   `github.com-qiulinfan/sessionmgr` 与 `gitlab.com-team-platform/project`；
 - hosted repository 的完整 key 与 canonical remote 必须保存在 `.sessionmgr-repository.json`。
-- 非 Git目录可见路径必须是 `non-git-<device-name>/<directory-name>`；repository metadata
+- 非 Git目录可见路径必须是 `(non-git)<device-name>/<directory-name>`，session 直接位于
+  directory identity 下且不得重复增加 device 目录；repository metadata
   使用 schema v2 保存 `local_directory` kind、可读目录名与设备 identity，但不得保存绝对 CWD；
 
 ### FR-4 Markdown export
@@ -246,8 +247,8 @@ hosted Git remote key | device-local directory key
     文档，人工编辑或额外文件会阻止清理，raw Codex JSONL 保持逐字节不变。
 34. CLI `--include-non-git` 与 GUI 对应复选框都能导出真实存在、没有 hosted remote 的 CWD。
 35. 非 Git目录第一次导出显示 `new`，重复执行显示 `full`，并继续拒绝覆盖人工修改。
-36. 非 Git session 使用 `non-git-<device>/<directory>` 可见布局；绝对 CWD 不出现在 Markdown
-    或 repository/session sidecar 中。
+36. 非 Git session 使用 `(non-git)<device>/<directory>/<session>` 可见布局，只出现一次
+    device；绝对 CWD 不出现在 Markdown 或 repository/session sidecar 中。
 37. 非 Git Guardian、spawned subagent、runtime context 与敏感内容仍经过和 hosted Git
     session 完全相同的过滤、脱敏与附件策略。
 38. 非 Git source 后来消失时，既有全量归档仍保留，不推导删除或 tombstone。

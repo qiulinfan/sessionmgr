@@ -200,8 +200,11 @@ func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, 
 	if err := publishRepositoryMetadata(repositoryDir, snapshot.Repository); err != nil {
 		return false, "", "", fmt.Errorf("publish repository identity: %w", err)
 	}
-	deviceDir := semanticComponent(snapshot.DeviceName, "device")
-	desiredDir := filepath.Join(repositoryDir, deviceDir, semanticSessionDirectory(*snapshot))
+	sessionParent := repositoryDir
+	if snapshot.Repository.Kind != repositoryKindLocalDirectory {
+		sessionParent = filepath.Join(repositoryDir, semanticComponent(snapshot.DeviceName, "device"))
+	}
+	desiredDir := filepath.Join(sessionParent, semanticSessionDirectory(*snapshot))
 
 	if len(history) > 0 {
 		latest := history[0]
@@ -221,8 +224,12 @@ func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, 
 		document := renderSnapshot(*snapshot)
 		documentHash := digestBytes(document)
 		record := sessionRecord(*snapshot, documentHash)
-		return updatePublishedSession(latest, desiredDir, document, record, snapshot.Session,
+		changed, documentPath, hash, err := updatePublishedSession(latest, desiredDir, document, record, snapshot.Session,
 			snapshot.Repository.Kind == repositoryKindLocalDirectory)
+		if err == nil && snapshot.Repository.Kind == repositoryKindLocalDirectory {
+			removeEmptyDraftLocalRepository(output, snapshot.Repository, latest.Path)
+		}
+		return changed, documentPath, hash, err
 	}
 
 	metadataPath := filepath.Join(desiredDir, sessionMetadataName)
@@ -273,6 +280,45 @@ func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, 
 		return false, "", "", err
 	}
 	return true, documentPath, documentHash, nil
+}
+
+func removeEmptyDraftLocalRepository(output string, repo Repository, previousDocumentPath string) {
+	draftRepositoryDir := filepath.Join(output, semanticLocalRepositoryDirectoryDraft(repo))
+	newRepositoryDir := filepath.Join(output, semanticRepositoryDirectory(repo))
+	if filepath.Clean(draftRepositoryDir) == filepath.Clean(newRepositoryDir) {
+		return
+	}
+	previousSessionDir := filepath.Dir(previousDocumentPath)
+	draftDeviceDir := filepath.Dir(previousSessionDir)
+	if filepath.Clean(filepath.Dir(draftDeviceDir)) != filepath.Clean(draftRepositoryDir) ||
+		filepath.Base(draftDeviceDir) != semanticComponent(repo.DeviceName, "device") {
+		return
+	}
+	// A remaining session or user file keeps the draft tree in place.
+	if err := os.Remove(draftDeviceDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	entries, err := os.ReadDir(draftRepositoryDir)
+	if err != nil || len(entries) != 1 || entries[0].Name() != repositoryMetadataName ||
+		entries[0].Type()&os.ModeSymlink != 0 || !entries[0].Type().IsRegular() {
+		return
+	}
+	want, err := marshalMetadata(repositoryRecord(repo))
+	if err != nil {
+		return
+	}
+	metadataPath := filepath.Join(draftRepositoryDir, repositoryMetadataName)
+	current, err := readRegularFileNoSymlink(metadataPath)
+	if err != nil || !bytes.Equal(current, want) {
+		return
+	}
+	if err := os.Remove(metadataPath); err != nil {
+		return
+	}
+	if err := os.Remove(draftRepositoryDir); err != nil {
+		return
+	}
+	_ = os.Remove(filepath.Dir(draftRepositoryDir))
 }
 
 func updatePublishedSession(previous Entry, desiredDir string, document []byte, record sessionMetadata, session Session, forceFull bool) (bool, string, string, error) {
