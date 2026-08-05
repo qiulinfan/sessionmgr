@@ -100,17 +100,24 @@ func digestBytes(value []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func repositoryDirectory(repo Repository) string {
-	hexKey := strings.TrimPrefix(repo.Key, "sha256:")
-	return slug(repo.Name) + "--" + hexKey
+var windowsReservedNames = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true,
+	"com1": true, "com2": true, "com3": true, "com4": true, "com5": true,
+	"com6": true, "com7": true, "com8": true, "com9": true,
+	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true, "lpt5": true,
+	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
 }
 
-func slug(value string) string {
+// semanticComponent keeps the visible archive useful to humans while staying
+// portable across macOS, Linux, and Windows. It is not an identity function;
+// hidden metadata detects the rare case where two identities normalize to the
+// same visible path.
+func semanticComponent(value, fallback string) string {
 	value = strings.TrimSpace(value)
 	var result []rune
 	dash := false
 	for _, r := range value {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '_' || r == '-' {
 			result = append(result, unicode.ToLower(r))
 			dash = false
 			continue
@@ -120,13 +127,18 @@ func slug(value string) string {
 			dash = true
 		}
 	}
-	result = []rune(strings.Trim(string(result), "-"))
-	if len(result) == 0 {
-		return "repository"
+	clean := strings.Trim(string(result), " .-_")
+	if clean == "" || clean == "." || clean == ".." {
+		clean = fallback
 	}
+	reservedStem, _, _ := strings.Cut(strings.ToLower(clean), ".")
+	if windowsReservedNames[reservedStem] {
+		clean = "_" + clean
+	}
+	runes := []rune(clean)
 	bytes := 0
-	limit := len(result)
-	for index, r := range result {
+	limit := len(runes)
+	for index, r := range runes {
 		width := utf8.RuneLen(r)
 		if bytes+width > 80 {
 			limit = index
@@ -134,5 +146,9 @@ func slug(value string) string {
 		}
 		bytes += width
 	}
-	return strings.TrimRight(string(result[:limit]), "-")
+	clean = strings.TrimRight(string(runes[:limit]), " .")
+	if clean == "" {
+		return fallback
+	}
+	return clean
 }

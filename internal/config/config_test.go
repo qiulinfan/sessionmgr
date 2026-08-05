@@ -35,6 +35,34 @@ func TestResolveDirectoryRequiresConfiguration(t *testing.T) {
 	}
 }
 
+func TestEnsureDevicePersistsStableMachineIdentity(t *testing.T) {
+	root := t.TempDir()
+	store := Store{Path: filepath.Join(root, "config.json")}
+	directory := filepath.Join(root, "exports")
+	if _, err := store.SetExportDirectory(directory); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.EnsureDevice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.EnsureDevice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.DeviceID == "" || first.DeviceName == "" || first.DeviceID != second.DeviceID || first.DeviceName != second.DeviceName {
+		t.Fatalf("device identity was not stable: %+v / %+v", first, second)
+	}
+	newDirectory := filepath.Join(root, "other-exports")
+	updated, err := store.SetExportDirectory(newDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.DeviceID != first.DeviceID || updated.DeviceName != first.DeviceName {
+		t.Fatalf("directory change erased device identity: %+v", updated)
+	}
+}
+
 func TestStoreRefusesConfigSymlink(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "target.json")

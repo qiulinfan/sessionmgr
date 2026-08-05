@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sessionmgr/sessionmgr/internal/config"
@@ -57,6 +58,14 @@ func TestGUIConfigAndIncrementalExport(t *testing.T) {
 	firstResponse := decodeExportResponse(t, firstResult)
 	if len(firstResponse.Result.Changes) != 1 || firstResponse.Result.Changes[0].Kind != "new" {
 		t.Fatalf("first GUI export changes: %+v", firstResponse.Result.Changes)
+	}
+	changePath := firstResponse.Result.Changes[0].Path
+	if filepath.Base(changePath) != "conversation.md" || strings.Contains(changePath, "sha256") || strings.Contains(changePath, "gui-session") {
+		t.Fatalf("GUI exposed a non-semantic document path: %s", changePath)
+	}
+	withDevice, err := store.Load()
+	if err != nil || withDevice.DeviceID == "" || withDevice.DeviceName == "" {
+		t.Fatalf("GUI did not persist device identity: %+v, %v", withDevice, err)
 	}
 
 	second := authenticatedRequest(http.MethodPost, "/api/export", map[string]string{"scope": "all"})

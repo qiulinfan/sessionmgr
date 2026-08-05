@@ -2,6 +2,8 @@ package config
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,8 @@ const SchemaVersion = 1
 type Config struct {
 	SchemaVersion   int    `json:"schema_version"`
 	ExportDirectory string `json:"export_directory"`
+	DeviceID        string `json:"device_id,omitempty"`
+	DeviceName      string `json:"device_name,omitempty"`
 }
 
 type Store struct {
@@ -62,7 +66,8 @@ func (store Store) SetExportDirectory(directory string) (Config, error) {
 	if directory == "" {
 		return Config{}, fmt.Errorf("export directory is required")
 	}
-	if _, err := store.Load(); err != nil {
+	current, err := store.Load()
+	if err != nil {
 		return Config{}, err
 	}
 	abs, err := filepath.Abs(directory)
@@ -79,11 +84,48 @@ func (store Store) SetExportDirectory(directory string) (Config, error) {
 	if !info.IsDir() {
 		return Config{}, fmt.Errorf("export path is not a directory: %s", abs)
 	}
-	result := Config{SchemaVersion: SchemaVersion, ExportDirectory: filepath.Clean(abs)}
+	result := Config{
+		SchemaVersion: SchemaVersion, ExportDirectory: filepath.Clean(abs),
+		DeviceID: current.DeviceID, DeviceName: current.DeviceName,
+	}
 	if err := store.save(result); err != nil {
 		return Config{}, err
 	}
 	return result, nil
+}
+
+// EnsureDevice returns a stable, machine-local identity. It is intentionally
+// kept in the local config rather than the Git-managed export directory so two
+// machines never inherit the same device identity by pulling the archive.
+func (store Store) EnsureDevice() (Config, error) {
+	value, err := store.Load()
+	if err != nil {
+		return Config{}, err
+	}
+	changed := false
+	if strings.TrimSpace(value.DeviceID) == "" {
+		data := make([]byte, 16)
+		if _, err := rand.Read(data); err != nil {
+			return Config{}, fmt.Errorf("create device identity: %w", err)
+		}
+		value.DeviceID = "device:" + hex.EncodeToString(data)
+		changed = true
+	}
+	if strings.TrimSpace(value.DeviceName) == "" {
+		name, _ := os.Hostname()
+		name = strings.TrimSpace(name)
+		if name == "" {
+			name = "device"
+		}
+		value.DeviceName = name
+		changed = true
+	}
+	if changed {
+		if err := store.save(value); err != nil {
+			return Config{}, err
+		}
+	}
+	return value, nil
 }
 
 func (store Store) save(value Config) error {

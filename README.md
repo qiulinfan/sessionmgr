@@ -22,7 +22,7 @@ sessionmgr gui
 
 - 选择、保存并恢复导出目录；
 - 导出全部 Git 仓库或当前 Git 仓库的 sessions；
-- 只显示本次新增、更新或重命名的 Markdown 快照；
+- 只显示本次新增、更新或重命名的 Markdown 文档；
 - 没有变化时显示明确的“已经是最新状态”。
 
 目录选择器在 macOS 使用系统对话框，在 Windows 使用 Folder Browser，在 Linux
@@ -67,6 +67,8 @@ No changes.
 ```
 
 `export`、`config`、`list` 支持 `--json`。`archive` 仍作为 `export` 的兼容别名。
+人类可读的 CLI 表格不显示 hash；完整 identity/change hash 仅在 JSON 和隐藏 sidecar
+中供校验与自动化使用。
 
 ## 持久配置
 
@@ -83,25 +85,36 @@ No changes.
 ```text
 <configured-directory>/
 └── repositories/
-    └── <repo-name>--<repository-sha256>/
-        ├── repository.md
+    └── github.com/<owner>/<repo>/
+        ├── .sessionmgr-repository.json
         └── sessions/
-            └── <codex-session-id>/
-                └── <session-title>--<snapshot-sha256>.md
+            └── <device-name>/
+                └── <created-time>--<session-title>/
+                    ├── .sessionmgr-session.json
+                    └── conversation.md
 ```
 
 - repository key 来自去掉协议和凭据后的 hosted Git remote；同一仓库的 SSH 与
   HTTPS clone 使用同一个键。
 - 没有 hosted remote 的 session 不会被猜测归类，而是明确跳过并给出 warning。
-- session 内容更新或名称改变时新增一个不可变 hash 文件。
-- 相同快照重复导出是 no-op；不同机器产生的文件可由普通 Git 合并。
-- 文件名保留当前 session 标题，完整 hash 负责唯一性。
+- 每台机器首次导出时在本地配置中生成持久 device ID；session key 由 device ID 与
+  Codex 原生 session ID 共同生成。
+- hash 不出现在可见目录或 Markdown 文件名中。repository/session identity、source hash
+  和 document hash 分别保存在两个隐藏的 `.sessionmgr-*.json` 文件中。
+- 每个设备/session 只有一个 `conversation.md`；内容更新时安全更新它，名称改变时重命名
+  语义目录，旧版本由 Git 历史保存。
+- 重复导出相同内容是 no-op；不同机器按可读设备目录产生文件，可由普通 Git 合并。
+- 更新前会校验 document hash；手工改过的 Markdown 或语义目录 identity collision 不会
+  被覆盖，而会作为 skipped 项提示。
+
+v0.3 开发早期产生的 hash-named v1/v2 文件仍可用 `sessionmgr list --history` 查看。
+程序不会自动删除或重写它们，避免未确认地破坏已有归档；后续 v3 导出使用上面的新布局。
 
 导出不会锁住 Codex 的源文件。所有 JSONL 共用一次短暂稳定观察窗口；在窗口内仍在
 变化、读取时被替换、被操作系统报告为锁定，或尾部记录不完整的 session 会记入 JSON
 结果的 `busy` 计数并留到下次处理。`busy` 不产生 warning 或失败退出码。
 
-每个 Markdown 快照包含明确的时间轴：创建时间、第一条和最后一条可读消息时间、最后
+每个 Markdown 文档包含明确的时间轴：创建时间、第一条和最后一条可读消息时间、最后
 一条源事件时间、标题更新时间，以及用户/助手消息数量。正文保持源文件顺序，并在每条
 消息标题上显示其原始 UTC 时间；源记录没有 timestamp 时不会使用文件时间猜测。
 

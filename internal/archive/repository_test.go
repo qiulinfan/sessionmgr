@@ -43,13 +43,25 @@ func TestRepositoryNameUsesRemotePathOnEveryPlatform(t *testing.T) {
 	}
 }
 
-func TestSlugIsSafeForUnicodePathComponents(t *testing.T) {
-	result := slug(strings.Repeat("归档", 100))
+func TestSemanticComponentIsLimitedForUnicodePathComponents(t *testing.T) {
+	result := semanticComponent(strings.Repeat("归档", 100), "repository")
 	if len([]byte(result)) > 80 {
 		t.Fatalf("slug is %d bytes, want at most 80", len([]byte(result)))
 	}
 	if result == "" {
 		t.Fatal("unicode slug became empty")
+	}
+}
+
+func TestSemanticComponentIsReadableAndWindowsPortable(t *testing.T) {
+	if got := semanticComponent("My useful session", "session"); got != "my-useful-session" {
+		t.Fatalf("semantic component = %q", got)
+	}
+	if got := semanticComponent("CON.txt", "session"); got != "_con.txt" {
+		t.Fatalf("Windows reserved component = %q", got)
+	}
+	if got := semanticComponent("../../", "session"); got != "session" {
+		t.Fatalf("path traversal component = %q", got)
 	}
 }
 

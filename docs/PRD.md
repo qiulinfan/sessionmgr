@@ -6,7 +6,7 @@ Session Manager 是一个跨 macOS、Linux、Windows 的 Codex session Markdown 
 同时提供 CLI 和本地 GUI。
 
 Git 已经负责代码历史和跨机器同步。本产品只负责把分散在本机 Codex 状态目录中的
-sessions 转成可读、可追加、可由 Git 合并的文件。
+sessions 转成可读、可由 Git 跟踪历史的文件。
 
 ## 2. 核心用户流程
 
@@ -16,27 +16,29 @@ sessions 转成可读、可追加、可由 Git 合并的文件。
 2. 选择一个导出目录；
 3. Session Manager 创建目录并持久保存绝对路径；
 4. 用户执行第一次导出；
-5. UI 只显示这次创建的 session 快照。
+5. UI 只显示这次创建或更新的 session 文档。
 
 ### 后续使用
 
 1. Session Manager 自动恢复已配置目录；
 2. 用户执行导出；
 3. 系统扫描本机 active/archived Codex sessions；
-4. 已存在的相同 hash 不显示；
+4. source 与已记录内容没有变化时不显示；
 5. 只显示本次新增、内容更新或名称变化。
 
 ## 3. 核心模型
 
 ```text
-hosted Git remote key -> set(session ID -> set(Markdown snapshot hash))
+hosted Git remote key -> set(device ID + native session ID -> current Markdown)
 ```
 
 - repository key 必须在同一 hosted repository 的 SSH/HTTPS clone 间稳定；
 - 不允许用本机路径猜测跨机器仓库身份；
-- session ID 使用 Codex 原生 ID；
-- session 名称是可变的人类语义，hash 是不可变的版本身份；
-- 多台机器的导出结果通过 Git set-union 合并。
+- session key 是持久 device ID 与 Codex 原生 session ID 的组合 hash；
+- session 名称是可变的人类语义，只用于可见目录名而不承担身份职责；
+- source hash 用于源变化检测，document hash 用于保护生成文件，二者均只进入隐藏 sidecar；
+- 每个设备/session 只有一个 `conversation.md`，历史版本由 Git 保存；
+- 多台机器按可读设备目录导出，结果通过普通 Git 合并。
 
 ## 4. 功能需求
 
@@ -48,6 +50,8 @@ hosted Git remote key -> set(session ID -> set(Markdown snapshot hash))
 - 下次启动必须自动恢复目录；
 - 明确指定 `--directory` 时同时更新持久配置；
 - 配置文件符号链接不得被跟随写入。
+- 每台机器必须在本地配置中持久保存一个随机 device ID 与可读 device name；
+- device identity 不得放在 Git 管理的导出根目录中，避免其他机器继承同一身份。
 
 ### FR-2 Session discovery
 
@@ -66,10 +70,15 @@ hosted Git remote key -> set(session ID -> set(Markdown snapshot hash))
 - host 转小写，path 在 v1 中保留大小写；
 - 空 remote、local path remote、`file://` remote 必须跳过；
 - repository identity 冲突不得覆盖已有文件。
+- 可见 repository 路径使用规范化 remote 的 host/owner/repo，不包含 hash；
+- 完整 key 与 canonical remote 必须保存在 `.sessionmgr-repository.json`。
 
 ### FR-4 Markdown export
 
-- 保存 session 名称、ID、源 hash、快照 hash、Codex 版本和 Git 提示；
+- 可见文档固定命名为 `conversation.md`，父目录使用创建时间与最新 session 名称；
+- 设备、原生 session ID、session key、源 hash 与文档 hash 只保存在
+  `.sessionmgr-session.json`；
+- Markdown 保存 session 名称、设备显示名、Codex 版本和 Git 提示，不暴露 identity hash；
 - 分别保存创建、首条消息、末条消息、末事件、标题更新和总体更新时间；
 - 保存总消息、用户消息和助手消息数量；
 - 保存用户与助手的可读对话；
@@ -84,7 +93,10 @@ hosted Git remote key -> set(session ID -> set(Markdown snapshot hash))
 - 第一次看到某 session 时标记 `new`；
 - source hash 变化时标记 `updated`；
 - source hash 不变但显示名称变化时标记 `renamed`；
-- 相同 snapshot hash 必须是 no-op；
+- source、标题、renderer 与生成内容均相同时必须是 no-op；
+- 更新前必须验证当前 `conversation.md` 匹配 sidecar 的 document hash；人工编辑或
+  identity/path collision 必须保留原文件并把该 source 作为 skipped 报告；
+- 标题变化时，在所有权验证后重命名语义目录并更新同一个文档；
 - CLI 和 GUI 默认只渲染当前操作创建的 changeset；
 - changeset 为空时显示单一的 no-change 状态，不回显历史 catalog。
 
@@ -130,10 +142,14 @@ hosted Git remote key -> set(session ID -> set(Markdown snapshot hash))
 5. 首次导出显示 `new`，重复导出只显示 no-change。
 6. JSONL 追加后显示 `updated`。
 7. 只重命名 session 后显示 `renamed`。
-8. 并发导出同一快照不会覆盖文件。
+8. 同一 device/session 重复导出只保留一个 `conversation.md`；内容更新原地更新该文件。
 9. GUI API 没有随机 token 时返回 unauthorized。
 10. GUI 拒绝非 loopback listen address。
 11. macOS、Linux、Windows no-CGO 构建全部通过。
 12. 原始 Codex JSONL 在导出前后字节一致。
-13. 稳定窗口内发生变化或尾部不完整的 session 只增加 `busy`，不生成快照且导出成功。
+13. 稳定窗口内发生变化或尾部不完整的 session 只增加 `busy`，不生成文档且导出成功。
 14. Markdown 明确区分创建、首次/最后对话与最后源事件时间，并为每条消息显示时间点。
+15. 可见路径和 Markdown 文件名不包含 repository/session/content hash。
+16. 隐藏 sidecar 中的 session key 可由 device ID 与 Codex native session ID 重新计算验证。
+17. 手工改过的 `conversation.md` 与语义路径 identity collision 均不会被覆盖。
+18. v1/v2 hash-named archive 仍可由 `list --history` 检查，但不会自动删除或改写。

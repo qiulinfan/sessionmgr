@@ -168,9 +168,15 @@ func NewHandler(token string, store config.Store, codexHome, repo string) (http.
 			writeAPIError(w, http.StatusBadRequest, err)
 			return
 		}
+		device, err := store.EnsureDevice()
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
 		allRepos := body.Scope != "current"
 		result, exportErr := archive.Export(request.Context(), archive.Options{
 			CodexHome: codexHome, Output: directory, Repo: repo, AllRepos: allRepos,
+			DeviceID: device.DeviceID, DeviceName: device.DeviceName,
 		})
 		response := exportResponse{Result: result}
 		if exportErr != nil {

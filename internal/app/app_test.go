@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/sessionmgr/sessionmgr/internal/archive"
 )
 
 func TestConfiguredExportShowsOnlyCurrentChanges(t *testing.T) {
@@ -73,6 +76,28 @@ func TestConfiguredExportShowsOnlyCurrentChanges(t *testing.T) {
 	}
 	if len(listed.Sessions) != 1 || listed.Sessions[0].SessionID != "cli-session" {
 		t.Fatalf("unexpected list JSON: %s", stdout.String())
+	}
+}
+
+func TestHumanChangesUseSemanticFieldsWithoutHashes(t *testing.T) {
+	var output bytes.Buffer
+	err := printChanges(&output, []archive.Change{{
+		Kind: "new", RepositoryName: "project", Title: "Readable title", DeviceName: "workstation",
+		SessionID: "native-session", SessionKey: "sha256:session-key", DocumentHash: "sha256:document",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, hidden := range []string{"HASH", "sha256", "native-session"} {
+		if strings.Contains(text, hidden) {
+			t.Fatalf("human output exposed %q: %s", hidden, text)
+		}
+	}
+	for _, visible := range []string{"Readable title", "workstation", "project"} {
+		if !strings.Contains(text, visible) {
+			t.Fatalf("human output omitted %q: %s", visible, text)
+		}
 	}
 }
 

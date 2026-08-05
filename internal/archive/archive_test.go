@@ -1,8 +1,10 @@
 package archive
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,7 +15,7 @@ import (
 	"time"
 )
 
-func TestArchiveCreatesSetOfImmutableSessionSnapshots(t *testing.T) {
+func TestArchiveMaintainsOneSemanticDocumentPerDeviceSession(t *testing.T) {
 	root := t.TempDir()
 	codexHome := filepath.Join(root, "codex")
 	output := filepath.Join(root, "archive")
@@ -37,7 +39,7 @@ func TestArchiveCreatesSetOfImmutableSessionSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := Export(context.Background(), Options{CodexHome: codexHome, Output: output, AllRepos: true, StabilityWindow: -1})
+	result, err := Export(context.Background(), testExportOptions(codexHome, output))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,12 +56,12 @@ func TestArchiveCreatesSetOfImmutableSessionSnapshots(t *testing.T) {
 	if string(sourceBefore) != string(sourceAfter) {
 		t.Fatal("archive modified the raw Codex source")
 	}
-	repositories, err := filepath.Glob(filepath.Join(output, "repositories", "*"))
-	if err != nil || len(repositories) != 1 {
-		t.Fatalf("expected one repository set, got %v, %v", repositories, err)
+	repositoryDir := filepath.Join(output, "repositories", "github.com", "example", "project")
+	if _, err := os.Stat(filepath.Join(repositoryDir, repositoryMetadataName)); err != nil {
+		t.Fatalf("semantic repository metadata is missing: %v", err)
 	}
 
-	repeated, err := Export(context.Background(), Options{CodexHome: codexHome, Output: output, AllRepos: true, StabilityWindow: -1})
+	repeated, err := Export(context.Background(), testExportOptions(codexHome, output))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +77,7 @@ func TestArchiveCreatesSetOfImmutableSessionSnapshots(t *testing.T) {
 		titleLine("session-b", "Other machine", "2026-08-05T02:01:00Z"),
 		titleLine("session-a", "Renamed title", "2026-08-05T03:00:00Z"),
 	)
-	renamed, err := Export(context.Background(), Options{CodexHome: codexHome, Output: output, AllRepos: true, StabilityWindow: -1})
+	renamed, err := Export(context.Background(), testExportOptions(codexHome, output))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +98,7 @@ func TestArchiveCreatesSetOfImmutableSessionSnapshots(t *testing.T) {
 	if err := updatedSource.Close(); err != nil {
 		t.Fatal(err)
 	}
-	updated, err := Export(context.Background(), Options{CodexHome: codexHome, Output: output, AllRepos: true, StabilityWindow: -1})
+	updated, err := Export(context.Background(), testExportOptions(codexHome, output))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,11 +118,25 @@ func TestArchiveCreatesSetOfImmutableSessionSnapshots(t *testing.T) {
 	}
 	for _, entry := range entries {
 		if entry.SessionID == "session-a" {
-			if entry.Title != "Renamed title" || entry.Versions != 3 {
+			if entry.Title != "Renamed title" || entry.Versions != 1 {
 				t.Fatalf("latest rename was not selected: %+v", entry)
 			}
-			if !strings.Contains(filepath.Base(entry.Path), "renamed-title--") {
-				t.Fatalf("snapshot filename is not semantic: %s", entry.Path)
+			if filepath.Base(entry.Path) != conversationName || !strings.Contains(filepath.Base(filepath.Dir(entry.Path)), "renamed-title") {
+				t.Fatalf("session document path is not semantic: %s", entry.Path)
+			}
+			if strings.Contains(entry.Path, "sha256") || strings.Contains(entry.Path, entry.SessionID) {
+				t.Fatalf("visible path exposes identity hash: %s", entry.Path)
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(entry.Path), sessionMetadataName)); err != nil {
+				t.Fatalf("hidden session metadata is missing: %v", err)
+			}
+			var metadata sessionMetadata
+			if err := readMetadata(filepath.Join(filepath.Dir(entry.Path), sessionMetadataName), &metadata); err != nil {
+				t.Fatal(err)
+			}
+			if metadata.SessionKey != digest("device-session-v1\x00device:test\x00session-a") ||
+				metadata.SourceHash == "" || metadata.DocumentHash == "" {
+				t.Fatalf("hidden session identity is incomplete: %+v", metadata)
 			}
 		}
 	}
@@ -128,8 +144,118 @@ func TestArchiveCreatesSetOfImmutableSessionSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(history) != 4 {
-		t.Fatalf("history returned %d snapshots, want 4", len(history))
+	if len(history) != 2 {
+		t.Fatalf("history returned %d current documents, want 2", len(history))
+	}
+}
+
+func TestExportRefusesToOverwriteManuallyEditedDocument(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	writeSessionFixture(t, codexHome, "session-a", "https://github.com/example/project.git", "first answer")
+	first, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil || len(first.Changes) != 1 {
+		t.Fatalf("initial export failed: %+v, %v", first, err)
+	}
+	documentPath := first.Changes[0].Path
+	manual := []byte("manually edited\n")
+	if err := os.WriteFile(documentPath, manual, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := filepath.Join(codexHome, "sessions", "2026", "08", "05", "rollout-session-a.jsonl")
+	file, err := os.OpenFile(sourcePath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, writeErr := file.WriteString("{\"timestamp\":\"2026-08-05T05:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"agent_message\",\"message\":\"new answer\"}}\n")
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		t.Fatalf("update fixture: %v / %v", writeErr, closeErr)
+	}
+	result, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err == nil || result.Skipped != 1 || len(result.Changes) != 0 {
+		t.Fatalf("manual edit was not protected: %+v, %v", result, err)
+	}
+	after, err := os.ReadFile(documentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, manual) {
+		t.Fatalf("manual document was overwritten: %q", after)
+	}
+}
+
+func TestSemanticSessionCollisionIsRefused(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	writeSessionFixture(t, codexHome, "session-a", "https://github.com/example/project.git", "first")
+	writeSessionFixture(t, codexHome, "session-b", "https://github.com/example/project.git", "second")
+	writeTitles(t, codexHome,
+		titleLine("session-a", "Same title", "2026-08-05T02:00:00Z"),
+		titleLine("session-b", "Same title", "2026-08-05T02:00:00Z"),
+	)
+	result, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err == nil || result.Created != 1 || result.Skipped != 1 {
+		t.Fatalf("semantic collision was not isolated: %+v, %v", result, err)
+	}
+	entries, listErr := List(ListOptions{Output: output})
+	if listErr != nil || len(entries) != 1 {
+		t.Fatalf("collision damaged the first identity: %+v, %v", entries, listErr)
+	}
+}
+
+func TestExistingSemanticRepositoryDirectoryIsNotClaimed(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	writeSessionFixture(t, codexHome, "session-a", "https://github.com/example/project.git", "answer")
+	repositoryDir := filepath.Join(output, "repositories", "github.com", "example", "project")
+	if err := os.MkdirAll(repositoryDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userPath := filepath.Join(repositoryDir, "keep.txt")
+	if err := os.WriteFile(userPath, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err == nil || result.Skipped != 1 || len(result.Changes) != 0 {
+		t.Fatalf("existing repository directory was claimed: %+v, %v", result, err)
+	}
+	data, readErr := os.ReadFile(userPath)
+	if readErr != nil || string(data) != "keep\n" {
+		t.Fatalf("existing repository content changed: %q, %v", data, readErr)
+	}
+	if _, metadataErr := os.Stat(filepath.Join(repositoryDir, repositoryMetadataName)); !errors.Is(metadataErr, os.ErrNotExist) {
+		t.Fatalf("repository sidecar was unexpectedly created: %v", metadataErr)
+	}
+}
+
+func TestListKeepsLegacyHashLayoutInspectable(t *testing.T) {
+	output := t.TempDir()
+	path := filepath.Join(output, "repositories", "project--oldhash", "sessions", "legacy-id", "title--snapshot.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := `---
+repository_key: "sha256:repo"
+repository_name: "project"
+session_id: "legacy-id"
+session_title: "Legacy title"
+snapshot_hash: "sha256:snapshot"
+source_hash: "sha256:source"
+updated_at: "2026-08-05T01:00:00Z"
+---
+
+# Legacy title
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := List(ListOptions{Output: output, History: true})
+	if err != nil || len(entries) != 1 || !entries[0].Legacy || entries[0].Path != path {
+		t.Fatalf("legacy session was not inspectable: %+v, %v", entries, err)
 	}
 }
 
@@ -146,6 +272,7 @@ func TestExportIgnoresIncompleteBusySessionWithoutError(t *testing.T) {
 	result, err := Export(context.Background(), Options{
 		CodexHome: codexHome, Output: filepath.Join(root, "archive"),
 		AllRepos: true, SessionID: "possibly-active", StabilityWindow: -1,
+		DeviceID: "device:test", DeviceName: "test-device",
 	})
 	if err != nil {
 		t.Fatalf("busy-only export returned an error: %v", err)
@@ -239,6 +366,13 @@ func TestPublishImmutableIsSafeUnderConcurrency(t *testing.T) {
 	}
 	if _, err := publishImmutable(path, []byte("conflict\n")); err == nil {
 		t.Fatal("conflicting publication was allowed")
+	}
+}
+
+func testExportOptions(codexHome, output string) Options {
+	return Options{
+		CodexHome: codexHome, Output: output, AllRepos: true, StabilityWindow: -1,
+		DeviceID: "device:test", DeviceName: "test-device",
 	}
 }
 

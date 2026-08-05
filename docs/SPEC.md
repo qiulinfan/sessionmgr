@@ -24,7 +24,9 @@ Git repositories；显式 `--repo` 时只处理该仓库。
 ```json
 {
   "schema_version": 1,
-  "export_directory": "/absolute/path"
+  "export_directory": "/absolute/path",
+  "device_id": "device:0123456789abcdef0123456789abcdef",
+  "device_name": "workstation"
 }
 ```
 
@@ -41,6 +43,10 @@ Git repositories；显式 `--repo` 时只处理该仓库。
 
 未知 config schema 或字段必须阻止写回，原文件保持可检查；未来新增 required
 semantics 时增加 schema version。
+
+`device_id` 在第一次导出时由 128-bit cryptographic random value 生成，之后由本机配置
+稳定保存。`device_name` 默认来自 hostname。改变导出目录不得改变这两个字段；它们不能
+存放在 Git 管理的导出目录中，否则新机器 pull 后会错误地继承旧机器身份。
 
 ## 3. Repository key v1
 
@@ -68,39 +74,43 @@ host 转小写；path 保留大小写；协议、userinfo、query、fragment 和
 local/file/empty remote 不生成 key。若 session metadata 没有 remote，转换器只允许从
 其仍可访问的 CWD 查询 hosted `remote.origin.url`；仍没有则跳过。
 
-## 4. Snapshot hash / renderer v2
+## 4. Identity and change hashes / renderer v3
 
 ```text
 source_hash = sha256(raw_jsonl_bytes)
 
-snapshot_hash = sha256(
-  "sessionmgr-markdown-v2\0" +
-  repository_key + "\0" +
-  source_hash + "\0" +
-  redacted_display_title + "\0" +
-  title_updated_at
-)
+session_key = sha256("device-session-v1\0" + device_id + "\0" + native_session_id)
+
+document_hash = sha256(rendered_conversation_md_bytes)
 ```
 
-renderer 产生影响既有 Markdown 的变化时必须增加 `RendererVersion`。
+三者职责不得混用：`session_key` 表达跨导出的稳定成员身份，`source_hash` 检测 Codex
+原始数据变化，`document_hash` 验证准备更新的 Markdown 仍是 Session Manager 上次写入
+的内容。renderer 产生影响 Markdown 的变化时必须增加 `RendererVersion`。
 
 ## 5. 文件布局与 schema
 
 ```text
-<export-directory>/repositories/<repo-slug>--<full-repository-hash>/
-├── repository.md
-└── sessions/<native-session-id>/<title-slug>--<full-snapshot-hash>.md
+<export-directory>/repositories/<host>/<owner>/<repo>/
+├── .sessionmgr-repository.json
+└── sessions/<device-name>/<created-time>--<session-title>/
+    ├── .sessionmgr-session.json
+    └── conversation.md
 ```
 
-不安全的 native ID 改用 ID hash 作为路径。slug 最多 80 UTF-8 bytes，完整 hash 负责
-唯一性。所有文件是 UTF-8 Markdown，frontmatter 使用 YAML-compatible JSON quoted
-scalars。
+可见路径只承担语义：remote 各段、设备名、UTC 创建时间和最新标题经过跨平台安全的
+component 规范化，每段最多 80 UTF-8 bytes。它不通过附加 hash 解决碰撞；若两个身份
+规范化到同一路径，hidden metadata 必须发现 collision 并拒绝第二次写入。
 
-`repository.md` schema v1：`schema_version`、`repository_key`、`repository_name`、
-`canonical_remote`。
+`.sessionmgr-repository.json` 包含 `schema_version`、`layout_version`、`repository_key`、
+`repository_name` 与 `canonical_remote`。
 
-snapshot schema v1：repository/session identity、snapshot/source hash、Codex/Git hints，
-以及以下 renderer-v2 字段：
+`.sessionmgr-session.json` 包含 `schema_version`、`layout_version`、`renderer_version`、
+repository identity、device ID/name、native session ID、session key、当前标题、source hash、
+document hash、创建与更新时间。它是可检查的身份 sidecar，不是 secret store。
+
+`conversation.md` 的 frontmatter 不包含 identity/hash。它保存 repository/device/session
+显示名、Codex/Git hints，以及以下 renderer-v3 字段：
 
 - `created_at`、`first_message_at`、`last_message_at`、`last_event_at`、
   `title_updated_at` 与用于排序的总体 `updated_at`；
@@ -147,30 +157,43 @@ sharing/lock violation 会显式映射为 `busy`。permission 和其他 I/O 错�
 
 ## 8. Incremental changeset
 
-导出开始时一次读取目标目录内已有 snapshot frontmatter，并按
-`repository_key + session_id` 建立 history map。
+导出开始时一次读取隐藏 sidecar，并按 `repository_key + session_key` 建立 current map。
+v1/v2 Markdown frontmatter 只作为 legacy history 读取，不参与 v3 写入身份。
 
-新 snapshot 成功发布后分类：
+成功发布后分类：
 
 ```text
-history empty                                      -> new
-latest.source_hash == new.source_hash
-  and latest.title != new.title                    -> renamed
+current empty                                      -> new
+current.source_hash == new.source_hash
+  and current.title != new.title                   -> renamed
 otherwise                                          -> updated
 ```
 
-publish 返回 unchanged 时不进入 changeset。human CLI 与 GUI 只遍历 `changes[]`；扫描、
+内容、标题、renderer 与 metadata 均相同时返回 unchanged，不进入 changeset。human CLI
+不显示 hash 列；GUI 只显示 semantic path。扫描、
 matched、unchanged、busy 和 skipped 计数仍保留在 JSON result 供自动化诊断。
 
-## 9. Immutable publication
+## 9. Owned-file update and publication
 
-1. 在目标目录创建临时文件；
-2. 写入、`fsync`、关闭；
-3. 使用 hard link 以 no-replace 语义发布；
-4. `EEXIST` 时读取比较，相同视为 unchanged，不同视为 conflict；
-5. 删除临时名字。
+首次写入：
 
-该流程不静默覆盖现有 snapshot、repository descriptor 或用户文件。
+1. 先以 no-replace 语义发布 repository sidecar；
+2. 创建 semantic session directory；
+3. 同目录临时写入、`fsync` 后发布 `conversation.md`；
+4. 最后发布 session sidecar，使 identity ref 不会早于 required document；
+5. 已存在但没有 matching sidecar 的非空目录不得被认领或覆盖。
+
+更新：
+
+1. 严格读取 sidecar 并重新计算 device/session key；
+2. 读取 `conversation.md`，其 hash 必须等于 sidecar `document_hash`；
+3. 仅标题变化时先确认新 semantic directory 不存在，再 rename 当前目录；
+4. 新文档写到同目录临时文件，`fsync` 后 replace；
+5. 最后以新 document/source/title metadata replace sidecar；
+6. 若上次在 document replace 后崩溃，当前文档恰好等于本次待写 bytes 时允许只修复 sidecar。
+
+任何人工编辑、symlink、unknown required metadata、identity mismatch 或 semantic collision
+均阻止该 session 更新，不静默覆盖用户文件。
 
 ## 10. Local GUI
 
@@ -224,5 +247,6 @@ SQLite、encryption 或 GUI 状态。旧 `~/.sessionmgr` 保持原样。
 同一 v0.3 development line 的早期 `archive --output` 用法继续工作，但默认目录现在来自
 持久配置；首次使用必须通过 GUI、`config set-directory` 或 `export --directory` 指定。
 
-renderer v2 为既有 source 产生新的 immutable snapshot hash；第一次使用 v2 时，旧 v1
-session 可能各新增一个 `updated` changeset。旧文件仍可列出且不会被重写。
+layout/renderer v3 不自动迁移、删除或改写 v1/v2 的 hash-named repository/snapshot 文件。
+`list --history` 仍能检查旧 frontmatter；第一次 v3 导出会另建 semantic current document。
+旧归档的删除必须留给一个未来的显式、可 review migration。

@@ -7,12 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 )
-
-var safeSessionID = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 func Export(ctx context.Context, opts Options) (Result, error) {
 	result := Result{SchemaVersion: SchemaVersion, Changes: []Change{}}
@@ -25,6 +22,9 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	}
 	if opts.Output == "" {
 		return result, fmt.Errorf("export directory is required")
+	}
+	if strings.TrimSpace(opts.DeviceID) == "" || strings.TrimSpace(opts.DeviceName) == "" {
+		return result, fmt.Errorf("device identity is required")
 	}
 	output, err := filepath.Abs(opts.Output)
 	if err != nil {
@@ -40,7 +40,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	}
 	history := make(map[string][]Entry)
 	for _, entry := range existing {
-		key := entry.RepositoryKey + "\x00" + entry.SessionID
+		key := entryIdentity(entry)
 		history[key] = append(history[key], entry)
 	}
 	files, err := discoverSessionFiles(opts.CodexHome)
@@ -120,8 +120,9 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			continue
 		}
 		result.Matched++
-		snapshot := makeSnapshot(repo, session)
-		created, snapshotPath, publishErr := publishSnapshot(output, snapshot)
+		snapshot := makeSnapshot(repo, session, opts.DeviceID, opts.DeviceName)
+		key := repo.Key + "\x00" + snapshot.SessionKey
+		created, snapshotPath, documentHash, publishErr := publishSnapshot(output, snapshot, history[key])
 		if publishErr != nil {
 			result.Skipped++
 			result.Warnings = append(result.Warnings, fmt.Sprintf("session %s: %v", session.ID, publishErr))
@@ -129,18 +130,19 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		}
 		if created {
 			result.Created++
-			key := repo.Key + "\x00" + snapshot.Session.ID
 			kind := changeKind(history[key], snapshot)
 			change := Change{
 				Kind: kind, RepositoryKey: repo.Key, RepositoryName: repo.Name,
-				SessionID: snapshot.Session.ID, Title: snapshot.Session.Title,
-				SnapshotHash: snapshot.Hash, SourceHash: snapshot.Session.RawHash,
+				DeviceName: snapshot.DeviceName, SessionID: snapshot.Session.ID,
+				SessionKey: snapshot.SessionKey, Title: snapshot.Session.Title,
+				DocumentHash: documentHash, SourceHash: snapshot.Session.RawHash,
 				UpdatedAt: formatTime(snapshot.SourceUpdate), Path: snapshotPath,
 			}
 			result.Changes = append(result.Changes, change)
 			history[key] = append(history[key], Entry{
 				RepositoryKey: repo.Key, RepositoryName: repo.Name, SessionID: snapshot.Session.ID,
-				Title: snapshot.Session.Title, SnapshotHash: snapshot.Hash,
+				DeviceID: snapshot.DeviceID, DeviceName: snapshot.DeviceName, SessionKey: snapshot.SessionKey,
+				Title: snapshot.Session.Title, DocumentHash: documentHash,
 				SourceHash: snapshot.Session.RawHash, UpdatedAt: formatTime(snapshot.SourceUpdate), Path: snapshotPath,
 			})
 		} else {
@@ -158,19 +160,152 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	return result, nil
 }
 
-func publishSnapshot(output string, snapshot Snapshot) (bool, string, error) {
-	repositoryDir := filepath.Join(output, "repositories", repositoryDirectory(snapshot.Repository))
-	if _, err := publishImmutable(filepath.Join(repositoryDir, "repository.md"), renderRepository(snapshot.Repository)); err != nil {
-		return false, "", fmt.Errorf("publish repository identity: %w", err)
+func publishSnapshot(output string, snapshot Snapshot, history []Entry) (bool, string, string, error) {
+	repositoryDir := filepath.Join(output, "repositories", semanticRepositoryDirectory(snapshot.Repository))
+	if err := publishRepositoryMetadata(repositoryDir, snapshot.Repository); err != nil {
+		return false, "", "", fmt.Errorf("publish repository identity: %w", err)
 	}
-	sessionDir := snapshot.Session.ID
-	if !safeSessionID.MatchString(sessionDir) {
-		sessionDir = "session--" + strings.TrimPrefix(digest(sessionDir), "sha256:")[:16]
+	deviceDir := semanticComponent(snapshot.DeviceName, "device")
+	desiredDir := filepath.Join(repositoryDir, "sessions", deviceDir, semanticSessionDirectory(snapshot))
+	document := renderSnapshot(snapshot)
+	documentHash := digestBytes(document)
+	record := sessionRecord(snapshot, documentHash)
+
+	if len(history) > 0 {
+		latest := history[0]
+		for _, candidate := range history[1:] {
+			if newerEntry(candidate, latest) {
+				latest = candidate
+			}
+		}
+		return updatePublishedSession(latest, desiredDir, document, record)
 	}
-	filename := slug(snapshot.Session.Title) + "--" + strings.TrimPrefix(snapshot.Hash, "sha256:") + ".md"
-	path := filepath.Join(repositoryDir, "sessions", sessionDir, filename)
-	created, err := publishImmutable(path, renderSnapshot(snapshot))
-	return created, path, err
+
+	metadataPath := filepath.Join(desiredDir, sessionMetadataName)
+	if _, err := os.Lstat(desiredDir); err == nil {
+		var current sessionMetadata
+		if readErr := readMetadata(metadataPath, &current); readErr == nil {
+			if err := validateSessionMetadata(current); err != nil {
+				return false, "", "", err
+			}
+			if current.RepositoryKey != snapshot.Repository.Key || current.SessionKey != snapshot.SessionKey {
+				return false, "", "", fmt.Errorf("semantic session path belongs to a different identity: %s", desiredDir)
+			}
+			return updatePublishedSession(entryFromMetadata(current, filepath.Join(desiredDir, conversationName)), desiredDir, document, record)
+		} else if !errors.Is(readErr, os.ErrNotExist) {
+			return false, "", "", fmt.Errorf("read existing session metadata: %w", readErr)
+		}
+		entries, readErr := os.ReadDir(desiredDir)
+		if readErr != nil {
+			return false, "", "", readErr
+		}
+		if len(entries) > 1 || (len(entries) == 1 && entries[0].Name() != conversationName) {
+			return false, "", "", fmt.Errorf("refusing to claim existing semantic session directory: %s", desiredDir)
+		}
+		if len(entries) == 1 {
+			existing, readErr := readOwnedDocument(filepath.Join(desiredDir, conversationName))
+			if readErr != nil || !bytes.Equal(existing, document) {
+				return false, "", "", fmt.Errorf("refusing to claim existing session document: %s", filepath.Join(desiredDir, conversationName))
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, "", "", err
+	}
+	if err := os.MkdirAll(desiredDir, 0o755); err != nil {
+		return false, "", "", err
+	}
+	documentPath := filepath.Join(desiredDir, conversationName)
+	if _, err := publishImmutable(documentPath, document); err != nil {
+		return false, "", "", err
+	}
+	metadata, err := marshalMetadata(record)
+	if err != nil {
+		return false, "", "", err
+	}
+	if _, err := publishImmutable(metadataPath, metadata); err != nil {
+		return false, "", "", err
+	}
+	return true, documentPath, documentHash, nil
+}
+
+func updatePublishedSession(previous Entry, desiredDir string, document []byte, record sessionMetadata) (bool, string, string, error) {
+	oldDocumentPath := previous.Path
+	oldDir := filepath.Dir(oldDocumentPath)
+	var current sessionMetadata
+	if err := readMetadata(filepath.Join(oldDir, sessionMetadataName), &current); err != nil {
+		return false, "", "", fmt.Errorf("read existing session metadata: %w", err)
+	}
+	if err := validateSessionMetadata(current); err != nil {
+		return false, "", "", err
+	}
+	if current.RepositoryKey != record.RepositoryKey || current.SessionKey != record.SessionKey ||
+		current.DeviceID != record.DeviceID || current.SessionID != record.SessionID {
+		return false, "", "", fmt.Errorf("existing session metadata belongs to a different identity: %s", oldDir)
+	}
+	existing, err := readOwnedDocument(oldDocumentPath)
+	if err != nil {
+		return false, "", "", err
+	}
+	actualHash := digestBytes(existing)
+	newHash := digestBytes(document)
+	if actualHash != current.DocumentHash && actualHash != newHash {
+		return false, "", "", fmt.Errorf("refusing to overwrite a modified session document: %s", oldDocumentPath)
+	}
+
+	dirChanged := filepath.Clean(oldDir) != filepath.Clean(desiredDir)
+	contentChanged := actualHash != newHash
+	metadataChanged := current != record
+	if !dirChanged && !contentChanged && !metadataChanged {
+		return false, oldDocumentPath, newHash, nil
+	}
+	if dirChanged {
+		if _, err := os.Lstat(desiredDir); err == nil {
+			return false, "", "", fmt.Errorf("refusing to overwrite conflicting semantic session directory: %s", desiredDir)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, "", "", err
+		}
+		if err := os.MkdirAll(filepath.Dir(desiredDir), 0o755); err != nil {
+			return false, "", "", err
+		}
+		if err := os.Rename(oldDir, desiredDir); err != nil {
+			return false, "", "", fmt.Errorf("rename semantic session directory: %w", err)
+		}
+		oldDocumentPath = filepath.Join(desiredDir, conversationName)
+	}
+	if contentChanged {
+		if err := replaceOwnedFile(oldDocumentPath, document); err != nil {
+			return false, "", "", err
+		}
+	}
+	metadata, err := marshalMetadata(record)
+	if err != nil {
+		return false, "", "", err
+	}
+	if err := replaceOwnedFile(filepath.Join(filepath.Dir(oldDocumentPath), sessionMetadataName), metadata); err != nil {
+		return false, "", "", err
+	}
+	return true, oldDocumentPath, newHash, nil
+}
+
+func entryFromMetadata(value sessionMetadata, path string) Entry {
+	return Entry{
+		RepositoryKey: value.RepositoryKey, RepositoryName: value.RepositoryName,
+		DeviceID: value.DeviceID, DeviceName: value.DeviceName,
+		SessionID: value.SessionID, SessionKey: value.SessionKey, Title: value.Title,
+		DocumentHash: value.DocumentHash, SourceHash: value.SourceHash,
+		UpdatedAt: value.UpdatedAt, Versions: 1, Path: path,
+	}
+}
+
+func readOwnedDocument(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("session document is not a regular file: %s", path)
+	}
+	return os.ReadFile(path)
 }
 
 func changeKind(history []Entry, snapshot Snapshot) string {
@@ -183,7 +318,8 @@ func changeKind(history []Entry, snapshot Snapshot) string {
 			latest = candidate
 		}
 	}
-	if latest.SourceHash == snapshot.Session.RawHash && latest.Title != snapshot.Session.Title {
+	if latest.SourceHash == snapshot.Session.RawHash &&
+		(latest.Title != snapshot.Session.Title || latest.DeviceName != snapshot.DeviceName) {
 		return "renamed"
 	}
 	return "updated"
@@ -202,7 +338,7 @@ func sortChanges(changes []Change) {
 }
 
 func publishImmutable(path string, data []byte) (bool, error) {
-	if existing, err := os.ReadFile(path); err == nil {
+	if existing, err := readRegularFileNoSymlink(path); err == nil {
 		if bytes.Equal(existing, data) {
 			return false, nil
 		}
@@ -236,7 +372,7 @@ func publishImmutable(path string, data []byte) (bool, error) {
 	}
 	if err := os.Link(tempPath, path); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			existing, readErr := os.ReadFile(path)
+			existing, readErr := readRegularFileNoSymlink(path)
 			if readErr == nil && bytes.Equal(existing, data) {
 				return false, nil
 			}
@@ -248,4 +384,15 @@ func publishImmutable(path string, data []byte) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func readRegularFileNoSymlink(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("refusing non-regular file: %s", path)
+	}
+	return os.ReadFile(path)
 }

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestSnapshotHashTracksContentAndRename(t *testing.T) {
+func TestSessionKeyUsesDeviceAndNativeSessionIdentity(t *testing.T) {
 	repo := repositoryFromRemote("github.com/example/project")
 	when := time.Date(2026, 8, 5, 1, 2, 3, 0, time.UTC)
 	base := Session{
@@ -14,21 +14,24 @@ func TestSnapshotHashTracksContentAndRename(t *testing.T) {
 		RawHash: digest("raw-v1"), LastEventAt: when,
 		Messages: []Message{{Role: "user", Text: "hello", Timestamp: when}},
 	}
-	first := makeSnapshot(repo, base)
-	second := makeSnapshot(repo, base)
-	if first.Hash != second.Hash {
-		t.Fatalf("same snapshot produced different hashes: %s != %s", first.Hash, second.Hash)
+	first := makeSnapshot(repo, base, "device:a", "workstation")
+	second := makeSnapshot(repo, base, "device:a", "workstation")
+	if first.SessionKey != second.SessionKey {
+		t.Fatalf("same identity produced different keys: %s != %s", first.SessionKey, second.SessionKey)
 	}
 	updated := base
 	updated.RawHash = digest("raw-v2")
-	if makeSnapshot(repo, updated).Hash == first.Hash {
-		t.Fatal("source update did not change snapshot hash")
+	if makeSnapshot(repo, updated, "device:a", "workstation").SessionKey != first.SessionKey {
+		t.Fatal("source update changed session identity")
 	}
 	renamed := base
 	renamed.Title = "Renamed session"
 	renamed.TitleUpdatedAt = when.Add(time.Minute)
-	if makeSnapshot(repo, renamed).Hash == first.Hash {
-		t.Fatal("rename did not change snapshot hash")
+	if makeSnapshot(repo, renamed, "device:a", "workstation").SessionKey != first.SessionKey {
+		t.Fatal("rename changed session identity")
+	}
+	if makeSnapshot(repo, base, "device:b", "workstation").SessionKey == first.SessionKey {
+		t.Fatal("different devices shared one session identity")
 	}
 }
 
@@ -46,10 +49,10 @@ func TestRenderSnapshotIncludesConversationTimeline(t *testing.T) {
 			{Role: "user", Text: "question", Timestamp: first},
 			{Role: "assistant", Text: "answer", Timestamp: last},
 		},
-	})
+	}, "device:a", "workstation")
 	markdown := string(renderSnapshot(snapshot))
 	for _, expected := range []string{
-		"renderer_version: 2",
+		"renderer_version: 3",
 		`created_at: "2026-08-05T01:00:00Z"`,
 		`first_message_at: "2026-08-05T01:01:00Z"`,
 		`last_message_at: "2026-08-05T01:02:00Z"`,
@@ -62,6 +65,11 @@ func TestRenderSnapshotIncludesConversationTimeline(t *testing.T) {
 			t.Fatalf("timeline Markdown is missing %q:\n%s", expected, markdown)
 		}
 	}
+	for _, hidden := range []string{"sha256:", "session-1", "source_hash:", "session_key:"} {
+		if strings.Contains(markdown, hidden) {
+			t.Fatalf("Markdown exposes hidden identity %q:\n%s", hidden, markdown)
+		}
+	}
 }
 
 func TestRenderSnapshotRedactsSecretsAndOmitsToolPayloads(t *testing.T) {
@@ -71,7 +79,7 @@ func TestRenderSnapshotRedactsSecretsAndOmitsToolPayloads(t *testing.T) {
 		ID: "session-1", Title: "Token " + secret, RawHash: digest("raw"),
 		Messages:      []Message{{Role: "user", Text: "OPENAI_API_KEY=" + secret + "\nDATABASE_PASSWORD=plain-secret-value"}},
 		ToolCallCount: 2,
-	})
+	}, "device:a", "workstation")
 	markdown := string(renderSnapshot(snapshot))
 	if strings.Contains(markdown, secret) {
 		t.Fatal("rendered Markdown contains a complete secret")

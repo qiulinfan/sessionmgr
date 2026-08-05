@@ -23,7 +23,7 @@ var redactionPatterns = []struct {
 
 var secretAssignment = regexp.MustCompile(`(?im)^(\s*(?:export\s+)?[A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|PRIVATE_KEY)[A-Z0-9_]*\s*=\s*)\S+`)
 
-func makeSnapshot(repo Repository, session Session) Snapshot {
+func makeSnapshot(repo Repository, session Session, deviceID, deviceName string) Snapshot {
 	redactions := 0
 	session.Title, redactions = redact(session.Title)
 	for _, value := range []*string{&session.CodexVersion, &session.Commit, &session.Branch} {
@@ -40,28 +40,15 @@ func makeSnapshot(repo Repository, session Session) Snapshot {
 	if session.TitleUpdatedAt.After(updated) {
 		updated = session.TitleUpdatedAt
 	}
-	identity := fmt.Sprintf("sessionmgr-markdown-v%d\x00%s\x00%s\x00%s\x00%s",
-		RendererVersion, repo.Key, session.RawHash, session.Title, formatTime(session.TitleUpdatedAt))
 	return Snapshot{
 		Repository:   repo,
 		Session:      session,
-		Hash:         digest(identity),
+		DeviceID:     deviceID,
+		DeviceName:   deviceName,
+		SessionKey:   digest("device-session-v1\x00" + deviceID + "\x00" + session.ID),
 		Redactions:   redactions,
 		SourceUpdate: updated,
 	}
-}
-
-func renderRepository(repo Repository) []byte {
-	var output strings.Builder
-	fmt.Fprintln(&output, "---")
-	fmt.Fprintf(&output, "schema_version: %d\n", SchemaVersion)
-	fmt.Fprintf(&output, "repository_key: %s\n", quote(repo.Key))
-	fmt.Fprintf(&output, "repository_name: %s\n", quote(repo.Name))
-	fmt.Fprintf(&output, "canonical_remote: %s\n", quote(repo.CanonicalRemote))
-	fmt.Fprintln(&output, "---")
-	fmt.Fprintf(&output, "\n# %s\n\n", repo.Name)
-	fmt.Fprintln(&output, "Codex session snapshots for this Git repository. Snapshot files are immutable and keyed by content.")
-	return []byte(output.String())
 }
 
 func renderSnapshot(snapshot Snapshot) []byte {
@@ -70,12 +57,9 @@ func renderSnapshot(snapshot Snapshot) []byte {
 	fmt.Fprintln(&output, "---")
 	fmt.Fprintf(&output, "schema_version: %d\n", SchemaVersion)
 	fmt.Fprintf(&output, "renderer_version: %d\n", RendererVersion)
-	fmt.Fprintf(&output, "repository_key: %s\n", quote(snapshot.Repository.Key))
 	fmt.Fprintf(&output, "repository_name: %s\n", quote(snapshot.Repository.Name))
-	fmt.Fprintf(&output, "session_id: %s\n", quote(session.ID))
+	fmt.Fprintf(&output, "device_name: %s\n", quote(snapshot.DeviceName))
 	fmt.Fprintf(&output, "session_title: %s\n", quote(session.Title))
-	fmt.Fprintf(&output, "snapshot_hash: %s\n", quote(snapshot.Hash))
-	fmt.Fprintf(&output, "source_hash: %s\n", quote(session.RawHash))
 	writeTime(&output, "created_at", session.CreatedAt)
 	writeTime(&output, "first_message_at", session.FirstMessageAt)
 	writeTime(&output, "last_message_at", session.LastMessageAt)
@@ -101,7 +85,7 @@ func renderSnapshot(snapshot Snapshot) []byte {
 	fmt.Fprintf(&output, "redactions: %d\n", snapshot.Redactions)
 	fmt.Fprintln(&output, "---")
 	fmt.Fprintf(&output, "\n# %s\n\n", session.Title)
-	fmt.Fprintf(&output, "> Codex session `%s` · source `%s`\n\n", session.ID, session.RawHash)
+	fmt.Fprintf(&output, "> Exported from Codex on %s for `%s`.\n\n", snapshot.DeviceName, snapshot.Repository.Name)
 	fmt.Fprintln(&output, "## Conversation")
 	if len(session.Messages) == 0 {
 		fmt.Fprintln(&output, "\n_No user or assistant messages could be rendered from this session._")

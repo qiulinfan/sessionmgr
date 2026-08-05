@@ -97,9 +97,14 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return err
 	}
+	device, err := store.EnsureDevice()
+	if err != nil {
+		return err
+	}
 	result, exportErr := archive.Export(ctx, archive.Options{
 		CodexHome: *source, Output: resolvedDirectory, Repo: *repo,
 		AllRepos: !repoWasSet || *all, SessionID: *sessionID,
+		DeviceID: device.DeviceID, DeviceName: device.DeviceName,
 	})
 	if *jsonOutput {
 		if err := writeJSON(stdout, result); err != nil {
@@ -181,7 +186,7 @@ func commandList(args []string, stdout, stderr io.Writer) error {
 	flags := newFlagSet("list", stderr)
 	directory := flags.String("directory", "", "archive directory (default: configured directory)")
 	output := flags.String("output", "", "compatibility alias for --directory")
-	history := flags.Bool("history", false, "show every immutable snapshot")
+	history := flags.Bool("history", false, "also show legacy immutable snapshots")
 	jsonOutput := flags.Bool("json", false, "emit JSON")
 	if err := flags.Parse(args); err != nil {
 		return flagError(err)
@@ -219,19 +224,14 @@ func commandList(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	if *history {
-		fmt.Fprintln(table, "REPOSITORY\tUPDATED\tTITLE\tSESSION\tHASH")
-	} else {
-		fmt.Fprintln(table, "REPOSITORY\tUPDATED\tTITLE\tVERSIONS\tSESSION")
-	}
+	fmt.Fprintln(table, "REPOSITORY\tUPDATED\tTITLE\tDEVICE\tSESSION")
 	for _, entry := range entries {
-		if *history {
-			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", entry.RepositoryName, entry.UpdatedAt,
-				oneLine(entry.Title), short(entry.SessionID), short(strings.TrimPrefix(entry.SnapshotHash, "sha256:")))
-		} else {
-			fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%s\n", entry.RepositoryName, entry.UpdatedAt,
-				oneLine(entry.Title), entry.Versions, short(entry.SessionID))
+		device := entry.DeviceName
+		if entry.Legacy {
+			device = "legacy"
 		}
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", entry.RepositoryName, entry.UpdatedAt,
+			oneLine(entry.Title), oneLine(device), short(entry.SessionID))
 	}
 	return table.Flush()
 }
@@ -268,11 +268,10 @@ func printChanges(output io.Writer, changes []archive.Change) error {
 		return err
 	}
 	table := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "CHANGE\tREPOSITORY\tTITLE\tSESSION\tHASH")
+	fmt.Fprintln(table, "CHANGE\tREPOSITORY\tTITLE\tDEVICE")
 	for _, change := range changes {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", strings.ToUpper(change.Kind),
-			change.RepositoryName, oneLine(change.Title), short(change.SessionID),
-			short(strings.TrimPrefix(change.SnapshotHash, "sha256:")))
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", strings.ToUpper(change.Kind),
+			change.RepositoryName, oneLine(change.Title), oneLine(change.DeviceName))
 	}
 	return table.Flush()
 }
@@ -323,7 +322,7 @@ func short(value string) string {
 }
 
 func printHelp(output io.Writer) {
-	fmt.Fprintln(output, `sessionmgr exports Codex conversations as immutable Markdown changes.
+	fmt.Fprintln(output, `sessionmgr exports Codex conversations as readable Markdown files.
 
 Usage:
   sessionmgr                         Open the GUI
@@ -335,6 +334,6 @@ Usage:
   sessionmgr version
 
 The configured export directory persists across launches. Export output lists
-only snapshots created by the current operation. "archive" remains an alias for
+only files changed by the current operation. "archive" remains an alias for
 "export".`)
 }
