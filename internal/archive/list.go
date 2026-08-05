@@ -18,84 +18,22 @@ func List(opts ListOptions) ([]Entry, error) {
 		return nil, err
 	}
 	var snapshots []Entry
-	err = filepath.WalkDir(filepath.Join(root, "repositories"), func(path string, item os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			if os.IsNotExist(walkErr) {
-				return nil
-			}
-			return walkErr
-		}
-		if item.IsDir() {
-			return nil
-		}
-		if item.Name() == sessionMetadataName {
-			var metadata sessionMetadata
-			if err := readMetadata(path, &metadata); err != nil {
-				return fmt.Errorf("read %s: %w", path, err)
-			}
-			if err := validateSessionMetadata(metadata); err != nil {
-				return fmt.Errorf("read %s: %w", path, err)
-			}
-			sessionDir := filepath.Dir(path)
-			deviceDir := filepath.Dir(sessionDir)
-			sessionsDir := filepath.Dir(deviceDir)
-			if filepath.Base(sessionsDir) != "sessions" {
-				return fmt.Errorf("read %s: session metadata is outside a semantic sessions directory", path)
-			}
-			repositoryDir := filepath.Dir(sessionsDir)
-			var repository repositoryMetadata
-			if err := readMetadata(filepath.Join(repositoryDir, repositoryMetadataName), &repository); err != nil {
-				return fmt.Errorf("read %s: repository metadata: %w", path, err)
-			}
-			if err := validateRepositoryMetadata(repository); err != nil {
-				return fmt.Errorf("read %s: repository metadata: %w", path, err)
-			}
-			expectedRepositoryDir := filepath.Join(root, "repositories", semanticRepositoryDirectory(Repository{
-				Key: repository.RepositoryKey, Name: repository.RepositoryName, CanonicalRemote: repository.CanonicalRemote,
-			}))
-			if filepath.Clean(repositoryDir) != filepath.Clean(expectedRepositoryDir) {
-				return fmt.Errorf("read %s: repository metadata is outside its semantic path", path)
-			}
-			if repository.RepositoryKey != metadata.RepositoryKey || repository.RepositoryName != metadata.RepositoryName {
-				return fmt.Errorf("read %s: session and repository identities do not match", path)
-			}
-			document := filepath.Join(filepath.Dir(path), conversationName)
-			if info, err := os.Lstat(document); err != nil {
-				return fmt.Errorf("read %s: session document: %w", path, err)
-			} else if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-				return fmt.Errorf("read %s: session document is not a regular file", path)
-			}
-			snapshots = append(snapshots, Entry{
-				RepositoryKey: metadata.RepositoryKey, RepositoryName: metadata.RepositoryName,
-				DeviceID: metadata.DeviceID, DeviceName: metadata.DeviceName,
-				SessionID: metadata.SessionID, SessionKey: metadata.SessionKey, Title: metadata.Title,
-				DocumentHash: metadata.DocumentHash, SourceHash: metadata.SourceHash,
-				UpdatedAt: metadata.UpdatedAt, Versions: 1, Path: document,
-			})
-			return nil
-		}
-		if item.Name() == conversationName || item.Name() == "repository.md" ||
-			!strings.EqualFold(filepath.Ext(item.Name()), ".md") {
-			return nil
-		}
-		metadata, err := readFrontmatter(path)
-		if err != nil {
-			return nil
-		}
-		if metadata["session_id"] == "" || metadata["snapshot_hash"] == "" {
-			return nil
-		}
-		snapshots = append(snapshots, Entry{
-			RepositoryKey: metadata["repository_key"], RepositoryName: metadata["repository_name"],
-			SessionID: metadata["session_id"], Title: metadata["session_title"],
-			SnapshotHash: metadata["snapshot_hash"], SourceHash: metadata["source_hash"],
-			UpdatedAt: metadata["updated_at"], Versions: 1, Legacy: true, Path: path,
-		})
-		return nil
-	})
-	if err != nil && !os.IsNotExist(err) {
+	repositoryDirs, err := discoverRepositoryDirectories(root)
+	if err != nil {
 		return nil, err
 	}
+	for _, repositoryDir := range repositoryDirs {
+		entries, readErr := readRepositoryEntries(root, repositoryDir)
+		if readErr != nil {
+			return nil, readErr
+		}
+		snapshots = append(snapshots, entries...)
+	}
+	legacy, err := readLegacyEntries(filepath.Join(root, "repositories"))
+	if err != nil {
+		return nil, err
+	}
+	snapshots = append(snapshots, legacy...)
 	if opts.History {
 		sortEntries(snapshots)
 		return snapshots, nil
@@ -125,6 +63,178 @@ func List(opts ListOptions) ([]Entry, error) {
 		result = append(result, entry)
 	}
 	sortEntries(result)
+	return result, nil
+}
+
+func discoverRepositoryDirectories(root string) ([]string, error) {
+	seen := make(map[string]bool)
+	legacyRoot := filepath.Join(root, "repositories")
+	err := filepath.WalkDir(legacyRoot, func(path string, item os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if item.IsDir() || item.Name() != repositoryMetadataName {
+			return nil
+		}
+		seen[filepath.Dir(path)] = true
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	groups, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	for _, group := range groups {
+		if !group.IsDir() || group.Name() == "repositories" {
+			continue
+		}
+		groupPath := filepath.Join(root, group.Name())
+		repositories, readErr := os.ReadDir(groupPath)
+		if readErr != nil {
+			return nil, readErr
+		}
+		for _, repository := range repositories {
+			if !repository.IsDir() {
+				continue
+			}
+			repositoryDir := filepath.Join(groupPath, repository.Name())
+			if info, statErr := os.Lstat(filepath.Join(repositoryDir, repositoryMetadataName)); statErr == nil && info.Mode().IsRegular() {
+				seen[repositoryDir] = true
+			} else if statErr != nil && !os.IsNotExist(statErr) {
+				return nil, statErr
+			}
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for directory := range seen {
+		result = append(result, directory)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func readRepositoryEntries(root, repositoryDir string) ([]Entry, error) {
+	metadataPath := filepath.Join(repositoryDir, repositoryMetadataName)
+	var repository repositoryMetadata
+	if err := readMetadata(metadataPath, &repository); err != nil {
+		return nil, fmt.Errorf("read %s: %w", metadataPath, err)
+	}
+	if err := validateRepositoryMetadata(repository); err != nil {
+		return nil, fmt.Errorf("read %s: %w", metadataPath, err)
+	}
+	repo := Repository{Key: repository.RepositoryKey, Name: repository.RepositoryName, CanonicalRemote: repository.CanonicalRemote}
+	var expected string
+	if repository.LayoutVersion == 3 {
+		expected = filepath.Join(root, "repositories", semanticRepositoryDirectoryV3(repo))
+	} else {
+		expected = filepath.Join(root, semanticRepositoryDirectory(repo))
+	}
+	if filepath.Clean(repositoryDir) != filepath.Clean(expected) {
+		return nil, fmt.Errorf("read %s: repository metadata is outside its semantic path", metadataPath)
+	}
+	var result []Entry
+	err := filepath.WalkDir(repositoryDir, func(path string, item os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if item.IsDir() || item.Name() != sessionMetadataName {
+			return nil
+		}
+		var metadata sessionMetadata
+		if err := readMetadata(path, &metadata); err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		if err := validateSessionMetadata(metadata); err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		sessionDir := filepath.Dir(path)
+		deviceDir := filepath.Dir(sessionDir)
+		if !validSessionMetadataLocation(repositoryDir, repository.LayoutVersion, deviceDir, metadata.LayoutVersion) {
+			return fmt.Errorf("read %s: session metadata is outside its semantic device directory", path)
+		}
+		if repository.RepositoryKey != metadata.RepositoryKey || repository.RepositoryName != metadata.RepositoryName {
+			return fmt.Errorf("read %s: session and repository identities do not match", path)
+		}
+		document := filepath.Join(sessionDir, conversationName)
+		if info, err := os.Lstat(document); err != nil {
+			return fmt.Errorf("read %s: session document: %w", path, err)
+		} else if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("read %s: session document is not a regular file", path)
+		}
+		result = append(result, Entry{
+			RepositoryKey: metadata.RepositoryKey, RepositoryName: metadata.RepositoryName,
+			DeviceID: metadata.DeviceID, DeviceName: metadata.DeviceName,
+			SessionID: metadata.SessionID, SessionKey: metadata.SessionKey, Title: metadata.Title,
+			DocumentHash: metadata.DocumentHash, SourceHash: metadata.SourceHash,
+			UpdatedAt: metadata.UpdatedAt, Versions: 1, Path: document,
+		})
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	return result, nil
+}
+
+func validSessionMetadataLocation(repositoryDir string, repositoryLayout int, deviceDir string, sessionLayout int) bool {
+	direct := filepath.Clean(filepath.Dir(deviceDir)) == filepath.Clean(repositoryDir)
+	legacy := filepath.Clean(filepath.Dir(deviceDir)) == filepath.Clean(filepath.Join(repositoryDir, "sessions"))
+	if repositoryLayout == 3 {
+		return legacy && sessionLayout == 3
+	}
+	if direct {
+		// A v3/v4 sidecar at the v5 destination is the recoverable state after
+		// its verified directory move and before sidecar-last publication.
+		return supportedLayoutVersion(sessionLayout)
+	}
+	return legacy && (sessionLayout == 3 || sessionLayout == 4)
+}
+
+func readLegacyEntries(root string) ([]Entry, error) {
+	var result []Entry
+	err := filepath.WalkDir(root, func(path string, item os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if item.IsDir() {
+			return nil
+		}
+		if item.Name() == conversationName || item.Name() == "repository.md" ||
+			!strings.EqualFold(filepath.Ext(item.Name()), ".md") {
+			return nil
+		}
+		metadata, err := readFrontmatter(path)
+		if err != nil {
+			return nil
+		}
+		if metadata["session_id"] == "" || metadata["snapshot_hash"] == "" {
+			return nil
+		}
+		result = append(result, Entry{
+			RepositoryKey: metadata["repository_key"], RepositoryName: metadata["repository_name"],
+			SessionID: metadata["session_id"], Title: metadata["session_title"],
+			SnapshotHash: metadata["snapshot_hash"], SourceHash: metadata["source_hash"],
+			UpdatedAt: metadata["updated_at"], Versions: 1, Legacy: true, Path: path,
+		})
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
 	return result, nil
 }
 

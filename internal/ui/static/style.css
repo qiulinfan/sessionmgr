@@ -40,6 +40,10 @@ button, input, select { font: inherit; }
   margin-bottom: 42px;
 }
 
+.hero-tools { display: flex; flex: none; align-items: center; gap: 10px; }
+.language-picker select { min-width: 104px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
 .eyebrow, .step {
   margin: 0 0 10px;
   color: var(--green);
@@ -117,12 +121,32 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .hidden { display: none !important; }
 .warnings { margin-top: 18px; padding: 12px 16px; border-left: 3px solid var(--amber); color: #7b4813; background: rgba(217, 143, 57, .09); font-size: 13px; }
 .warnings p { margin: 5px 0; }
-.change-list { display: grid; gap: 12px; margin-top: 20px; }
-.change-card { position: relative; padding: 20px 20px 18px 104px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.7); }
-.change-card h3 { margin: 0; font-size: 17px; }
-.repo { margin: 7px 0; color: var(--green); font-weight: 650; }
+.change-tree { display: grid; gap: 14px; margin-top: 20px; }
+.tree-group { min-width: 0; }
+.repository-tree { overflow: hidden; border: 1px solid var(--line); border-radius: 17px; background: rgba(255, 255, 255, .64); }
+.tree-summary { display: grid; grid-template-columns: 16px 22px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 14px 16px; cursor: pointer; user-select: none; list-style: none; }
+.tree-summary::-webkit-details-marker { display: none; }
+.tree-summary::before { content: "›"; color: var(--muted); font-size: 22px; line-height: 1; transition: transform .15s ease; }
+.tree-group[open] > .tree-summary::before { transform: rotate(90deg); }
+.folder-icon::before { content: ""; display: block; width: 18px; height: 13px; border: 1.5px solid currentColor; border-radius: 3px; color: var(--green); background: rgba(220, 236, 228, .65); }
+.folder-icon::after { content: ""; display: block; width: 8px; height: 4px; margin: -17px 0 0 1px; border: 1.5px solid currentColor; border-bottom: 0; border-radius: 3px 3px 0 0; color: var(--green); }
+.tree-name { min-width: 0; overflow-wrap: anywhere; font-weight: 730; }
+.tree-count { color: var(--muted); font-size: 12px; font-weight: 600; }
+.repository-summary { background: rgba(220, 236, 228, .32); }
+.repository-summary .tree-name { font: 700 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.tree-children { margin-left: 26px; border-left: 1px solid var(--line); }
+.repository-children { padding: 5px 0 12px; }
+.device-tree { margin: 6px 12px 0; }
+.device-summary { padding: 10px 12px; border-radius: 10px; }
+.device-summary:hover { background: rgba(255, 255, 255, .72); }
+.device-summary .folder-icon::before, .device-summary .folder-icon::after { color: var(--blue); }
+.session-list { display: grid; gap: 8px; padding: 4px 10px 6px 22px; }
+.session-change { min-width: 0; padding: 13px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, .78); }
+.session-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.session-change h3 { min-width: 0; margin: 1px 0 0; font-size: 15px; overflow-wrap: anywhere; }
 .path { margin: 0; color: var(--muted); font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
-.badge { position: absolute; left: 20px; top: 20px; min-width: 62px; padding: 6px 9px; border-radius: 999px; text-align: center; font-size: 12px; font-weight: 700; }
+.attachment-summary { margin: 7px 0 0; color: var(--green); font-size: 12px; font-weight: 650; }
+.badge { flex: none; min-width: 62px; padding: 5px 8px; border-radius: 999px; text-align: center; font-size: 11px; font-weight: 700; }
 .badge.new { color: var(--green); background: var(--green-soft); }
 .badge.updated { color: var(--blue); background: #e1ebf5; }
 .badge.renamed { color: var(--amber); background: #f5e7d5; }
@@ -130,9 +154,17 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 @media (max-width: 680px) {
   .shell { width: min(calc(100% - 24px), 960px); padding-top: 38px; }
   .hero { display: block; }
-  .status-dot { display: inline-block; margin-top: 24px; }
+  .hero-tools { margin-top: 24px; justify-content: space-between; }
+  .status-dot { margin-top: 0; }
   .directory-row { grid-template-columns: 1fr 1fr; }
   .directory-row input { grid-column: 1 / -1; }
   .section-heading { align-items: flex-end; }
-  .change-card { padding-left: 20px; padding-top: 64px; }
+  .tree-summary { grid-template-columns: 14px 20px minmax(0, 1fr); }
+  .tree-count { grid-column: 3; }
+  .tree-children { margin-left: 14px; }
+  .device-tree { margin-right: 7px; }
+  .session-list { padding-left: 12px; padding-right: 6px; }
+  .session-heading { display: grid; }
+  .badge { grid-row: 1; justify-self: start; }
+  .session-change h3 { grid-row: 2; }
 }

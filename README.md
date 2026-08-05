@@ -22,7 +22,9 @@ sessionmgr gui
 
 - 选择、保存并恢复导出目录；
 - 导出全部 Git 仓库或当前 Git 仓库的 sessions；
-- 只显示本次新增、更新或重命名的 Markdown 文档，并标出该变化中的附件/复制数；
+- 按 repository 与设备目录折叠展示本次新增、更新或重命名的 Markdown 文档，并标出
+  该变化中的附件/复制数；
+- 在 English/中文之间切换；首次使用默认英文，选择会保存在本机浏览器中；
 - 没有变化时显示明确的“已经是最新状态”。
 
 目录选择器在 macOS 使用系统对话框，在 Windows 使用 Folder Browser，在 Linux
@@ -84,20 +86,23 @@ No changes.
 
 ```text
 <configured-directory>/
-└── repositories/
-    └── github.com/<owner>/<repo>/
+└── github.com-<owner>/
+    └── <repo>/
         ├── .sessionmgr-repository.json
-        └── sessions/
-            └── <device-name>/
-                └── <created-time>--<session-title>/
-                    ├── .sessionmgr-session.json
-                    ├── conversation.md
-                    └── attachments/
-                        └── 001-<readable-file-name>
+        └── <device-name>/
+            └── <created-time>--<session-title>/
+                ├── .sessionmgr-session.json
+                ├── conversation.md
+                └── attachments/
+                    └── 001-<readable-file-name>
 ```
 
 - repository key 来自去掉协议和凭据后的 hosted Git remote；同一仓库的 SSH 与
   HTTPS clone 使用同一个键。
+- 导出根目录下直接是 `<host>-<owner-or-namespace>/<repo>`；不再有 `repositories/`
+  wrapper，host 与用户/多级 namespace 合并为一层，例如
+  `github.com-qiulinfan/sessionmgr`。
+- repository 后直接是 `<device-name>`；当前布局不再创建多余的 `sessions/` wrapper。
 - 没有 hosted remote 的 session 不会被猜测归类，而是明确跳过并给出 warning。
 - 每台机器首次导出时在本地配置中生成持久 device ID；session key 由 device ID 与
   Codex 原生 session ID 共同生成。
@@ -119,7 +124,10 @@ No changes.
   被覆盖，而会作为 skipped 项提示。
 
 v0.3 开发早期产生的 hash-named v1/v2 文件仍可用 `sessionmgr list --history` 查看。
-程序不会自动删除或重写它们，避免未确认地破坏已有归档；后续 v3 导出使用上面的新布局。
+layout-v3 的 `repositories/<host>/<owner>/<repo>` 与 layout-v4 的
+`<host>-<namespace>/<repo>/sessions` current documents 也仍可读，并在下次经过
+所有权/hash 校验的导出时移到上面的 layout-v5 路径。确认没有其他内容后，迁移会移除空的
+旧 `sessions/`/device 目录；程序不会自动删除旧 repository sidecar 或 v1/v2 归档。
 
 导出不会锁住 Codex 的源文件。所有 JSONL 共用一次短暂稳定观察窗口；在窗口内仍在
 变化、读取时被替换、被操作系统报告为锁定，或尾部记录不完整的 session 会记入 JSON

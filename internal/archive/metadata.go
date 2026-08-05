@@ -129,7 +129,7 @@ func readMetadata(path string, target any) error {
 }
 
 func validateRepositoryMetadata(value repositoryMetadata) error {
-	if value.SchemaVersion != SchemaVersion || value.LayoutVersion != LayoutVersion {
+	if value.SchemaVersion != SchemaVersion || !supportedLayoutVersion(value.LayoutVersion) {
 		return fmt.Errorf("unsupported repository metadata schema/layout %d/%d", value.SchemaVersion, value.LayoutVersion)
 	}
 	if value.RepositoryKey == "" || value.CanonicalRemote == "" {
@@ -142,7 +142,7 @@ func validateRepositoryMetadata(value repositoryMetadata) error {
 }
 
 func validateSessionMetadata(value sessionMetadata) error {
-	if value.SchemaVersion != SchemaVersion || value.LayoutVersion != LayoutVersion {
+	if value.SchemaVersion != SchemaVersion || !supportedLayoutVersion(value.LayoutVersion) {
 		return fmt.Errorf("unsupported session metadata schema/layout %d/%d", value.SchemaVersion, value.LayoutVersion)
 	}
 	if value.RepositoryKey == "" || value.RepositoryName == "" || value.DeviceID == "" || value.DeviceName == "" ||
@@ -175,6 +175,10 @@ func validateSessionMetadata(value sessionMetadata) error {
 		seen[identity] = true
 	}
 	return nil
+}
+
+func supportedLayoutVersion(value int) bool {
+	return value == 3 || value == 4 || value == LayoutVersion
 }
 
 func validateAttachmentMetadata(value attachmentMetadata) error {
@@ -230,10 +234,19 @@ func publishRepositoryMetadata(directory string, repo Repository) error {
 		if err := validateRepositoryMetadata(current); err != nil {
 			return err
 		}
-		if !reflect.DeepEqual(current, want) {
+		if reflect.DeepEqual(current, want) {
+			return nil
+		}
+		if current.SchemaVersion != want.SchemaVersion || current.RepositoryKey != want.RepositoryKey ||
+			current.RepositoryName != want.RepositoryName || current.CanonicalRemote != want.CanonicalRemote ||
+			current.LayoutVersion >= want.LayoutVersion {
 			return fmt.Errorf("semantic repository path belongs to a different identity: %s", directory)
 		}
-		return nil
+		data, err := marshalMetadata(want)
+		if err != nil {
+			return err
+		}
+		return replaceOwnedFile(path, data)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read repository metadata: %w", err)
 	}
@@ -294,6 +307,16 @@ func replaceOwnedFile(path string, data []byte) error {
 }
 
 func semanticRepositoryDirectory(repo Repository) string {
+	parts := strings.Split(repo.CanonicalRemote, "/")
+	if len(parts) < 2 {
+		return semanticComponent(repo.CanonicalRemote, "repository")
+	}
+	namespace := semanticComponent(strings.Join(parts[:len(parts)-1], "-"), "repository")
+	name := semanticComponent(parts[len(parts)-1], "repository")
+	return filepath.Join(namespace, name)
+}
+
+func semanticRepositoryDirectoryV3(repo Repository) string {
 	parts := strings.Split(repo.CanonicalRemote, "/")
 	clean := make([]string, 0, len(parts))
 	for _, part := range parts {

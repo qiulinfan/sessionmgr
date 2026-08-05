@@ -51,7 +51,7 @@ func TestConfiguredExportShowsOnlyCurrentChanges(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &exported); err != nil || exported.Created != 1 || exported.Attachments != 1 || exported.ArchivedAttachments != 1 || len(exported.Changes) != 1 || exported.Changes[0].Kind != "new" {
 		t.Fatalf("unexpected export JSON: %s (%v)", stdout.String(), err)
 	}
-	attachmentMatches, err := filepath.Glob(filepath.Join(output, "repositories", "github.com", "example", "cli", "sessions", "*", "*", "attachments", "001-cli-note.txt"))
+	attachmentMatches, err := filepath.Glob(filepath.Join(output, "github.com-example", "cli", "*", "*", "attachments", "001-cli-note.txt"))
 	if err != nil || len(attachmentMatches) != 1 {
 		t.Fatalf("CLI attachment path missing: %v, %v", attachmentMatches, err)
 	}

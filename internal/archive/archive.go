@@ -32,7 +32,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		return result, err
 	}
 	result.Output = output
-	if err := os.MkdirAll(filepath.Join(output, "repositories"), 0o755); err != nil {
+	if err := os.MkdirAll(output, 0o755); err != nil {
 		return result, err
 	}
 	existing, err := List(ListOptions{Output: output, History: true})
@@ -170,12 +170,12 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 }
 
 func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, string, string, error) {
-	repositoryDir := filepath.Join(output, "repositories", semanticRepositoryDirectory(snapshot.Repository))
+	repositoryDir := filepath.Join(output, semanticRepositoryDirectory(snapshot.Repository))
 	if err := publishRepositoryMetadata(repositoryDir, snapshot.Repository); err != nil {
 		return false, "", "", fmt.Errorf("publish repository identity: %w", err)
 	}
 	deviceDir := semanticComponent(snapshot.DeviceName, "device")
-	desiredDir := filepath.Join(repositoryDir, "sessions", deviceDir, semanticSessionDirectory(*snapshot))
+	desiredDir := filepath.Join(repositoryDir, deviceDir, semanticSessionDirectory(*snapshot))
 
 	if len(history) > 0 {
 		latest := history[0]
@@ -250,6 +250,7 @@ func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, 
 func updatePublishedSession(previous Entry, desiredDir string, document []byte, record sessionMetadata, session Session) (bool, string, string, error) {
 	oldDocumentPath := previous.Path
 	oldDir := filepath.Dir(oldDocumentPath)
+	previousDir := oldDir
 	var current sessionMetadata
 	if err := readMetadata(filepath.Join(oldDir, sessionMetadataName), &current); err != nil {
 		return false, "", "", fmt.Errorf("read existing session metadata: %w", err)
@@ -310,7 +311,24 @@ func updatePublishedSession(previous Entry, desiredDir string, document []byte, 
 	if err := replaceOwnedFile(filepath.Join(filepath.Dir(oldDocumentPath), sessionMetadataName), metadata); err != nil {
 		return false, "", "", err
 	}
+	if dirChanged {
+		removeEmptyLegacySessionParents(previousDir)
+	}
 	return dirChanged || contentChanged || metadataChanged || attachmentsChanged, oldDocumentPath, newHash, nil
+}
+
+func removeEmptyLegacySessionParents(sessionDir string) {
+	deviceDir := filepath.Dir(sessionDir)
+	sessionsDir := filepath.Dir(deviceDir)
+	if filepath.Base(sessionsDir) != "sessions" {
+		return
+	}
+	// os.Remove only succeeds for empty directories, so user files or another
+	// session always keep both legacy parents in place.
+	if err := os.Remove(deviceDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	_ = os.Remove(sessionsDir)
 }
 
 func retainPublishedAttachments(session *Session, current sessionMetadata) {

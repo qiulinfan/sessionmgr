@@ -74,7 +74,7 @@ host 转小写；path 保留大小写；协议、userinfo、query、fragment 和
 local/file/empty remote 不生成 key。若 session metadata 没有 remote，转换器只允许从
 其仍可访问的 CWD 查询 hosted `remote.origin.url`；仍没有则跳过。
 
-## 4. Identity and change hashes / renderer v4
+## 4. Identity and change hashes / layout v5 / renderer v4
 
 ```text
 source_hash = sha256(raw_jsonl_bytes)
@@ -91,17 +91,21 @@ document_hash = sha256(rendered_conversation_md_bytes)
 ## 5. 文件布局与 schema
 
 ```text
-<export-directory>/repositories/<host>/<owner>/<repo>/
+<export-directory>/<host>-<owner-or-namespace>/<repo>/
 ├── .sessionmgr-repository.json
-└── sessions/<device-name>/<created-time>--<session-title>/
+└── <device-name>/<created-time>--<session-title>/
     ├── .sessionmgr-session.json
     ├── conversation.md
     └── attachments/                  # only when archived bytes exist
         └── <sequence>-<readable-name>
 ```
 
-可见路径只承担语义：remote 各段、设备名、UTC 创建时间和最新标题经过跨平台安全的
-component 规范化，每段最多 80 UTF-8 bytes。它不通过附加 hash 解决碰撞；若两个身份
+可见路径只承担语义：导出根目录下不存在 `repositories/` wrapper，repository 与 device
+之间也不存在 `sessions/` wrapper。canonical remote 的
+最后一段是 repository 名，其余 host + owner/多级 namespace 以 `-` 合并为第一层；
+例如 `github.com/qiulinfan/sessionmgr` 得到 `github.com-qiulinfan/sessionmgr`。repository
+namespace、设备名、UTC 创建时间和最新标题经过跨平台安全的 component 规范化，
+每段最多 80 UTF-8 bytes。它不通过附加 hash 解决碰撞；若两个身份
 规范化到同一路径，hidden metadata 必须发现 collision 并拒绝第二次写入。
 
 `.sessionmgr-repository.json` 包含 `schema_version`、`layout_version`、`repository_key`、
@@ -193,7 +197,11 @@ sharing/lock violation 会显式映射为 `busy`。permission 和其他 I/O 错�
 ## 8. Incremental changeset
 
 导出开始时一次读取隐藏 sidecar，并按 `repository_key + session_key` 建立 current map。
-v1/v2 Markdown frontmatter 只作为 legacy history 读取，不参与 v3 写入身份。
+reader 同时扫描根目录两层的 layout-v4/v5 repository 与
+`repositories/<host>/<owner>/<repo>` layout-v3 sidecar。repository 内同时识别
+layout-v3/v4 的 `sessions/<device>/<session>` 与 layout-v5 的 `<device>/<session>`；旧
+sidecar 已移动到 v5 目标但尚未完成 sidecar-last 更新时也保持可恢复。v1/v2 Markdown
+frontmatter 只作为 legacy history 读取，不参与 current 写入身份。
 
 成功发布后分类：
 
@@ -263,6 +271,13 @@ API：
 - `POST /api/pick-directory`：调用平台目录对话框；
 - `POST /api/export`：执行 all/current scope 并返回当前 changeset。
 
+前端首次加载使用 English；用户可切换 English/中文，选择只保存在浏览器本地，不改变
+跨机器 config schema。静态文案以及连接、保存、导出、busy/no-change、计数、change badge
+与附件摘要等动态状态共享同一语言字典。changeset 在客户端按 `repository_key` 和
+`device_name` 分成两级原生 `<details>` 目录树；repository/device summary 可独立展开，
+session 变化作为对应 device 的叶节点显示。后端 JSON changeset 保持扁平，避免为显示结构
+改变 CLI/API contract。
+
 ## 11. 平台适配
 
 | 能力 | macOS | Linux | Windows |
@@ -282,9 +297,12 @@ SQLite、encryption 或 GUI 状态。旧 `~/.sessionmgr` 保持原样。
 同一 v0.3 development line 的早期 `archive --output` 用法继续工作，但默认目录现在来自
 持久配置；首次使用必须通过 GUI、`config set-directory` 或 `export --directory` 指定。
 
-layout v3 不自动迁移、删除或改写 v1/v2 的 hash-named repository/snapshot 文件。
-renderer v4 在保留 layout v3 的前提下新增可选 attachment manifest/directory；旧 layout-v3
-sidecar 没有 `attachment_schema_version` 或 `attachments` 时仍可读，下次成功导出会安全更新
-Markdown 和 sidecar。`list --history` 仍能检查旧 frontmatter；第一次 layout-v3 导出会
-另建 semantic current document。
+layout v4 只改变 repository 可见路径；layout v5 进一步移除 repository 与 device 之间的
+`sessions/` wrapper。schema v1、repository key、session key、attachment schema v1 与
+renderer v4 不变。layout-v3/v4 repository/session sidecar 仍可严格读取；下次导出先验证
+旧 conversation/attachment hashes 与 identity，再将该 session directory rename 到
+layout-v5 device 路径，最后发布 layout-v5 session sidecar。layout-v4 repository sidecar
+与 v5 位于同一路径，只有完整 identity 一致时才原子升级；迁移后只删除确认为空的旧
+device/`sessions` 目录。旧 layout-v3 repository sidecar 和 v1/v2 hash-named 数据不自动
+删除；`list --history` 仍能检查它们。
 旧归档的删除必须留给一个未来的显式、可 review migration。

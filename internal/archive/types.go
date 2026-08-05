@@ -4,7 +4,7 @@ import "time"
 
 const (
 	SchemaVersion      = 1
-	LayoutVersion      = 3
+	LayoutVersion      = 5
 	RendererVersion    = 4
 	MaxAttachmentBytes = int64(50 * 1024 * 1024)
 )

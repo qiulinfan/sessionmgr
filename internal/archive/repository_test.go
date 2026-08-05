@@ -43,6 +43,18 @@ func TestRepositoryNameUsesRemotePathOnEveryPlatform(t *testing.T) {
 	}
 }
 
+func TestSemanticRepositoryDirectoryFlattensHostAndNamespace(t *testing.T) {
+	tests := map[string]string{
+		"github.com/qiulinfan/sessionmgr":        filepath.Join("github.com-qiulinfan", "sessionmgr"),
+		"gitlab.com/example/platform/sessionmgr": filepath.Join("gitlab.com-example-platform", "sessionmgr"),
+	}
+	for remote, want := range tests {
+		if got := semanticRepositoryDirectory(repositoryFromRemote(remote)); got != want {
+			t.Fatalf("semanticRepositoryDirectory(%q) = %q, want %q", remote, got, want)
+		}
+	}
+}
+
 func TestSemanticComponentIsLimitedForUnicodePathComponents(t *testing.T) {
 	result := semanticComponent(strings.Repeat("归档", 100), "repository")
 	if len([]byte(result)) > 80 {

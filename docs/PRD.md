@@ -70,11 +70,15 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 - host 转小写，path 在 v1 中保留大小写；
 - 空 remote、local path remote、`file://` remote 必须跳过；
 - repository identity 冲突不得覆盖已有文件。
-- 可见 repository 路径使用规范化 remote 的 host/owner/repo，不包含 hash；
+- 可见 repository 路径直接位于导出根目录，使用
+  `<host>-<owner-or-namespace>/<repo>`，不包含 `repositories/` wrapper 或 hash；
+- host 与 Git owner/多级 namespace 必须合并为一个跨平台安全 component，例如
+  `github.com-qiulinfan/sessionmgr` 与 `gitlab.com-team-platform/project`；
 - 完整 key 与 canonical remote 必须保存在 `.sessionmgr-repository.json`。
 
 ### FR-4 Markdown export
 
+- repository 目录之后必须直接是可读 device 目录，不得再增加 `sessions/` wrapper；
 - 可见文档固定命名为 `conversation.md`，父目录使用创建时间与最新 session 名称；
 - 设备、原生 session ID、session key、源 hash 与文档 hash 只保存在
   `.sessionmgr-session.json`；
@@ -122,6 +126,9 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 - 服务只能监听 loopback；
 - 每次启动必须生成随机 API token；
 - GUI 必须支持保存目录、系统目录选择、导出范围和 changeset 展示；
+- changeset 必须按 repository/device 目录分组，并可逐层展开或收起，不得只显示无分组的
+  session 卡片列表；
+- GUI 必须提供 English/中文切换，首次加载默认 English，并在浏览器可用时记住用户选择；
 - 桌面与窄屏布局必须可用；
 - UI 不得执行 `git add`、commit 或 push。
 
@@ -173,3 +180,9 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 19. 结构化聊天附件在 `attachments/` 中使用可读名称，并由隐藏 sidecar 的 SHA-256 保护。
 20. 50 MiB 附件可导出；超过 50 MiB、忙碌、缺失或远程-only 的附件不会阻断其对话导出。
 21. 普通消息中的路径、tool payload 和 agent 读取的文件不会被当作附件。
+22. 新导出不创建 `repositories/`；GitHub 仓库可见路径为
+    `github.com-<owner>/<repo>`。
+23. 新导出在 `<repo>` 后直接创建 `<device-name>`，不创建 `sessions/` wrapper。
+24. layout-v3/v4 current session 仍可列出，并只在安全校验后迁移到 layout v5。
+25. GUI changeset 按 repository/device 两级目录分组，目录可展开和收起。
+26. GUI 首次加载为英文，切换中文后静态文案与当前动态结果同步切换。

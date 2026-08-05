@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -11,53 +11,62 @@
       <header class="hero">
         <div>
           <p class="eyebrow">CODEX SESSION ARCHIVE</p>
-          <h1>只保存这次发生的变化。</h1>
-          <p class="lede">选择一个持久目录，将本机 Codex sessions 按 Git 远程仓库导出为 Markdown。</p>
+          <h1 data-i18n="heroTitle">Keep only what changed.</h1>
+          <p class="lede" data-i18n="heroLede">Choose a persistent directory and export local Codex sessions as Markdown, grouped by Git remote.</p>
         </div>
-        <div id="connection" class="status-dot">正在连接</div>
+        <div class="hero-tools">
+          <label class="language-picker">
+            <span class="sr-only" data-i18n="language">Language</span>
+            <select id="language" data-i18n-aria-label="language">
+              <option value="en">English</option>
+              <option value="zh">中文</option>
+            </select>
+          </label>
+          <div id="connection" class="status-dot" data-i18n="connecting">Connecting</div>
+        </div>
       </header>
 
       <section class="panel settings">
         <div class="section-heading">
           <div>
             <p class="step">01</p>
-            <h2>导出目录</h2>
+            <h2 data-i18n="exportDirectory">Export directory</h2>
           </div>
           <span id="save-status" class="muted"></span>
         </div>
         <div class="directory-row">
-          <input id="directory" type="text" autocomplete="off" spellcheck="false" placeholder="例如 /Users/me/Documents/session-archive" />
-          <button id="browse" class="button secondary" type="button">浏览</button>
-          <button id="save" class="button secondary" type="button">保存</button>
+          <input id="directory" type="text" autocomplete="off" spellcheck="false" data-i18n-placeholder="directoryPlaceholder" placeholder="For example, /Users/me/Documents/session-archive" />
+          <button id="browse" class="button secondary" type="button" data-i18n="browse">Browse</button>
+          <button id="save" class="button secondary" type="button" data-i18n="save">Save</button>
         </div>
-        <p class="hint">目录会保存在当前系统的 Session Manager 配置中，下次启动自动恢复。</p>
+        <p class="hint" data-i18n="directoryHint">This directory is saved in Session Manager's local configuration and restored the next time it starts.</p>
       </section>
 
       <section class="panel action-panel">
         <div class="section-heading">
           <div>
             <p class="step">02</p>
-            <h2>导出 sessions</h2>
+            <h2 data-i18n="exportSessions">Export sessions</h2>
           </div>
-          <select id="scope" aria-label="导出范围">
-            <option value="all">全部 Git 仓库</option>
-            <option value="current">当前 Git 仓库</option>
+          <select id="scope" data-i18n-aria-label="exportScope" aria-label="Export scope">
+            <option value="all" data-i18n="allRepositories">All Git repositories</option>
+            <option value="current" data-i18n="currentRepository">Current Git repository</option>
           </select>
         </div>
-        <button id="export" class="button primary" type="button">导出变化</button>
+        <button id="export" class="button primary" type="button" data-i18n="exportChanges">Export changes</button>
       </section>
 
       <section class="results" aria-live="polite">
         <div class="section-heading">
           <div>
             <p class="step">03</p>
-            <h2>本次导出变化</h2>
+            <h2 data-i18n="exportedChanges">Changes from this export</h2>
           </div>
           <span id="result-count" class="counter">—</span>
         </div>
-        <div id="message" class="empty">尚未执行导出。</div>
+        <div id="message" class="empty" data-i18n="notExported">No export has been run yet.</div>
         <div id="warnings" class="warnings hidden"></div>
-        <div id="changes" class="change-list"></div>
+        <div id="changes" class="change-tree"></div>
       </section>
     </main>
     <script src="/app.js" defer></script>

@@ -69,6 +69,12 @@ func TestGUIConfigAndIncrementalExport(t *testing.T) {
 	if filepath.Base(changePath) != "conversation.md" || strings.Contains(changePath, "sha256") || strings.Contains(changePath, "gui-session") {
 		t.Fatalf("GUI exposed a non-semantic document path: %s", changePath)
 	}
+	if strings.Contains(changePath, string(filepath.Separator)+"repositories"+string(filepath.Separator)) || !strings.Contains(changePath, "github.com-example") {
+		t.Fatalf("GUI did not use the flattened repository layout: %s", changePath)
+	}
+	if strings.Contains(changePath, string(filepath.Separator)+"sessions"+string(filepath.Separator)) {
+		t.Fatalf("GUI path retained the sessions wrapper: %s", changePath)
+	}
 	if data, err := os.ReadFile(filepath.Join(filepath.Dir(changePath), "attachments", "001-gui-note.txt")); err != nil || string(data) != "gui note\n" {
 		t.Fatalf("GUI attachment was not exported: %q, %v", data, err)
 	}
@@ -100,8 +106,23 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	if result.Header().Get("Content-Security-Policy") == "" {
 		t.Fatal("static page has no content security policy")
 	}
-	if !bytes.Contains(result.Body.Bytes(), []byte("本次导出变化")) {
-		t.Fatal("GUI content is missing")
+	page := result.Body.Bytes()
+	if !bytes.Contains(page, []byte(`<html lang="en">`)) || !bytes.Contains(page, []byte("Changes from this export")) {
+		t.Fatal("GUI does not default to English")
+	}
+	if !bytes.Contains(page, []byte(`<option value="en">English</option>`)) || !bytes.Contains(page, []byte(`<option value="zh">中文</option>`)) {
+		t.Fatal("GUI language selector is missing English or Chinese")
+	}
+
+	scriptRequest := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	scriptResult := httptest.NewRecorder()
+	handler.ServeHTTP(scriptResult, scriptRequest)
+	if scriptResult.Code != http.StatusOK {
+		t.Fatalf("GUI script returned %d", scriptResult.Code)
+	}
+	script := scriptResult.Body.Bytes()
+	if !bytes.Contains(script, []byte("function groupChanges")) || !bytes.Contains(script, []byte("repository-tree")) || !bytes.Contains(script, []byte("sessionmgr-language")) {
+		t.Fatal("GUI script is missing grouped directory changes or persistent language selection")
 	}
 }
 

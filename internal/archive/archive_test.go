@@ -56,9 +56,15 @@ func TestArchiveMaintainsOneSemanticDocumentPerDeviceSession(t *testing.T) {
 	if string(sourceBefore) != string(sourceAfter) {
 		t.Fatal("archive modified the raw Codex source")
 	}
-	repositoryDir := filepath.Join(output, "repositories", "github.com", "example", "project")
+	repositoryDir := filepath.Join(output, "github.com-example", "project")
 	if _, err := os.Stat(filepath.Join(repositoryDir, repositoryMetadataName)); err != nil {
 		t.Fatalf("semantic repository metadata is missing: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repositoryDir, "sessions")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("new export created a sessions wrapper: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(output, "repositories")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("new export created a repositories wrapper: %v", err)
 	}
 
 	repeated, err := Export(context.Background(), testExportOptions(codexHome, output))
@@ -211,7 +217,7 @@ func TestExistingSemanticRepositoryDirectoryIsNotClaimed(t *testing.T) {
 	codexHome := filepath.Join(root, "codex")
 	output := filepath.Join(root, "archive")
 	writeSessionFixture(t, codexHome, "session-a", "https://github.com/example/project.git", "answer")
-	repositoryDir := filepath.Join(output, "repositories", "github.com", "example", "project")
+	repositoryDir := filepath.Join(output, "github.com-example", "project")
 	if err := os.MkdirAll(repositoryDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -256,6 +262,202 @@ updated_at: "2026-08-05T01:00:00Z"
 	entries, err := List(ListOptions{Output: output, History: true})
 	if err != nil || len(entries) != 1 || !entries[0].Legacy || entries[0].Path != path {
 		t.Fatalf("legacy session was not inspectable: %+v, %v", entries, err)
+	}
+}
+
+func TestLayoutV3SessionMigratesToCurrentLayoutOnVerifiedExport(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	writeSessionFixture(t, codexHome, "session-a", "https://github.com/example/project.git", "answer")
+	first, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil || len(first.Changes) != 1 {
+		t.Fatalf("initial layout-v5 export failed: %+v, %v", first, err)
+	}
+	newRepositoryDir := filepath.Join(output, "github.com-example", "project")
+	oldRepositoryDir := filepath.Join(output, "repositories", "github.com", "example", "project")
+	if err := os.MkdirAll(filepath.Dir(oldRepositoryDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(newRepositoryDir, oldRepositoryDir); err != nil {
+		t.Fatal(err)
+	}
+	relativeDocument, err := filepath.Rel(newRepositoryDir, first.Changes[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceName := strings.Split(relativeDocument, string(filepath.Separator))[0]
+	if err := os.MkdirAll(filepath.Join(oldRepositoryDir, "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(oldRepositoryDir, deviceName), filepath.Join(oldRepositoryDir, "sessions", deviceName)); err != nil {
+		t.Fatal(err)
+	}
+	var repository repositoryMetadata
+	repositoryPath := filepath.Join(oldRepositoryDir, repositoryMetadataName)
+	if err := readMetadata(repositoryPath, &repository); err != nil {
+		t.Fatal(err)
+	}
+	repository.LayoutVersion = 3
+	repositoryBytes, err := marshalMetadata(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repositoryPath, repositoryBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldDocument := filepath.Join(oldRepositoryDir, "sessions", relativeDocument)
+	sessionPath := filepath.Join(filepath.Dir(oldDocument), sessionMetadataName)
+	var session sessionMetadata
+	if err := readMetadata(sessionPath, &session); err != nil {
+		t.Fatal(err)
+	}
+	session.LayoutVersion = 3
+	sessionBytes, err := marshalMetadata(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionPath, sessionBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	legacyCurrent, err := List(ListOptions{Output: output})
+	if err != nil || len(legacyCurrent) != 1 || legacyCurrent[0].Path != oldDocument {
+		t.Fatalf("layout-v3 current session was not readable: %+v, %v", legacyCurrent, err)
+	}
+	migrated, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil || migrated.Created != 1 || len(migrated.Changes) != 1 {
+		t.Fatalf("layout-v3 session did not migrate: %+v, %v", migrated, err)
+	}
+	if strings.Contains(migrated.Changes[0].Path, string(filepath.Separator)+"repositories"+string(filepath.Separator)) ||
+		strings.Contains(migrated.Changes[0].Path, string(filepath.Separator)+"sessions"+string(filepath.Separator)) ||
+		!strings.Contains(migrated.Changes[0].Path, filepath.Join("github.com-example", "project", "test-device")) {
+		t.Fatalf("migrated path was not flattened: %s", migrated.Changes[0].Path)
+	}
+	var migratedMetadata sessionMetadata
+	if err := readMetadata(filepath.Join(filepath.Dir(migrated.Changes[0].Path), sessionMetadataName), &migratedMetadata); err != nil {
+		t.Fatal(err)
+	}
+	if migratedMetadata.LayoutVersion != LayoutVersion {
+		t.Fatalf("migrated sidecar layout = %d, want %d", migratedMetadata.LayoutVersion, LayoutVersion)
+	}
+	if _, err := os.Stat(repositoryPath); err != nil {
+		t.Fatalf("old repository identity sidecar was unexpectedly removed: %v", err)
+	}
+}
+
+func TestLayoutV4SessionMigratesWithoutSessionsWrapper(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	writeSessionFixture(t, codexHome, "session-a", "https://github.com/example/project.git", "answer")
+	first, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil || len(first.Changes) != 1 {
+		t.Fatalf("initial export failed: %+v, %v", first, err)
+	}
+	repositoryDir := filepath.Join(output, "github.com-example", "project")
+	repositoryPath := filepath.Join(repositoryDir, repositoryMetadataName)
+	var repository repositoryMetadata
+	if err := readMetadata(repositoryPath, &repository); err != nil {
+		t.Fatal(err)
+	}
+	repository.LayoutVersion = 4
+	repositoryBytes, err := marshalMetadata(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repositoryPath, repositoryBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	relativeDocument, err := filepath.Rel(repositoryDir, first.Changes[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceName := strings.Split(relativeDocument, string(filepath.Separator))[0]
+	if err := os.MkdirAll(filepath.Join(repositoryDir, "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(repositoryDir, deviceName), filepath.Join(repositoryDir, "sessions", deviceName)); err != nil {
+		t.Fatal(err)
+	}
+	oldDocument := filepath.Join(repositoryDir, "sessions", relativeDocument)
+	metadataPath := filepath.Join(filepath.Dir(oldDocument), sessionMetadataName)
+	var metadata sessionMetadata
+	if err := readMetadata(metadataPath, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata.LayoutVersion = 4
+	metadataBytes, err := marshalMetadata(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metadataPath, metadataBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	legacyCurrent, err := List(ListOptions{Output: output})
+	if err != nil || len(legacyCurrent) != 1 || legacyCurrent[0].Path != oldDocument {
+		t.Fatalf("layout-v4 current session was not readable: %+v, %v", legacyCurrent, err)
+	}
+	migrated, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil || migrated.Created != 1 || len(migrated.Changes) != 1 {
+		t.Fatalf("layout-v4 session did not migrate: %+v, %v", migrated, err)
+	}
+	if strings.Contains(migrated.Changes[0].Path, string(filepath.Separator)+"sessions"+string(filepath.Separator)) {
+		t.Fatalf("migrated path retained the sessions wrapper: %s", migrated.Changes[0].Path)
+	}
+	if _, err := os.Lstat(filepath.Join(repositoryDir, "sessions")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty layout-v4 sessions wrapper remained: %v", err)
+	}
+	if err := readMetadata(filepath.Join(filepath.Dir(migrated.Changes[0].Path), sessionMetadataName), &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.LayoutVersion != LayoutVersion {
+		t.Fatalf("migrated sidecar layout = %d, want %d", metadata.LayoutVersion, LayoutVersion)
+	}
+	if err := readMetadata(repositoryPath, &repository); err != nil {
+		t.Fatal(err)
+	}
+	if repository.LayoutVersion != LayoutVersion {
+		t.Fatalf("repository sidecar layout = %d, want %d", repository.LayoutVersion, LayoutVersion)
+	}
+}
+
+func TestListRecoversV3SessionSidecarAlreadyMovedUnderV5Repository(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	writeSessionFixture(t, codexHome, "session-a", "https://github.com/example/project.git", "answer")
+	first, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil || len(first.Changes) != 1 {
+		t.Fatalf("initial export failed: %+v, %v", first, err)
+	}
+	metadataPath := filepath.Join(filepath.Dir(first.Changes[0].Path), sessionMetadataName)
+	var metadata sessionMetadata
+	if err := readMetadata(metadataPath, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata.LayoutVersion = 3
+	data, err := marshalMetadata(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metadataPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := List(ListOptions{Output: output})
+	if err != nil || len(entries) != 1 || entries[0].Path != first.Changes[0].Path {
+		t.Fatalf("interrupted migration state was not readable: %+v, %v", entries, err)
+	}
+	recovered, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil || recovered.Created != 1 || len(recovered.Changes) != 1 {
+		t.Fatalf("interrupted migration state was not repaired: %+v, %v", recovered, err)
+	}
+	if err := readMetadata(metadataPath, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.LayoutVersion != LayoutVersion {
+		t.Fatalf("recovered layout = %d, want %d", metadata.LayoutVersion, LayoutVersion)
 	}
 }
 
