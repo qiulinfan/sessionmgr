@@ -124,6 +124,20 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	if !bytes.Contains(script, []byte("function groupChanges")) || !bytes.Contains(script, []byte("repository-tree")) || !bytes.Contains(script, []byte("sessionmgr-language")) {
 		t.Fatal("GUI script is missing grouped directory changes or persistent language selection")
 	}
+
+	styleRequest := httptest.NewRequest(http.MethodGet, "/style.css", nil)
+	styleResult := httptest.NewRecorder()
+	handler.ServeHTTP(styleResult, styleRequest)
+	if styleResult.Code != http.StatusOK {
+		t.Fatalf("GUI stylesheet returned %d", styleResult.Code)
+	}
+	style := styleResult.Body.Bytes()
+	if !bytes.Contains(style, []byte("color-scheme: dark")) ||
+		!bytes.Contains(style, []byte("--paper: #0d1117")) ||
+		!bytes.Contains(style, []byte("--surface: #161b22")) ||
+		bytes.Contains(style, []byte("color-scheme: light")) {
+		t.Fatal("GUI stylesheet is not using the GitHub Dark palette")
+	}
 }
 
 func TestGUIBusySourceIsNotAnError(t *testing.T) {

@@ -56,6 +56,10 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 ### FR-2 Session discovery
 
 - 扫描 Codex `sessions/` 与 `archived_sessions/` JSONL；
+- session 从 active 移入 `archived_sessions/` 时必须继续按同一 native ID/device identity
+  处理，源内容不变时不得产生 changeset；
+- source 后来从 active 与 archived 目录都消失时，普通导出不得删除、改名或修改已经归档的
+  Markdown、附件、sidecar 或 derived catalog entry；source absence 不是删除指令；
 - 支持全部仓库、当前/指定仓库、指定 session 三种范围；
 - 全部候选文件必须共享一个短暂稳定窗口，而不是逐文件等待；
 - 活跃文件在观察与读取前后必须保持 identity、size 和 mtime 一致；
@@ -86,6 +90,11 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 - 分别保存创建、首条消息、末条消息、末事件、标题更新和总体更新时间；
 - 保存总消息、用户消息和助手消息数量；
 - 保存用户与助手的可读对话；
+- 新版 Codex 把任务启动上下文写成内部 `role=user` response 时，必须以
+  `event_msg.user_message` 识别真实用户输入；未对应真实 user event 的插件列表、AGENTS
+  规则、环境信息等注入内容不得进入标题或正文；
+- 没有任何真实用户消息的 context-only source 不生成归档文档，也不得因此产生 warning
+  或修改原始 JSONL；旧格式完全没有 user event 时必须继续兼容真实 response user message；
 - 只归档用户通过聊天框结构化投入的附件；不得从消息正文、tool 参数/输出或 agent 读取过的
   路径推断附件；
 - 单个附件原始内容不得超过 50 MiB（`50 * 1024 * 1024` bytes）；等于上限允许，超过
@@ -118,6 +127,8 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 - 标题变化时，在所有权验证后重命名语义目录并更新同一个文档；
 - CLI 和 GUI 默认只渲染当前操作创建的 changeset；
 - changeset 为空时显示单一的 no-change 状态，不回显历史 catalog。
+- 普通 export 只能新增或更新已发现的 session，不得通过“本次未发现”推导 tombstone、prune
+  或删除操作；任何未来清理必须是独立、显式且可审阅的命令。
 
 ### FR-6 GUI
 
@@ -128,6 +139,7 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 - GUI 必须支持保存目录、系统目录选择、导出范围和 changeset 展示；
 - changeset 必须按 repository/device 目录分组，并可逐层展开或收起，不得只显示无分组的
   session 卡片列表；
+- GUI 默认使用接近 GitHub Dark 的黑灰背景、surface、边框和状态色，不得回退为白底；
 - GUI 必须提供 English/中文切换，首次加载默认 English，并在浏览器可用时记住用户选择；
 - 桌面与窄屏布局必须可用；
 - UI 不得执行 `git add`、commit 或 push。
@@ -186,3 +198,11 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 24. layout-v3/v4 current session 仍可列出，并只在安全校验后迁移到 layout v5。
 25. GUI changeset 按 repository/device 两级目录分组，目录可展开和收起。
 26. GUI 首次加载为英文，切换中文后静态文案与当前动态结果同步切换。
+27. 同时含注入 `role=user` 上下文和真实 `user_message` event 的 Codex source 只导出真实
+    对话；标题不得取自 `recommended_plugins`、`AGENTS.md` 或 `environment_context`。
+28. context-only source 不创建文档；renderer-v4 污染文档在 ownership/hash 校验后升级到
+    renderer v5、修复正文并按真实标题安全重命名。
+29. source 从 active 移到 `archived_sessions/` 后重复导出保持 unchanged；随后 source 完全
+    消失时，既有 Markdown、sidecar bytes 和 list entry 均保持不变。
+30. GUI 桌面与 390px 窄屏均使用 GitHub Dark 风格，表单和目录树无白色 surface，且没有
+    横向溢出。

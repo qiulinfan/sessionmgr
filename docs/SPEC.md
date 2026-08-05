@@ -19,6 +19,11 @@ sessionmgr version
 默认 source 为 `$CODEX_HOME`，未设置时是 `~/.codex`。`export` 默认处理全部 hosted
 Git repositories；显式 `--repo` 时只处理该仓库。
 
+discovery 对 `sessions/` 与 `archived_sessions/` 做并集扫描。active/archived 是 Codex 的
+生命周期位置，不参与 Session Manager identity；同一 native session 移动目录后仍映射到
+同一个 device/session key。未在本轮 discovery 中出现的旧 archive entry 不会生成
+tombstone，也不会进入任何删除队列。
+
 ## 2. 持久配置 v1
 
 ```json
@@ -74,7 +79,7 @@ host 转小写；path 保留大小写；协议、userinfo、query、fragment 和
 local/file/empty remote 不生成 key。若 session metadata 没有 remote，转换器只允许从
 其仍可访问的 CWD 查询 hosted `remote.origin.url`；仍没有则跳过。
 
-## 4. Identity and change hashes / layout v5 / renderer v4
+## 4. Identity and change hashes / layout v5 / renderer v5
 
 ```text
 source_hash = sha256(raw_jsonl_bytes)
@@ -119,7 +124,7 @@ content hash；不保存绝对本机路径、data URL 或带 credential/query �
 的身份/所有权 sidecar，不是 secret store。
 
 `conversation.md` 的 frontmatter 不包含 identity/hash。它保存 repository/device/session
-显示名、Codex/Git hints，以及以下 renderer-v4 字段：
+显示名、Codex/Git hints，以及以下 renderer-v5 字段：
 
 - `created_at`、`first_message_at`、`last_message_at`、`last_event_at`、
   `title_updated_at` 与用于排序的总体 `updated_at`；
@@ -133,11 +138,20 @@ renderer v2 不修改或删除任何既有 v1 文件。
 ## 6. Codex parsing
 
 名称来自 `session_index.jsonl` 中同 ID 最大 `updated_at` record。没有名称时取第一条
-用户消息的单行前 160 rune，再退回 `Codex session <ID>`。
+经过下述 canonical selection 的真实用户消息的单行前 160 rune，再退回
+`Codex session <ID>`。
 
-消息优先读取 `response_item` 中 role 为 `user`/`assistant` 的 message；旧记录退回
-`event_msg` 的 `user_message`、`agent_message`、`assistant_message`。两种来源不会同时
-输出，以免重复。
+新版 Codex 的 user-visible source 是 `event_msg.user_message`。同一 turn 的
+`response_item.message(role=user)` 只在规范化正文与 event 相等时为该 event 补充更完整的
+结构化附件；没有对应 user event 的 response user 不进入对话。这条规则过滤 Codex Desktop
+以 user role 注入的 `recommended_plugins`、AGENTS instructions 和
+`environment_context`，同时避免复制真实用户消息。
+
+assistant 优先使用 `response_item.message(role=assistant)`，完全没有 response assistant
+时退回 `event_msg.agent_message`/`assistant_message`。user event 与所选 assistant message
+按 JSONL record 顺序合并。旧 JSONL 完全没有 user event 时兼容 response user message，
+但完整匹配已知注入 envelope 的 response 被排除。完全没有 canonical user message 的
+context-only source 不发布 repository/session 文档，不计为失败；raw source 仍保持只读。
 
 tool arguments/results、developer/system message 和 reasoning payload 不进入正文。raw
 bytes 保留在 Codex home；导出器只读源数据。
@@ -148,7 +162,8 @@ bytes 保留在 Codex home；导出器只读源数据。
 `response_item.message.content` 中的 `input_image` / `input_audio`，以及 legacy
 `event_msg.user_message` 的 `images` / `local_images` / `audio` / `local_audio`。读取器可
 兼容结构化 `input_file`、`local_files`、`files` 和 `attachments`，但不得解析普通消息
-文本中的路径。response-item 与 legacy event 仍只选一组，避免重复。
+文本中的路径。现代记录以 user event 为可见消息，并在正文匹配时优先采用 response 中的
+embedded attachment bytes；旧记录只存在一种来源时直接使用该来源，附件不得重复。
 
 单文件上限 `MaxAttachmentBytes = 50 * 1024 * 1024`；`size <= MaxAttachmentBytes`
 允许，`size > MaxAttachmentBytes` 记为 `too_large`。data URL 在解码前先做编码长度
@@ -216,6 +231,12 @@ otherwise                                          -> updated
 不显示 hash 列；GUI 只显示 semantic path。扫描、
 matched、unchanged、busy 和 skipped 计数仍保留在 JSON result 供自动化诊断。
 
+changeset 只由本轮发现并成功解析的 source 驱动。archive reader 在导出开始时读取的既有
+entry 不会因为本轮没有对应 source 而被修改或删除；`List` 继续从隐藏 sidecar 派生该
+entry。普通 export 不实现 mirror reconciliation、tombstone 或 prune。唯一的目录删除是
+已验证 layout migration 后对确认空的旧 `sessions/`/device wrapper 调用非递归
+`os.Remove`，它不能删除 session 文档或任何非空目录。未来如需清理必须设计独立显式命令。
+
 ## 9. Owned-file update and publication
 
 首次写入：
@@ -278,6 +299,11 @@ API：
 session 变化作为对应 device 的叶节点显示。后端 JSON changeset 保持扁平，避免为显示结构
 改变 CLI/API contract。
 
+默认视觉使用 GitHub Dark 风格的固定暗色 palette：页面 `#0d1117`、surface `#161b22`、
+raised surface `#21262d`、border `#30363d`、正文 `#f0f6fc`，操作强调色使用 GitHub green。
+浏览器 `color-scheme` 为 `dark`，原生 input/select 与滚动区域必须保持暗色；当前版本不提供
+浅色主题切换。
+
 ## 11. 平台适配
 
 | 能力 | macOS | Linux | Windows |
@@ -298,11 +324,13 @@ SQLite、encryption 或 GUI 状态。旧 `~/.sessionmgr` 保持原样。
 持久配置；首次使用必须通过 GUI、`config set-directory` 或 `export --directory` 指定。
 
 layout v4 只改变 repository 可见路径；layout v5 进一步移除 repository 与 device 之间的
-`sessions/` wrapper。schema v1、repository key、session key、attachment schema v1 与
-renderer v4 不变。layout-v3/v4 repository/session sidecar 仍可严格读取；下次导出先验证
+`sessions/` wrapper。schema v1、repository key、session key 与 attachment schema v1
+不变。renderer v5 在 layout v5 内过滤注入的 user-role 上下文；renderer-v4 sidecar 仍可
+严格读取。下次导出先验证
 旧 conversation/attachment hashes 与 identity，再将该 session directory rename 到
 layout-v5 device 路径，最后发布 layout-v5 session sidecar。layout-v4 repository sidecar
 与 v5 位于同一路径，只有完整 identity 一致时才原子升级；迁移后只删除确认为空的旧
-device/`sessions` 目录。旧 layout-v3 repository sidecar 和 v1/v2 hash-named 数据不自动
-删除；`list --history` 仍能检查它们。
+device/`sessions` 目录。renderer-v4 污染文档同样只在 document/attachment ownership
+验证后重写；标题变化时复用安全 semantic-directory rename。旧 layout-v3 repository
+sidecar 和 v1/v2 hash-named 数据不自动删除；`list --history` 仍能检查它们。
 旧归档的删除必须留给一个未来的显式、可 review migration。

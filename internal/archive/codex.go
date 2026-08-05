@@ -35,6 +35,11 @@ type titleRecord struct {
 	UpdatedAt time.Time
 }
 
+type orderedMessage struct {
+	Message
+	order int
+}
+
 func DefaultCodexHome() (string, error) {
 	if value := os.Getenv("CODEX_HOME"); value != "" {
 		return filepath.Abs(value)
@@ -253,7 +258,7 @@ func sourceErrorIsBusy(err error) bool {
 
 func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) (Session, error) {
 	result := Session{RawHash: digestBytes(raw)}
-	var responseMessages, eventMessages []Message
+	var responseUsers, responseAssistants, eventUsers, eventAssistants []orderedMessage
 	remaining := raw
 	for len(remaining) > 0 {
 		line, rest, found := bytes.Cut(remaining, []byte{'\n'})
@@ -297,9 +302,16 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 					attachments = nil
 				}
 				if strings.TrimSpace(text) != "" || len(attachments) > 0 {
-					responseMessages = append(responseMessages, Message{
+					message := orderedMessage{Message: Message{
 						Role: role, Text: text, Timestamp: timestamp, Attachments: attachments,
-					})
+					}, order: result.RecordCount}
+					if role == "user" {
+						if !injectedUserContextContent(payload["content"]) {
+							responseUsers = append(responseUsers, message)
+						}
+					} else {
+						responseAssistants = append(responseAssistants, message)
+					}
 				}
 			}
 		}
@@ -314,9 +326,14 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 				attachments = eventAttachments(payload)
 			}
 			if strings.TrimSpace(text) != "" || len(attachments) > 0 {
-				eventMessages = append(eventMessages, Message{
+				message := orderedMessage{Message: Message{
 					Role: role, Text: text, Timestamp: timestamp, Attachments: attachments,
-				})
+				}, order: result.RecordCount}
+				if role == "user" {
+					eventUsers = append(eventUsers, message)
+				} else {
+					eventAssistants = append(eventAssistants, message)
+				}
 			}
 		}
 		if recordType == "response_item" && (payloadType == "function_call" || payloadType == "custom_tool_call" || payloadType == "tool_call") {
@@ -329,12 +346,7 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 	if result.ID == "" {
 		return Session{}, fmt.Errorf("session has no ID")
 	}
-	if len(responseMessages) > 0 {
-		result.Messages = responseMessages
-		mergeLegacyAttachments(result.Messages, eventMessages)
-	} else {
-		result.Messages = eventMessages
-	}
+	result.Messages = selectConversationMessages(responseUsers, responseAssistants, eventUsers, eventAssistants)
 	for _, message := range result.Messages {
 		switch message.Role {
 		case "user":
@@ -372,6 +384,88 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 		result.Title = "Codex session " + result.ID
 	}
 	return result, nil
+}
+
+func selectConversationMessages(responseUsers, responseAssistants, eventUsers, eventAssistants []orderedMessage) []Message {
+	users := responseUsers
+	if len(eventUsers) > 0 {
+		users = canonicalEventUsers(eventUsers, responseUsers)
+	}
+	assistants := responseAssistants
+	if len(assistants) == 0 {
+		assistants = eventAssistants
+	}
+	selected := make([]orderedMessage, 0, len(users)+len(assistants))
+	selected = append(selected, users...)
+	selected = append(selected, assistants...)
+	sort.SliceStable(selected, func(i, j int) bool {
+		return selected[i].order < selected[j].order
+	})
+	result := make([]Message, 0, len(selected))
+	for _, message := range selected {
+		result = append(result, message.Message)
+	}
+	return result
+}
+
+func canonicalEventUsers(events, responses []orderedMessage) []orderedMessage {
+	result := make([]orderedMessage, 0, len(events))
+	used := make([]bool, len(responses))
+	for _, event := range events {
+		for index, response := range responses {
+			if used[index] || !sameMessageText(event.Text, response.Text) {
+				continue
+			}
+			used[index] = true
+			// Response items can retain embedded attachment bytes that the event
+			// message represents only as a local path. Keep the event as the user-
+			// visible source, but prefer its matching structured attachment data.
+			if len(response.Attachments) > 0 {
+				event.Attachments = response.Attachments
+			}
+			break
+		}
+		result = append(result, event)
+	}
+	return result
+}
+
+func sameMessageText(left, right string) bool {
+	normalize := func(value string) string {
+		return strings.TrimSpace(strings.ReplaceAll(value, "\r\n", "\n"))
+	}
+	return normalize(left) == normalize(right)
+}
+
+func injectedUserContextContent(value interface{}) bool {
+	items, ok := value.([]interface{})
+	if !ok {
+		return injectedUserContextPart(contentText(value))
+	}
+	found := false
+	for _, item := range items {
+		text := strings.TrimSpace(contentText(item))
+		if text == "" {
+			continue
+		}
+		found = true
+		if !injectedUserContextPart(text) {
+			return false
+		}
+	}
+	return found
+}
+
+func injectedUserContextPart(value string) bool {
+	value = strings.TrimSpace(value)
+	return completeContextEnvelope(value, "<recommended_plugins>", "</recommended_plugins>") ||
+		completeContextEnvelope(value, "<environment_context>", "</environment_context>") ||
+		(strings.HasPrefix(value, "# AGENTS.md instructions for ") &&
+			strings.Contains(value, "<INSTRUCTIONS>") && strings.HasSuffix(value, "</INSTRUCTIONS>"))
+}
+
+func completeContextEnvelope(value, opening, closing string) bool {
+	return strings.HasPrefix(value, opening) && strings.HasSuffix(value, closing)
 }
 
 func contentParts(value interface{}) (string, []Attachment) {
@@ -547,25 +641,6 @@ func attachmentBaseName(value string) string {
 		value = value[index+1:]
 	}
 	return value
-}
-
-func mergeLegacyAttachments(messages, legacy []Message) {
-	responseIndex := 0
-	for _, candidate := range legacy {
-		if candidate.Role != "user" || len(candidate.Attachments) == 0 {
-			continue
-		}
-		for responseIndex < len(messages) && messages[responseIndex].Role != "user" {
-			responseIndex++
-		}
-		if responseIndex >= len(messages) {
-			return
-		}
-		if len(messages[responseIndex].Attachments) == 0 {
-			messages[responseIndex].Attachments = candidate.Attachments
-		}
-		responseIndex++
-	}
 }
 
 func contentText(value interface{}) string {

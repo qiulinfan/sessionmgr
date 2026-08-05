@@ -24,6 +24,7 @@ sessionmgr gui
 - 导出全部 Git 仓库或当前 Git 仓库的 sessions；
 - 按 repository 与设备目录折叠展示本次新增、更新或重命名的 Markdown 文档，并标出
   该变化中的附件/复制数；
+- 使用接近 GitHub Dark 的黑色界面，表单、状态和目录树保持统一暗色层级；
 - 在 English/中文之间切换；首次使用默认英文，选择会保存在本机浏览器中；
 - 没有变化时显示明确的“已经是最新状态”。
 
@@ -133,16 +134,32 @@ layout-v3 的 `repositories/<host>/<owner>/<repo>` 与 layout-v4 的
 变化、读取时被替换、被操作系统报告为锁定，或尾部记录不完整的 session 会记入 JSON
 结果的 `busy` 计数并留到下次处理。`busy` 不产生 warning 或失败退出码。
 
+Codex 的 active `sessions/` 与 `archived_sessions/` 会一起扫描。session 被 Codex 归档只
+改变源文件位置，不会改变已导出的成员身份；内容相同时仍是 no-op。即使某个源文件以后
+从这两个目录都消失，普通导出也不会删除、改名或截断已经存在的 Markdown、附件或隐藏
+sidecar。Session Manager 是追加/更新式归档器，不把 Codex 当前目录镜像成需要删除同步的
+catalog；历史记录只会在未来显式、可审阅的清理操作中删除。
+
 每个 Markdown 文档包含明确的时间轴：创建时间、第一条和最后一条可读消息时间、最后
 一条源事件时间、标题更新时间，以及用户/助手消息数量。正文保持源文件顺序，并在每条
 消息标题上显示其原始 UTC 时间；源记录没有 timestamp 时不会使用文件时间猜测。
+
+新版 Codex 可能把 `recommended_plugins`、`AGENTS.md` 和 `environment_context` 等运行
+上下文存成内部 `role=user` response。Session Manager 以实际 `user_message` event 识别
+用户输入，只从匹配的 response 补充结构化附件；这些注入内容不会进入标题或正文。完全
+没有真实用户对话的 context-only source 保持原始 JSONL 不变，但不创建归档文档。
+
+renderer v5 首次重导旧文档时会产生一次 changeset：被上下文污染的标题会在所有权/hash
+校验后显示为 `RENAMED`，其他需要升级 renderer 的文档显示为 `UPDATED`。完成后重复导出
+恢复为 no-op。
 
 ## 内容与安全边界
 
 Markdown 保存用户/助手对话、完整消息时间轴、Git commit/branch 和少量计数。用户明确
 投入的附件保留原始 bytes，因此同样需要在公开提交前审阅。它不复制
 developer/system 指令、tool 参数、tool 输出、认证数据库、内部 reasoning 或环境变量
-值；常见 token、私钥、credential URL 和 secret assignment 会替换成明确的
+值，也不复制 Codex 为任务启动注入的插件、仓库规则或运行环境上下文；常见 token、
+私钥、credential URL 和 secret assignment 会替换成明确的
 `[REDACTED ...]`。
 
 原始 Codex JSONL 始终只读并保留在 Codex home。生成内容仍应在提交到公开 Git

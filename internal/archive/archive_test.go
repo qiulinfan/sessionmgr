@@ -155,6 +155,58 @@ func TestArchiveMaintainsOneSemanticDocumentPerDeviceSession(t *testing.T) {
 	}
 }
 
+func TestExportRetainsDocumentWhenSourceIsArchivedOrMissing(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	writeSessionFixture(t, codexHome, "finished-session", "https://github.com/example/project.git", "mission complete")
+
+	first, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil || first.Created != 1 || len(first.Changes) != 1 {
+		t.Fatalf("initial export failed: %+v, %v", first, err)
+	}
+	documentPath := first.Changes[0].Path
+	sidecarPath := filepath.Join(filepath.Dir(documentPath), sessionMetadataName)
+	documentBefore, err := os.ReadFile(documentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidecarBefore, err := os.ReadFile(sidecarPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	activePath := filepath.Join(codexHome, "sessions", "2026", "08", "05", "rollout-finished-session.jsonl")
+	archivedPath := filepath.Join(codexHome, "archived_sessions", "rollout-finished-session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(archivedPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(activePath, archivedPath); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil || archived.Sources != 1 || archived.Unchanged != 1 || len(archived.Changes) != 0 {
+		t.Fatalf("archived source was not retained as unchanged: %+v, %v", archived, err)
+	}
+
+	if err := os.Remove(archivedPath); err != nil {
+		t.Fatal(err)
+	}
+	missing, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil || missing.Sources != 0 || missing.Created != 0 || len(missing.Changes) != 0 {
+		t.Fatalf("missing source changed the archive result: %+v, %v", missing, err)
+	}
+	documentAfter, documentErr := os.ReadFile(documentPath)
+	sidecarAfter, sidecarErr := os.ReadFile(sidecarPath)
+	if documentErr != nil || sidecarErr != nil || !bytes.Equal(documentBefore, documentAfter) || !bytes.Equal(sidecarBefore, sidecarAfter) {
+		t.Fatalf("missing source deleted or changed its archive: document=%v sidecar=%v", documentErr, sidecarErr)
+	}
+	entries, err := List(ListOptions{Output: output})
+	if err != nil || len(entries) != 1 || entries[0].SessionID != "finished-session" {
+		t.Fatalf("missing source disappeared from the derived catalog: %+v, %v", entries, err)
+	}
+}
+
 func TestExportRefusesToOverwriteManuallyEditedDocument(t *testing.T) {
 	root := t.TempDir()
 	codexHome := filepath.Join(root, "codex")
@@ -538,6 +590,153 @@ func TestParseSessionDerivesConversationTimeline(t *testing.T) {
 	}
 }
 
+func TestParseSessionUsesUserEventsAndOmitsInjectedContext(t *testing.T) {
+	raw := injectedContextFixture(t, "context-filter", true)
+	session, err := parseSession(raw, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Title != "Please fix the exporter" {
+		t.Fatalf("title came from injected context: %q", session.Title)
+	}
+	if session.UserMessages != 1 || session.AssistantMessages != 1 || len(session.Messages) != 2 {
+		t.Fatalf("unexpected visible conversation: %+v", session)
+	}
+	if session.Messages[0].Role != "user" || session.Messages[0].Text != "Please fix the exporter" ||
+		session.Messages[1].Role != "assistant" || session.Messages[1].Text != "Done" {
+		t.Fatalf("wrong messages survived reconciliation: %+v", session.Messages)
+	}
+	visible := session.Title + "\n" + session.Messages[0].Text + "\n" + session.Messages[1].Text
+	for _, leaked := range []string{"recommended_plugins", "AGENTS.md instructions", "environment_context"} {
+		if strings.Contains(visible, leaked) {
+			t.Fatalf("injected %s leaked into the conversation: %s", leaked, visible)
+		}
+	}
+	wantFirst := time.Date(2026, 8, 5, 1, 0, 2, 0, time.UTC)
+	if !session.FirstMessageAt.Equal(wantFirst) {
+		t.Fatalf("timeline used the injected response timestamp: %s", session.FirstMessageAt)
+	}
+}
+
+func TestContextOnlySessionIsNotExported(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	writeSessionRecords(t, codexHome, "context-only", injectedContextRecords("context-only", false))
+
+	result, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Sources != 1 || result.Matched != 0 || result.Created != 0 || result.Skipped != 0 || len(result.Changes) != 0 {
+		t.Fatalf("context-only source was treated as a conversation: %+v", result)
+	}
+	if entries, err := List(ListOptions{Output: output}); err != nil || len(entries) != 0 {
+		t.Fatalf("context-only source created archive entries: %+v, %v", entries, err)
+	}
+}
+
+func TestResponseOnlyUserTextThatMentionsContextTagsIsPreserved(t *testing.T) {
+	raw := attachmentSessionJSONL(t, "literal-context-text", []map[string]any{
+		{"timestamp": "2026-08-05T01:00:00Z", "type": "session_meta", "payload": map[string]any{"id": "literal-context-text"}},
+		{"timestamp": "2026-08-05T01:00:01Z", "type": "response_item", "payload": map[string]any{
+			"type": "message", "role": "user", "content": []any{map[string]any{
+				"type": "input_text", "text": "Why does <recommended_plugins> appear in my export?",
+			}},
+		}},
+	})
+	session, err := parseSession(raw, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.UserMessages != 1 || len(session.Messages) != 1 ||
+		session.Messages[0].Text != "Why does <recommended_plugins> appear in my export?" {
+		t.Fatalf("ordinary legacy user text was mistaken for injected context: %+v", session)
+	}
+}
+
+func TestVerifiedReexportRepairsInjectedContextDocument(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	raw := injectedContextFixture(t, "repair-context", true)
+	writeSessionRecords(t, codexHome, "repair-context", injectedContextRecords("repair-context", true))
+
+	parsed, err := parseSession(raw, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := repositoryFromRemote("github.com/example/project")
+	pollutedTitle := "<recommended_plugins> generated title"
+	polluted := parsed
+	polluted.Title = pollutedTitle
+	polluted.Messages = append([]Message{{
+		Role: "user", Text: "<recommended_plugins>\nplugin list\n</recommended_plugins>",
+		Timestamp: time.Date(2026, 8, 5, 1, 0, 1, 0, time.UTC),
+	}}, parsed.Messages...)
+	polluted.UserMessages++
+	polluted.FirstMessageAt = polluted.Messages[0].Timestamp
+	polluted.OmittedCount--
+	snapshot := makeSnapshot(repository, polluted, "device:test", "test-device")
+	repositoryDir := filepath.Join(output, semanticRepositoryDirectory(repository))
+	if err := publishRepositoryMetadata(repositoryDir, repository); err != nil {
+		t.Fatal(err)
+	}
+	oldDir := filepath.Join(repositoryDir, "test-device", semanticSessionDirectory(snapshot))
+	if err := os.MkdirAll(oldDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldDocument := bytes.Replace(renderSnapshot(snapshot), []byte("renderer_version: 5"), []byte("renderer_version: 4"), 1)
+	oldRecord := sessionRecord(snapshot, digestBytes(oldDocument))
+	oldRecord.RendererVersion = 4
+	metadata, err := marshalMetadata(oldRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldPath := filepath.Join(oldDir, conversationName)
+	if err := os.WriteFile(oldPath, oldDocument, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, sessionMetadataName), metadata, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Created != 1 || len(result.Changes) != 1 || result.Changes[0].Kind != "renamed" {
+		t.Fatalf("polluted document was not repaired as a rename: %+v", result)
+	}
+	if _, err := os.Lstat(oldDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("polluted semantic directory remained: %v", err)
+	}
+	newPath := result.Changes[0].Path
+	document, err := os.ReadFile(newPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leaked := range []string{"recommended_plugins", "AGENTS.md instructions", "environment_context"} {
+		if strings.Contains(string(document), leaked) {
+			t.Fatalf("repaired document still contains %s:\n%s", leaked, document)
+		}
+	}
+	if !strings.Contains(string(document), "# Please fix the exporter") || !strings.Contains(string(document), "Done") {
+		t.Fatalf("repaired document lost the real conversation:\n%s", document)
+	}
+	var current sessionMetadata
+	if err := readMetadata(filepath.Join(filepath.Dir(newPath), sessionMetadataName), &current); err != nil {
+		t.Fatal(err)
+	}
+	if current.RendererVersion != RendererVersion {
+		t.Fatalf("renderer metadata was not upgraded: %+v", current)
+	}
+	repeated, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil || repeated.Created != 0 || repeated.Unchanged != 1 {
+		t.Fatalf("repaired document was not idempotent: %+v, %v", repeated, err)
+	}
+}
+
 func TestPublishImmutableIsSafeUnderConcurrency(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "snapshot.md")
 	data := []byte("immutable\n")
@@ -608,6 +807,44 @@ func writeSessionFixture(t *testing.T, home, id, remote, answer string) {
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func injectedContextFixture(t *testing.T, id string, includeConversation bool) []byte {
+	t.Helper()
+	return attachmentSessionJSONL(t, id, injectedContextRecords(id, includeConversation))
+}
+
+func injectedContextRecords(id string, includeConversation bool) []map[string]any {
+	records := []map[string]any{
+		{"timestamp": "2026-08-05T01:00:00Z", "type": "session_meta", "payload": map[string]any{
+			"id": id, "cwd": "/private/worktree",
+			"git": map[string]any{"repository_url": "https://github.com/example/project.git", "commit_hash": "abc123", "branch": "main"},
+		}},
+		{"timestamp": "2026-08-05T01:00:01Z", "type": "response_item", "payload": map[string]any{
+			"type": "message", "role": "user", "content": []any{
+				map[string]any{"type": "input_text", "text": "<recommended_plugins>\nplugin list\n</recommended_plugins>"},
+				map[string]any{"type": "input_text", "text": "# AGENTS.md instructions for /private/worktree\n\n<INSTRUCTIONS>\nrules\n</INSTRUCTIONS>"},
+				map[string]any{"type": "input_text", "text": "<environment_context>\n<cwds>/private/worktree</cwds>\n</environment_context>"},
+			},
+		}},
+	}
+	if !includeConversation {
+		return records
+	}
+	return append(records,
+		map[string]any{"timestamp": "2026-08-05T01:00:01.500Z", "type": "response_item", "payload": map[string]any{
+			"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "Please fix the exporter"}},
+		}},
+		map[string]any{"timestamp": "2026-08-05T01:00:02Z", "type": "event_msg", "payload": map[string]any{
+			"type": "user_message", "message": "Please fix the exporter",
+		}},
+		map[string]any{"timestamp": "2026-08-05T01:00:03Z", "type": "response_item", "payload": map[string]any{
+			"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "Done"}},
+		}},
+		map[string]any{"timestamp": "2026-08-05T01:00:03.100Z", "type": "event_msg", "payload": map[string]any{
+			"type": "agent_message", "message": "Done",
+		}},
+	)
 }
 
 func titleLine(id, title, updated string) string {
