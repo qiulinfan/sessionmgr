@@ -16,7 +16,7 @@ import (
 	"github.com/sessionmgr/sessionmgr/internal/ui"
 )
 
-const version = "0.3.0-dev"
+const version = "0.4.0-dev"
 
 type commandError struct {
 	exitCode int
@@ -116,6 +116,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	repo := flags.String("repo", ".", "export only sessions for this Git repository")
 	all := flags.Bool("all", false, "export sessions for every hosted Git repository (default)")
 	sessionID := flags.String("session", "", "export one Codex session ID")
+	includeArchived := flags.Bool("include-archived", false, "also export Codex archived sessions")
 	source := flags.String("codex-home", "", "Codex state directory (default: CODEX_HOME or ~/.codex)")
 	directory := flags.String("directory", "", "export directory to use and remember")
 	output := flags.String("output", "", "one-time export directory (compatibility alias)")
@@ -156,7 +157,8 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	result, exportErr := archive.Export(ctx, archive.Options{
 		CodexHome: *source, Output: resolvedDirectory, Repo: *repo,
 		AllRepos: !repoWasSet || *all, SessionID: *sessionID,
-		DeviceID: device.DeviceID, DeviceName: device.DeviceName,
+		IncludeArchived: *includeArchived,
+		DeviceID:        device.DeviceID, DeviceName: device.DeviceName,
 	})
 	if *jsonOutput {
 		if err := writeJSON(stdout, result); err != nil {
@@ -403,7 +405,7 @@ Usage:
   sessionmgr gui [--no-open]
   sessionmgr config set-directory PATH
   sessionmgr config show
-  sessionmgr export [--all | --repo PATH] [--session ID] [--directory PATH]
+  sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived] [--directory PATH]
   sessionmgr list [--history]
   sessionmgr cleanup-internal [--directory PATH] [--apply]
   sessionmgr version

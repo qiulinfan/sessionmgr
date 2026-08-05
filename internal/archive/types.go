@@ -10,13 +10,18 @@ const (
 )
 
 type Options struct {
-	CodexHome  string
-	Output     string
-	Repo       string
-	AllRepos   bool
-	SessionID  string
-	DeviceID   string
-	DeviceName string
+	CodexHome string
+	Output    string
+	Repo      string
+	AllRepos  bool
+	SessionID string
+
+	// IncludeArchived adds Codex archived_sessions/ to discovery. Ordinary
+	// exports inspect only active sessions/ so users can archive a conversation
+	// before its first export to leave it out of the archive.
+	IncludeArchived bool
+	DeviceID        string
+	DeviceName      string
 
 	// StabilityWindow is the shared quiet period used before reading discovered
 	// session files. Zero selects the production default; a negative value

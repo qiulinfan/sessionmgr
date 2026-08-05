@@ -54,9 +54,13 @@ func DefaultCodexHome() (string, error) {
 	return filepath.Join(home, ".codex"), nil
 }
 
-func discoverSessionFiles(home string) ([]string, error) {
+func discoverSessionFiles(home string, includeArchived bool) ([]string, error) {
 	var paths []string
-	for _, directory := range []string{"sessions", "archived_sessions"} {
+	directories := []string{"sessions"}
+	if includeArchived {
+		directories = append(directories, "archived_sessions")
+	}
+	for _, directory := range directories {
 		base := filepath.Join(home, directory)
 		err := filepath.WalkDir(base, func(path string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {

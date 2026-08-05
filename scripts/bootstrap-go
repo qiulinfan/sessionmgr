@@ -170,6 +170,7 @@ if [ -e "$go_root" ]; then
     echo "sessionmgr: portable Go destination '$go_root' appeared during bootstrap; refusing to overwrite it" >&2
     exit 1
 fi
+mkdir -p "$tools_dir/go"
 mv "$staging_dir/go" "$go_root"
 
 if ! expected_go_available; then

@@ -85,6 +85,54 @@ func TestConfiguredExportShowsOnlyCurrentChanges(t *testing.T) {
 	}
 }
 
+func TestCLIArchivedSessionsRequireIncludeFlag(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	source := filepath.Join(codexHome, "archived_sessions", "fixture.jsonl")
+	if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"timestamp":"2026-08-05T01:00:00Z","type":"session_meta","payload":{"id":"archived-cli","cwd":"/missing","git":{"repository_url":"https://github.com/example/cli.git"}}}
+{"timestamp":"2026-08-05T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"keep this archived"}}
+`
+	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SESSIONMGR_CONFIG", filepath.Join(root, "config.json"))
+
+	var stdout, stderr bytes.Buffer
+	code, err := Run(context.Background(), []string{
+		"export", "--all", "--directory", filepath.Join(root, "exports"),
+		"--codex-home", codexHome, "--json",
+	}, &stdout, &stderr)
+	if err != nil || code != 0 {
+		t.Fatalf("default export failed: code=%d err=%v stderr=%s", code, err, stderr.String())
+	}
+	var defaultResult struct {
+		Sources int `json:"sources"`
+		Created int `json:"created"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &defaultResult); err != nil || defaultResult.Sources != 0 || defaultResult.Created != 0 {
+		t.Fatalf("default CLI export included archived session: %s (%v)", stdout.String(), err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code, err = Run(context.Background(), []string{
+		"export", "--all", "--include-archived", "--codex-home", codexHome, "--json",
+	}, &stdout, &stderr)
+	if err != nil || code != 0 {
+		t.Fatalf("archived export failed: code=%d err=%v stderr=%s", code, err, stderr.String())
+	}
+	var included struct {
+		Sources int `json:"sources"`
+		Created int `json:"created"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &included); err != nil || included.Sources != 1 || included.Created != 1 {
+		t.Fatalf("--include-archived did not export session: %s (%v)", stdout.String(), err)
+	}
+}
+
 func TestHumanChangesUseSemanticFieldsWithoutHashes(t *testing.T) {
 	var output bytes.Buffer
 	err := printChanges(&output, []archive.Change{{

@@ -44,7 +44,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		key := entryIdentity(entry)
 		history[key] = append(history[key], entry)
 	}
-	files, err := discoverSessionFiles(opts.CodexHome)
+	files, err := discoverSessionFiles(opts.CodexHome, opts.IncludeArchived)
 	if err != nil {
 		return result, err
 	}

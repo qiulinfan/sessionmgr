@@ -11,6 +11,7 @@ const changes = document.querySelector("#changes");
 const resultCount = document.querySelector("#result-count");
 const exportButton = document.querySelector("#export");
 const languageSelect = document.querySelector("#language");
+const includeArchived = document.querySelector("#include-archived");
 
 const translations = {
   en: {
@@ -29,6 +30,7 @@ const translations = {
     exportScope: "Export scope",
     allRepositories: "All Git repositories",
     currentRepository: "Current Git repository",
+    includeArchived: "Include archived sessions",
     exportChanges: "Export changes",
     exporting: "Exporting…",
     exportedChanges: "Changes from this export",
@@ -65,6 +67,7 @@ const translations = {
     exportScope: "导出范围",
     allRepositories: "全部 Git 仓库",
     currentRepository: "当前 Git 仓库",
+    includeArchived: "包括已归档的 sessions",
     exportChanges: "导出变化",
     exporting: "正在导出…",
     exportedChanges: "本次导出变化",
@@ -368,7 +371,11 @@ exportButton.addEventListener("click", async () => {
   try {
     const payload = await api("/api/export", {
       method: "POST",
-      body: JSON.stringify({ directory: directory.value, scope: document.querySelector("#scope").value }),
+      body: JSON.stringify({
+        directory: directory.value,
+        scope: document.querySelector("#scope").value,
+        include_archived: includeArchived.checked,
+      }),
     });
     resultState = { kind: "payload", value: payload };
     renderResult();

@@ -50,7 +50,9 @@ func CleanupInternal(ctx context.Context, opts CleanupOptions) (CleanupResult, e
 		bySessionID[entry.SessionID] = append(bySessionID[entry.SessionID], entry)
 	}
 
-	files, err := discoverSessionFiles(opts.CodexHome)
+	// Cleanup is an explicit, source-backed operation. It must continue to find
+	// internal documents whose raw source has already moved to archived_sessions.
+	files, err := discoverSessionFiles(opts.CodexHome, true)
 	if err != nil {
 		return result, err
 	}

@@ -39,7 +39,9 @@ func TestArchiveMaintainsOneSemanticDocumentPerDeviceSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := Export(context.Background(), testExportOptions(codexHome, output))
+	opts := testExportOptions(codexHome, output)
+	opts.IncludeArchived = true
+	result, err := Export(context.Background(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +69,7 @@ func TestArchiveMaintainsOneSemanticDocumentPerDeviceSession(t *testing.T) {
 		t.Fatalf("new export created a repositories wrapper: %v", err)
 	}
 
-	repeated, err := Export(context.Background(), testExportOptions(codexHome, output))
+	repeated, err := Export(context.Background(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +85,7 @@ func TestArchiveMaintainsOneSemanticDocumentPerDeviceSession(t *testing.T) {
 		titleLine("session-b", "Other machine", "2026-08-05T02:01:00Z"),
 		titleLine("session-a", "Renamed title", "2026-08-05T03:00:00Z"),
 	)
-	renamed, err := Export(context.Background(), testExportOptions(codexHome, output))
+	renamed, err := Export(context.Background(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +106,7 @@ func TestArchiveMaintainsOneSemanticDocumentPerDeviceSession(t *testing.T) {
 	if err := updatedSource.Close(); err != nil {
 		t.Fatal(err)
 	}
-	updated, err := Export(context.Background(), testExportOptions(codexHome, output))
+	updated, err := Export(context.Background(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,8 +187,8 @@ func TestExportRetainsDocumentWhenSourceIsArchivedOrMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	archived, err := Export(context.Background(), testExportOptions(codexHome, output))
-	if err != nil || archived.Sources != 1 || archived.Unchanged != 1 || len(archived.Changes) != 0 {
-		t.Fatalf("archived source was not retained as unchanged: %+v, %v", archived, err)
+	if err != nil || archived.Sources != 0 || archived.Created != 0 || archived.Unchanged != 0 || len(archived.Changes) != 0 {
+		t.Fatalf("default export did not leave an archived source alone: %+v, %v", archived, err)
 	}
 
 	if err := os.Remove(archivedPath); err != nil {
@@ -204,6 +206,36 @@ func TestExportRetainsDocumentWhenSourceIsArchivedOrMissing(t *testing.T) {
 	entries, err := List(ListOptions{Output: output})
 	if err != nil || len(entries) != 1 || entries[0].SessionID != "finished-session" {
 		t.Fatalf("missing source disappeared from the derived catalog: %+v, %v", entries, err)
+	}
+}
+
+func TestArchivedSessionRequiresExplicitInclusionBeforeFirstExport(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	writeSessionFixture(t, codexHome, "archived-first", "https://github.com/example/project.git", "already archived")
+	activePath := filepath.Join(codexHome, "sessions", "2026", "08", "05", "rollout-archived-first.jsonl")
+	archivedPath := filepath.Join(codexHome, "archived_sessions", "rollout-archived-first.jsonl")
+	if err := os.MkdirAll(filepath.Dir(archivedPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(activePath, archivedPath); err != nil {
+		t.Fatal(err)
+	}
+
+	defaultResult, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil || defaultResult.Sources != 0 || defaultResult.Created != 0 || len(defaultResult.Changes) != 0 {
+		t.Fatalf("default export included an archived session: %+v, %v", defaultResult, err)
+	}
+	if entries, listErr := List(ListOptions{Output: output}); listErr != nil || len(entries) != 0 {
+		t.Fatalf("default export published an archived session: %+v, %v", entries, listErr)
+	}
+
+	opts := testExportOptions(codexHome, output)
+	opts.IncludeArchived = true
+	included, err := Export(context.Background(), opts)
+	if err != nil || included.Sources != 1 || included.Created != 1 || len(included.Changes) != 1 || included.Changes[0].SessionID != "archived-first" {
+		t.Fatalf("explicit archived export failed: %+v, %v", included, err)
 	}
 }
 

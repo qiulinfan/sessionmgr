@@ -1,4 +1,4 @@
-# Session Manager v0.3 技术规格
+# Session Manager v0.4 技术规格
 
 ## 1. 进程与命令面
 
@@ -7,7 +7,7 @@ sessionmgr                                      # GUI
 sessionmgr gui [--listen 127.0.0.1:0] [--no-open]
 sessionmgr config set-directory [--json] PATH
 sessionmgr config show [--json]
-sessionmgr export [--all | --repo PATH] [--session ID]
+sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived]
                   [--directory PATH] [--codex-home PATH] [--json]
 sessionmgr list [--directory PATH] [--history] [--json]
 sessionmgr cleanup-internal [--directory PATH] [--codex-home PATH]
@@ -21,10 +21,12 @@ sessionmgr version
 默认 source 为 `$CODEX_HOME`，未设置时是 `~/.codex`。`export` 默认处理全部 hosted
 Git repositories；显式 `--repo` 时只处理该仓库。
 
-discovery 对 `sessions/` 与 `archived_sessions/` 做并集扫描。active/archived 是 Codex 的
-生命周期位置，不参与 Session Manager identity；同一 native session 移动目录后仍映射到
-同一个 device/session key。未在本轮 discovery 中出现的旧 archive entry 不会生成
-tombstone，也不会进入任何删除队列。
+普通 discovery 只扫描 `sessions/`。`--include-archived` 或 GUI request 的
+`include_archived: true` 才把 `archived_sessions/` 加入同一次并集扫描。active/archived 是
+Codex 的生命周期位置，不参与 Session Manager identity；显式包括时，同一 native session
+移动目录后仍映射到同一个 device/session key。未在本轮 discovery 中出现的旧 archive
+entry 不会生成 tombstone，也不会进入任何删除队列，因此已导出的 session 后来被归档或
+删除 raw source 时，其派生文件保持不变。
 
 ## 2. 持久配置 v1
 
@@ -332,7 +334,8 @@ API：
 - `GET /api/state`：当前持久目录；
 - `PUT /api/config`：验证并保存目录；
 - `POST /api/pick-directory`：调用平台目录对话框；
-- `POST /api/export`：执行 all/current scope 并返回当前 changeset。
+- `POST /api/export`：接受 `directory`、all/current `scope` 与布尔值 `include_archived`，执行
+  对应范围并返回当前 changeset。
 
 前端首次加载使用 English；用户可切换 English/中文，选择只保存在浏览器本地，不改变
 跨机器 config schema。静态文案以及连接、保存、导出、busy/no-change、计数、change badge
@@ -364,6 +367,10 @@ SQLite、encryption 或 GUI 状态。旧 `~/.sessionmgr` 保持原样。
 
 同一 v0.3 development line 的早期 `archive --output` 用法继续工作，但默认目录现在来自
 持久配置；首次使用必须通过 GUI、`config set-directory` 或 `export --directory` 指定。
+
+archived discovery 的默认值从“总是包括”改为“显式 opt-in”。这不改变任何持久 schema、
+identity 或现有归档 bytes；已存在但本轮未扫描到的 entry 继续保留。自动化若依赖旧行为，
+必须增加 `--include-archived` 或在 GUI API request 中发送 `include_archived: true`。
 
 layout v4 只改变 repository 可见路径；layout v5 进一步移除 repository 与 device 之间的
 `sessions/` wrapper。schema v1、repository key、session key 与 attachment schema v1

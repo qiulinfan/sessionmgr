@@ -1,4 +1,4 @@
-# Session Manager v0.3 产品需求
+# Session Manager v0.4 产品需求
 
 ## 1. 产品定义
 
@@ -22,7 +22,7 @@ sessions 转成可读、可由 Git 跟踪历史的文件。
 
 1. Session Manager 自动恢复已配置目录；
 2. 用户执行导出；
-3. 系统扫描本机 active/archived Codex sessions；
+3. 系统默认扫描本机 active Codex sessions；用户显式开启时同时扫描 archived sessions；
 4. source 与已记录内容没有变化时不显示；
 5. 只显示本次新增、内容更新或名称变化。
 
@@ -55,9 +55,12 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 
 ### FR-2 Session discovery
 
-- 扫描 Codex `sessions/` 与 `archived_sessions/` JSONL；
-- session 从 active 移入 `archived_sessions/` 时必须继续按同一 native ID/device identity
-  处理，源内容不变时不得产生 changeset；
+- 默认只扫描 Codex `sessions/` JSONL；CLI `--include-archived` 或 GUI 对应选项开启时才把
+  `archived_sessions/` 加入 discovery；
+- 首次导出前已经位于 `archived_sessions/` 的 session 默认不得导出；显式包括 archived
+  sessions 时必须按同一 native ID/device identity 处理；
+- session 在成功导出后从 active 移入 `archived_sessions/` 时，默认导出不得因为 source
+  未被扫描而修改或删除既有归档；
 - source 后来从 active 与 archived 目录都消失时，普通导出不得删除、改名或修改已经归档的
   Markdown、附件、sidecar 或 derived catalog entry；source absence 不是删除指令；
 - 支持全部仓库、当前/指定仓库、指定 session 三种范围；
@@ -148,7 +151,8 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 - GUI 必须由同一二进制提供，不依赖 Node 或平台 WebView SDK；
 - 服务只能监听 loopback；
 - 每次启动必须生成随机 API token；
-- GUI 必须支持保存目录、系统目录选择、导出范围和 changeset 展示；
+- GUI 必须支持保存目录、系统目录选择、导出范围、包括 archived sessions 的显式勾选项和
+  changeset 展示；
 - changeset 必须按 repository/device 目录分组，并可逐层展开或收起，不得只显示无分组的
   session 卡片列表；
 - GUI 默认使用接近 GitHub Dark 的黑灰背景、surface、边框和状态色，不得回退为白底；
@@ -162,6 +166,8 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
   `gui`、`version`；
 - human output 与 JSON output 必须分离；
 - `archive` 作为 `export` 兼容别名；
+- `export --include-archived` 必须显式包括 Codex `archived_sessions/`，未传时只处理 active
+  sessions；
 - partial export 必须保留成功 changeset，同时以非零退出码和 warning 报告跳过项。
 
 ### FR-8 三系统分发
@@ -215,8 +221,9 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
     对话；标题不得取自 `recommended_plugins`、`AGENTS.md` 或 `environment_context`。
 28. context-only source 不创建文档；旧 renderer 污染文档在 ownership/hash 校验后升级到
     renderer v6、修复正文并按真实标题安全重命名。
-29. source 从 active 移到 `archived_sessions/` 后重复导出保持 unchanged；随后 source 完全
-    消失时，既有 Markdown、sidecar bytes 和 list entry 均保持不变。
+29. 首次导出前已归档的 source 默认不创建文档，CLI/GUI 显式包括 archived sessions 后才
+    导出；已导出的 source 从 active 移入 `archived_sessions/` 或完全消失后，既有 Markdown、
+    sidecar bytes 和 list entry 均保持不变。
 30. GUI 桌面与 390px 窄屏均使用 GitHub Dark 风格，表单和目录树无白色 surface，且没有
     横向溢出。
 31. `source.subagent` 或 `thread_source=subagent` 的 Guardian 与 spawned worker 不创建独立

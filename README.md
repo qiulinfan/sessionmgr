@@ -26,7 +26,8 @@ sessionmgr gui
 程序会在随机 loopback 端口启动本地页面并打开默认浏览器。GUI 可以：
 
 - 选择、保存并恢复导出目录；
-- 导出全部 Git 仓库或当前 Git 仓库的 sessions；
+- 导出全部 Git 仓库或当前 Git 仓库的 active sessions，并可勾选包括 Codex 已归档的
+  sessions；
 - 按 repository 与设备目录折叠展示本次新增、更新或重命名的 Markdown 文档，并标出
   该变化中的附件/复制数；
 - 使用接近 GitHub Dark 的黑色界面，表单、状态和目录树保持统一暗色层级；
@@ -54,11 +55,17 @@ sessionmgr config show
 sessionmgr export
 ```
 
-默认导出全部能够识别 hosted Git remote 的 sessions。也可以缩小范围：
+默认导出全部能够识别 hosted Git remote 的 active sessions。也可以缩小范围：
 
 ```bash
 sessionmgr export --repo /path/to/repo
 sessionmgr export --session <codex-session-id>
+```
+
+默认不会导出已经位于 Codex `archived_sessions/` 的 session。需要显式包括它们时运行：
+
+```bash
+sessionmgr export --include-archived
 ```
 
 临时指定并持久保存一个新目录：
@@ -154,12 +161,13 @@ layout-v3 的 `repositories/<host>/<owner>/<repo>` 与 layout-v4 的
 变化、读取时被替换、被操作系统报告为锁定，或尾部记录不完整的 session 会记入 JSON
 结果的 `busy` 计数并留到下次处理。`busy` 不产生 warning 或失败退出码。
 
-Codex 的 active `sessions/` 与 `archived_sessions/` 会一起扫描。session 被 Codex 归档只
-改变源文件位置，不会改变已导出的成员身份；内容相同时仍是 no-op。即使某个源文件以后
-从这两个目录都消失，普通导出也不会删除、改名或截断已经存在的 Markdown、附件或隐藏
-sidecar。Session Manager 是追加/更新式归档器，不把 Codex 当前目录镜像成需要删除同步的
-catalog；内部污染记录只能由当前提供的 dry-run-first `cleanup-internal` 显式删除，其他
-历史归档仍不会被普通导出清理。
+普通导出只扫描 Codex active `sessions/`；`--include-archived` 或 GUI 的对应选项才会把
+`archived_sessions/` 加入同一次扫描。因此，在首次导出前已经被用户归档的 session 默认
+不会进入导出目录。一个已经导出的 session 后来被 Codex 归档或源文件消失时，普通导出也
+不会删除、改名或截断它已有的 Markdown、附件或隐藏 sidecar。显式包括 archived sessions
+时，同一原生 session 仍映射到原来的 device/session identity，并可安全更新。Session
+Manager 是追加/更新式归档器，不把 Codex 当前目录镜像成需要删除同步的 catalog；内部污染
+记录只能由 dry-run-first `cleanup-internal` 显式删除，其他历史归档不会被普通导出清理。
 
 每个 Markdown 文档包含明确的时间轴：创建时间、第一条和最后一条可读消息时间、最后
 一条源事件时间、标题更新时间，以及用户/助手消息数量。正文保持源文件顺序，并在每条
@@ -236,4 +244,4 @@ make dist
 ```
 
 产品契约见 [PRD](./docs/PRD.md)，格式与算法见 [SPEC](./docs/SPEC.md)，工程证据见
-[v0.3 devlog](./docs/devlogs/v0.3.0-dev.md)。
+[v0.4 devlog](./docs/devlogs/v0.4.0-dev.md)。

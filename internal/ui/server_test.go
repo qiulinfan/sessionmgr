@@ -92,6 +92,48 @@ func TestGUIConfigAndIncrementalExport(t *testing.T) {
 	}
 }
 
+func TestGUIArchivedSessionsRequireExplicitInclusion(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	source := filepath.Join(codexHome, "archived_sessions", "fixture.jsonl")
+	if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"timestamp":"2026-08-05T01:00:00Z","type":"session_meta","payload":{"id":"archived-gui","cwd":"/missing","git":{"repository_url":"https://github.com/example/gui.git"}}}
+{"timestamp":"2026-08-05T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"include only on request"}}
+`
+	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := config.Store{Path: filepath.Join(root, "config.json")}
+	if _, err := store.SetExportDirectory(filepath.Join(root, "exports")); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler("test-token", store, codexHome, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defaultRequest := authenticatedRequest(http.MethodPost, "/api/export", map[string]interface{}{"scope": "all"})
+	defaultResult := httptest.NewRecorder()
+	handler.ServeHTTP(defaultResult, defaultRequest)
+	defaultResponse := decodeExportResponse(t, defaultResult)
+	if defaultResponse.Error != "" || defaultResponse.Result.Sources != 0 || defaultResponse.Result.Created != 0 {
+		t.Fatalf("default GUI export included archived session: %+v", defaultResponse)
+	}
+
+	includedRequest := authenticatedRequest(http.MethodPost, "/api/export", map[string]interface{}{
+		"scope": "all", "include_archived": true,
+	})
+	includedResult := httptest.NewRecorder()
+	handler.ServeHTTP(includedResult, includedRequest)
+	includedResponse := decodeExportResponse(t, includedResult)
+	if includedResponse.Error != "" || includedResponse.Result.Sources != 1 || includedResponse.Result.Created != 1 ||
+		len(includedResponse.Result.Changes) != 1 || includedResponse.Result.Changes[0].SessionID != "archived-gui" {
+		t.Fatalf("explicit GUI archived export failed: %+v", includedResponse)
+	}
+}
+
 func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	handler, err := NewHandler("token", config.Store{Path: filepath.Join(t.TempDir(), "config.json")}, "", ".")
 	if err != nil {
@@ -113,6 +155,9 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	if !bytes.Contains(page, []byte(`<option value="en">English</option>`)) || !bytes.Contains(page, []byte(`<option value="zh">中文</option>`)) {
 		t.Fatal("GUI language selector is missing English or Chinese")
 	}
+	if !bytes.Contains(page, []byte(`id="include-archived"`)) || !bytes.Contains(page, []byte("Include archived sessions")) {
+		t.Fatal("GUI archived-session option is missing")
+	}
 
 	scriptRequest := httptest.NewRequest(http.MethodGet, "/app.js", nil)
 	scriptResult := httptest.NewRecorder()
@@ -122,7 +167,8 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	}
 	script := scriptResult.Body.Bytes()
 	if !bytes.Contains(script, []byte("function groupChanges")) || !bytes.Contains(script, []byte("repository-tree")) ||
-		!bytes.Contains(script, []byte("sessionmgr-language")) || !bytes.Contains(script, []byte("filtered_internal")) {
+		!bytes.Contains(script, []byte("sessionmgr-language")) || !bytes.Contains(script, []byte("filtered_internal")) ||
+		!bytes.Contains(script, []byte("include_archived")) {
 		t.Fatal("GUI script is missing grouped directory changes or persistent language selection")
 	}
 

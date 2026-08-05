@@ -35,8 +35,9 @@ type Options struct {
 }
 
 type exportRequest struct {
-	Directory string `json:"directory"`
-	Scope     string `json:"scope"`
+	Directory       string `json:"directory"`
+	Scope           string `json:"scope"`
+	IncludeArchived bool   `json:"include_archived"`
 }
 
 type exportResponse struct {
@@ -176,7 +177,8 @@ func NewHandler(token string, store config.Store, codexHome, repo string) (http.
 		allRepos := body.Scope != "current"
 		result, exportErr := archive.Export(request.Context(), archive.Options{
 			CodexHome: codexHome, Output: directory, Repo: repo, AllRepos: allRepos,
-			DeviceID: device.DeviceID, DeviceName: device.DeviceName,
+			IncludeArchived: body.IncludeArchived,
+			DeviceID:        device.DeviceID, DeviceName: device.DeviceName,
 		})
 		response := exportResponse{Result: result}
 		if exportErr != nil {

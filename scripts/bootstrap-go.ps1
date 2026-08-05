@@ -123,6 +123,7 @@ try {
     if (Test-Path -LiteralPath $goRoot) {
         throw "Portable Go destination '$goRoot' appeared during bootstrap; refusing to overwrite it."
     }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $goRoot) | Out-Null
     Move-Item -LiteralPath $stagedGoRoot -Destination $goRoot
 
     if (-not (Test-ExpectedGo)) {
