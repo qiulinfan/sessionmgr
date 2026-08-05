@@ -195,12 +195,38 @@ developer/system 指令、tool 参数、tool 输出、认证数据库、内部 r
 
 ## 构建与验证
 
-要求 Go 1.24 或更高版本，以及 Git：
+要求 Git 和 GNU Make。仓库会优先使用 `PATH` 中已有的 Go；如果没有找到 Go，
+构建包装器会从 `go.dev` 下载仓库固定的便携版本，验证 SHA-256 后解压到被 Git
+忽略的 `.tools/go/<os>-<arch>/`。它不会修改系统安装或全局 `PATH`。可以显式完成
+这一步，也可以让第一次构建自动执行：
+
+```bash
+make bootstrap
+```
+
+Windows 自动引导使用 PowerShell；macOS/Linux 使用 `curl` 或 `wget`、`tar`，以及
+`sha256sum` 或 `shasum`。已有 Go 必须为 1.24 或更高版本，也可以通过
+`make build GO=/path/to/go` 显式覆盖。普通本机构建可在 PowerShell、Windows
+Command Prompt 或 POSIX shell 中运行：
+
+```bash
+make build
+```
+
+`make clean` 保留下载缓存，避免反复获取工具链；需要明确删除所有仓库本地工具链
+和下载缓存时运行 `make clean-tools`，下次构建会重新验证并下载。
+
+产物在 Windows 上是 `bin/sessionmgr.exe`，在 macOS/Linux 上是
+`bin/sessionmgr`。完整验证与分发构建使用：
 
 ```bash
 make check
 make dist
 ```
+
+`make check` 包含 `go test -race ./...`；Windows 上运行该项还需要 Go CGO
+支持的 C 编译器。其他 build/test/vet/cross-check/dist 目标保持
+`CGO_ENABLED=0`。
 
 `make dist` 生成 macOS、Linux、Windows 的 AMD64/ARM64 单文件程序。仓库内也保留
 一个把导出目录设为本仓库 `sessions/` 的便捷脚本：

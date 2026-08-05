@@ -1,0 +1,4 @@
+Makefile text eol=lf
+scripts/* text eol=lf
+scripts/*.cmd text eol=crlf
+scripts/*.ps1 text eol=crlf

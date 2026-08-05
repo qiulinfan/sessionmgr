@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+
+if command -v go >/dev/null 2>&1; then
+    system_go_version=$(go env GOVERSION 2>/dev/null || true)
+    case $system_go_version in
+        go1.2[4-9].*|go1.[3-9][0-9].*|go[2-9].*) exec go "$@" ;;
+    esac
+fi
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repository_dir=$(dirname -- "$script_dir")
+host_os=$(uname -s)
+
+case $host_os in
+    MINGW*|MSYS*|CYGWIN*)
+        if ! command -v cygpath >/dev/null 2>&1 || ! command -v cmd.exe >/dev/null 2>&1; then
+            echo "sessionmgr: Git Bash requires cygpath and cmd.exe for automatic Go bootstrap" >&2
+            exit 1
+        fi
+        windows_wrapper=$(cygpath -w "$script_dir/go.cmd")
+        exec cmd.exe //d //c "$windows_wrapper" "$@"
+        ;;
+esac
+
+sh "$script_dir/bootstrap-go"
+
+host_arch=$(uname -m)
+case $host_os/$host_arch in
+    Linux/x86_64|Linux/amd64) portable_go=$repository_dir/.tools/go/linux-amd64/bin/go ;;
+    Linux/aarch64|Linux/arm64) portable_go=$repository_dir/.tools/go/linux-arm64/bin/go ;;
+    Darwin/x86_64|Darwin/amd64) portable_go=$repository_dir/.tools/go/darwin-amd64/bin/go ;;
+    Darwin/arm64|Darwin/aarch64) portable_go=$repository_dir/.tools/go/darwin-arm64/bin/go ;;
+    *)
+        echo "sessionmgr: automatic Go bootstrap does not support $host_os/$host_arch; install Go 1.24 or newer manually" >&2
+        exit 1
+        ;;
+esac
+
+exec "$portable_go" "$@"
