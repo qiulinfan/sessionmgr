@@ -17,6 +17,8 @@ import (
 
 const defaultStabilityWindow = 350 * time.Millisecond
 
+const pocketEditorReadOnlyPrefix = "You are connected to the PocketEngine editor. This Phase 1 session is strictly read-only. Use the pocketengine MCP tools as the source of truth for the current editor, scene, actors, components, and assets. Never edit files or attempt to mutate the scene."
+
 var errSourceBusy = errors.New("session source is busy")
 
 type sourceFingerprint struct {
@@ -37,7 +39,8 @@ type titleRecord struct {
 
 type orderedMessage struct {
 	Message
-	order int
+	order    int
+	clientID string
 }
 
 func DefaultCodexHome() (string, error) {
@@ -259,6 +262,7 @@ func sourceErrorIsBusy(err error) bool {
 func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) (Session, error) {
 	result := Session{RawHash: digestBytes(raw)}
 	var responseUsers, responseAssistants, eventUsers, eventAssistants []orderedMessage
+	filteredUserInput := 0
 	remaining := raw
 	for len(remaining) > 0 {
 		line, rest, found := bytes.Cut(remaining, []byte{'\n'})
@@ -286,6 +290,13 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 		payloadType := stringValue(payload["type"])
 		if recordType == "session_meta" && result.ID == "" {
 			result.ID = firstString(payload["id"], payload["session_id"])
+			result.Originator = stringValue(payload["originator"])
+			result.SourceKind = sessionSourceKind(payload["source"])
+			result.ThreadSource = stringValue(payload["thread_source"])
+			result.ParentThreadID = stringValue(payload["parent_thread_id"])
+			if result.ThreadSource == "subagent" || strings.HasPrefix(result.SourceKind, "subagent") {
+				result.ExcludeReason = "subagent"
+			}
 			result.CWD = stringValue(payload["cwd"])
 			result.CodexVersion = firstString(payload["cli_version"], payload["version"])
 			result.CreatedAt = firstTime(payload["timestamp"], record["timestamp"])
@@ -308,6 +319,8 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 					if role == "user" {
 						if !injectedUserContextContent(payload["content"]) {
 							responseUsers = append(responseUsers, message)
+						} else {
+							filteredUserInput++
 						}
 					} else {
 						responseAssistants = append(responseAssistants, message)
@@ -328,7 +341,7 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 			if strings.TrimSpace(text) != "" || len(attachments) > 0 {
 				message := orderedMessage{Message: Message{
 					Role: role, Text: text, Timestamp: timestamp, Attachments: attachments,
-				}, order: result.RecordCount}
+				}, order: result.RecordCount, clientID: stringValue(payload["client_id"])}
 				if role == "user" {
 					eventUsers = append(eventUsers, message)
 				} else {
@@ -346,6 +359,9 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 	if result.ID == "" {
 		return Session{}, fmt.Errorf("session has no ID")
 	}
+	var filtered int
+	responseUsers, eventUsers, filtered = sanitizeUserMessages(result, responseUsers, eventUsers)
+	result.FilteredUserInput = filteredUserInput + filtered
 	result.Messages = selectConversationMessages(responseUsers, responseAssistants, eventUsers, eventAssistants)
 	for _, message := range result.Messages {
 		switch message.Role {
@@ -368,6 +384,9 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 	if result.OmittedCount < 0 {
 		result.OmittedCount = 0
 	}
+	if result.ExcludeReason == "" && result.UserMessages == 0 && result.FilteredUserInput > 0 {
+		result.ExcludeReason = "runtime_context"
+	}
 	if title, ok := titles[result.ID]; ok {
 		result.Title = title.Title
 		result.TitleUpdatedAt = title.UpdatedAt
@@ -384,6 +403,82 @@ func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) 
 		result.Title = "Codex session " + result.ID
 	}
 	return result, nil
+}
+
+func sessionSourceKind(value interface{}) string {
+	if result := stringValue(value); result != "" {
+		return result
+	}
+	source := mapValue(value)
+	if _, exists := source["subagent"]; !exists {
+		return ""
+	}
+	subagent := mapValue(source["subagent"])
+	if value := stringValue(subagent["other"]); value != "" {
+		return "subagent:" + value
+	}
+	if _, exists := subagent["thread_spawn"]; exists {
+		return "subagent:thread_spawn"
+	}
+	return "subagent"
+}
+
+func sanitizeUserMessages(session Session, responses, events []orderedMessage) ([]orderedMessage, []orderedMessage, int) {
+	filtered := 0
+	discarded := make(map[string]int)
+	cleanEvents := make([]orderedMessage, 0, len(events))
+	for _, message := range events {
+		original := message.Text
+		if message.clientID == "" && (injectedUserContextPart(original) || runtimeDiagnosticUserText(session, original)) {
+			discarded[normalizedMessageText(original)]++
+			filtered++
+			continue
+		}
+		message.Text = stripPocketEditorPrefix(session, message.Text)
+		if strings.TrimSpace(message.Text) == "" && len(message.Attachments) == 0 {
+			discarded[normalizedMessageText(original)]++
+			filtered++
+			continue
+		}
+		cleanEvents = append(cleanEvents, message)
+	}
+
+	cleanResponses := make([]orderedMessage, 0, len(responses))
+	for _, message := range responses {
+		identity := normalizedMessageText(message.Text)
+		if discarded[identity] > 0 {
+			discarded[identity]--
+			filtered++
+			continue
+		}
+		message.Text = stripPocketEditorPrefix(session, message.Text)
+		if strings.TrimSpace(message.Text) == "" && len(message.Attachments) == 0 {
+			filtered++
+			continue
+		}
+		cleanResponses = append(cleanResponses, message)
+	}
+	return cleanResponses, cleanEvents, filtered
+}
+
+func stripPocketEditorPrefix(session Session, value string) string {
+	if session.Originator != "codex_exec" || session.SourceKind != "exec" {
+		return value
+	}
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, pocketEditorReadOnlyPrefix) {
+		return value
+	}
+	return strings.TrimSpace(strings.TrimPrefix(trimmed, pocketEditorReadOnlyPrefix))
+}
+
+func runtimeDiagnosticUserText(session Session, value string) bool {
+	if session.Originator != "codex-tui" || session.SourceKind != "cli" {
+		return false
+	}
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "MCP client for `") &&
+		strings.Contains(value, " failed to start: MCP startup failed:")
 }
 
 func selectConversationMessages(responseUsers, responseAssistants, eventUsers, eventAssistants []orderedMessage) []Message {
@@ -431,10 +526,11 @@ func canonicalEventUsers(events, responses []orderedMessage) []orderedMessage {
 }
 
 func sameMessageText(left, right string) bool {
-	normalize := func(value string) string {
-		return strings.TrimSpace(strings.ReplaceAll(value, "\r\n", "\n"))
-	}
-	return normalize(left) == normalize(right)
+	return normalizedMessageText(left) == normalizedMessageText(right)
+}
+
+func normalizedMessageText(value string) string {
+	return strings.TrimSpace(strings.ReplaceAll(value, "\r\n", "\n"))
 }
 
 func injectedUserContextContent(value interface{}) bool {

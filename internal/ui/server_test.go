@@ -121,7 +121,8 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 		t.Fatalf("GUI script returned %d", scriptResult.Code)
 	}
 	script := scriptResult.Body.Bytes()
-	if !bytes.Contains(script, []byte("function groupChanges")) || !bytes.Contains(script, []byte("repository-tree")) || !bytes.Contains(script, []byte("sessionmgr-language")) {
+	if !bytes.Contains(script, []byte("function groupChanges")) || !bytes.Contains(script, []byte("repository-tree")) ||
+		!bytes.Contains(script, []byte("sessionmgr-language")) || !bytes.Contains(script, []byte("filtered_internal")) {
 		t.Fatal("GUI script is missing grouped directory changes or persistent language selection")
 	}
 
@@ -164,6 +165,36 @@ func TestGUIBusySourceIsNotAnError(t *testing.T) {
 	response := decodeExportResponse(t, result)
 	if response.Error != "" || response.Result.Busy != 1 || response.Result.Skipped != 0 {
 		t.Fatalf("busy GUI export was not successful: %+v", response)
+	}
+}
+
+func TestGUIReportsFilteredInternalSessionsWithoutExportingThem(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	source := filepath.Join(codexHome, "sessions", "2026", "08", "05", "guardian.jsonl")
+	if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"timestamp":"2026-08-05T01:00:00Z","type":"session_meta","payload":{"id":"guardian","originator":"Codex Desktop","source":{"subagent":{"other":"guardian"}},"thread_source":"subagent","parent_thread_id":"parent","cwd":"/missing","git":{"repository_url":"https://github.com/example/gui.git"}}}
+{"timestamp":"2026-08-05T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"The following is internal agent history"}}
+`
+	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := config.Store{Path: filepath.Join(root, "config.json")}
+	if _, err := store.SetExportDirectory(filepath.Join(root, "exports")); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler("test-token", store, codexHome, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := authenticatedRequest(http.MethodPost, "/api/export", map[string]string{"scope": "all"})
+	result := httptest.NewRecorder()
+	handler.ServeHTTP(result, request)
+	response := decodeExportResponse(t, result)
+	if response.Error != "" || response.Result.FilteredInternal != 1 || response.Result.Created != 0 || len(response.Result.Changes) != 0 {
+		t.Fatalf("GUI exported an internal session: %+v", response)
 	}
 }
 

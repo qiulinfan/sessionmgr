@@ -36,6 +36,7 @@ const translations = {
     readingSessions: "Reading Codex sessions…",
     noChanges: "No changes. The export directory is up to date.",
     busySessions: "No exported changes; {count} active session(s) will be retried next time.",
+    filteredSessions: "No exported changes; {count} internal session(s) were excluded.",
     saving: "Saving…",
     saved: "Saved",
     waitingForDirectory: "Waiting for a directory…",
@@ -71,6 +72,7 @@ const translations = {
     readingSessions: "正在读取 Codex sessions…",
     noChanges: "没有变化，导出目录已经是最新状态。",
     busySessions: "没有导出变化；{count} 个正在写入的 session 已留到下次。",
+    filteredSessions: "没有导出变化；已排除 {count} 个内部 session。",
     saving: "保存中…",
     saved: "已保存",
     waitingForDirectory: "等待选择…",
@@ -276,10 +278,15 @@ function sessionChange(item) {
 function renderChanges(payload) {
   const items = payload.result.changes || [];
   const busy = payload.result.busy || 0;
+  const filtered = payload.result.filtered_internal || 0;
   resultCount.textContent = String(items.length);
   if (items.length === 0) {
-    message.className = busy > 0 ? "empty busy" : "empty success";
-    message.textContent = busy > 0 ? t("busySessions", { count: busy }) : t("noChanges");
+    message.className = busy > 0 || filtered > 0 ? "empty busy" : "empty success";
+    message.textContent = busy > 0
+      ? t("busySessions", { count: busy })
+      : filtered > 0
+        ? t("filteredSessions", { count: filtered })
+        : t("noChanges");
   } else {
     message.className = "hidden";
     for (const repository of groupChanges(items, payload.result.output)) {

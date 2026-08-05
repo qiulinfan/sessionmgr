@@ -43,6 +43,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, err
 		err = commandConfig(args[1:], stdout, stderr)
 	case "list":
 		err = commandList(args[1:], stdout, stderr)
+	case "cleanup-internal":
+		err = commandCleanupInternal(ctx, args[1:], stdout, stderr)
 	case "gui":
 		err = commandGUI(ctx, args[1:], stdout, stderr)
 	default:
@@ -57,6 +59,56 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, err
 		return typed.exitCode, typed
 	}
 	return 1, err
+}
+
+func commandCleanupInternal(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	flags := newFlagSet("cleanup-internal", stderr)
+	directory := flags.String("directory", "", "archive directory (default: configured directory)")
+	output := flags.String("output", "", "compatibility alias for --directory")
+	source := flags.String("codex-home", "", "Codex state directory (default: CODEX_HOME or ~/.codex)")
+	apply := flags.Bool("apply", false, "remove verified internal session documents (default: dry run)")
+	jsonOutput := flags.Bool("json", false, "emit JSON")
+	if err := flags.Parse(args); err != nil {
+		return flagError(err)
+	}
+	if flags.NArg() != 0 {
+		return argumentError("cleanup-internal does not accept positional arguments")
+	}
+	if *directory != "" && *output != "" {
+		return argumentError("--directory and --output are mutually exclusive")
+	}
+	store, err := config.DefaultStore()
+	if err != nil {
+		return err
+	}
+	override := *directory
+	if override == "" {
+		override = *output
+	}
+	resolvedDirectory, err := store.ResolveDirectory(override, false)
+	if err != nil {
+		return err
+	}
+	device, err := store.EnsureDevice()
+	if err != nil {
+		return err
+	}
+	result, cleanupErr := archive.CleanupInternal(ctx, archive.CleanupOptions{
+		CodexHome: *source, Output: resolvedDirectory, DeviceID: device.DeviceID, Apply: *apply,
+	})
+	if *jsonOutput {
+		if err := writeJSON(stdout, result); err != nil {
+			return err
+		}
+	} else {
+		if err := printCleanupChanges(stdout, result); err != nil {
+			return err
+		}
+		for _, warning := range result.Warnings {
+			fmt.Fprintf(stderr, "warning: %s\n", warning)
+		}
+	}
+	return cleanupErr
 }
 
 func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -276,6 +328,28 @@ func printChanges(output io.Writer, changes []archive.Change) error {
 	return table.Flush()
 }
 
+func printCleanupChanges(output io.Writer, result archive.CleanupResult) error {
+	if len(result.Changes) == 0 {
+		_, err := fmt.Fprintln(output, "No internal sessions eligible for cleanup.")
+		return err
+	}
+	table := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "ACTION\tREPOSITORY\tTITLE\tDEVICE\tREASON")
+	for _, change := range result.Changes {
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", strings.ToUpper(change.Kind),
+			change.RepositoryName, oneLine(change.Title), oneLine(change.DeviceName), change.Reason)
+	}
+	if err := table.Flush(); err != nil {
+		return err
+	}
+	if result.DryRun {
+		_, err := fmt.Fprintf(output, "Dry run: %d internal session(s) would be removed. Re-run with --apply to remove them.\n", result.Candidates)
+		return err
+	}
+	_, err := fmt.Fprintf(output, "Removed %d internal session(s).\n", result.Removed)
+	return err
+}
+
 func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
 	result := flag.NewFlagSet(name, flag.ContinueOnError)
 	result.SetOutput(stderr)
@@ -331,9 +405,10 @@ Usage:
   sessionmgr config show
   sessionmgr export [--all | --repo PATH] [--session ID] [--directory PATH]
   sessionmgr list [--history]
+  sessionmgr cleanup-internal [--directory PATH] [--apply]
   sessionmgr version
 
 The configured export directory persists across launches. Export output lists
 only files changed by the current operation. "archive" remains an alias for
-"export".`)
+"export". cleanup-internal is a dry run unless --apply is provided.`)
 }

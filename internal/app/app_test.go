@@ -107,6 +107,32 @@ func TestHumanChangesUseSemanticFieldsWithoutHashes(t *testing.T) {
 	}
 }
 
+func TestCleanupHumanOutputIsExplicitlyDryRun(t *testing.T) {
+	var output bytes.Buffer
+	result := archive.CleanupResult{
+		DryRun: true, Candidates: 1,
+		Changes: []archive.CleanupChange{{
+			Kind: "remove", Reason: "subagent", RepositoryName: "project",
+			DeviceName: "workstation", SessionID: "native-session",
+			SessionKey: "sha256:hidden", Title: "Internal review",
+		}},
+	}
+	if err := printCleanupChanges(&output, result); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, expected := range []string{"REMOVE", "Internal review", "subagent", "Dry run", "--apply"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("cleanup output omitted %q: %s", expected, text)
+		}
+	}
+	for _, hidden := range []string{"native-session", "sha256:hidden"} {
+		if strings.Contains(text, hidden) {
+			t.Fatalf("cleanup output exposed %q: %s", hidden, text)
+		}
+	}
+}
+
 func TestCLIReportsBusySessionWithoutFailing(t *testing.T) {
 	root := t.TempDir()
 	codexHome := filepath.Join(root, "codex")

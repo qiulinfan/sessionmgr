@@ -10,6 +10,8 @@ sessionmgr config show [--json]
 sessionmgr export [--all | --repo PATH] [--session ID]
                   [--directory PATH] [--codex-home PATH] [--json]
 sessionmgr list [--directory PATH] [--history] [--json]
+sessionmgr cleanup-internal [--directory PATH] [--codex-home PATH]
+                            [--apply] [--json]
 sessionmgr version
 ```
 
@@ -79,7 +81,7 @@ host 转小写；path 保留大小写；协议、userinfo、query、fragment 和
 local/file/empty remote 不生成 key。若 session metadata 没有 remote，转换器只允许从
 其仍可访问的 CWD 查询 hosted `remote.origin.url`；仍没有则跳过。
 
-## 4. Identity and change hashes / layout v5 / renderer v5
+## 4. Identity and change hashes / layout v5 / renderer v6
 
 ```text
 source_hash = sha256(raw_jsonl_bytes)
@@ -124,7 +126,7 @@ content hash；不保存绝对本机路径、data URL 或带 credential/query �
 的身份/所有权 sidecar，不是 secret store。
 
 `conversation.md` 的 frontmatter 不包含 identity/hash。它保存 repository/device/session
-显示名、Codex/Git hints，以及以下 renderer-v5 字段：
+显示名、Codex/Git hints，以及以下 renderer-v6 字段：
 
 - `created_at`、`first_message_at`、`last_message_at`、`last_event_at`、
   `title_updated_at` 与用于排序的总体 `updated_at`；
@@ -141,17 +143,36 @@ renderer v2 不修改或删除任何既有 v1 文件。
 经过下述 canonical selection 的真实用户消息的单行前 160 rune，再退回
 `Codex session <ID>`。
 
-新版 Codex 的 user-visible source 是 `event_msg.user_message`。同一 turn 的
+顶层用户 session 由 `session_meta` provenance 判定。读取器解析 `originator`、`source`、
+`thread_source` 与 `parent_thread_id`；`thread_source == "subagent"` 或结构化
+`source.subagent`（包括 Guardian/approval 与 thread-spawned worker）默认标记为 internal，
+不进入 repository matching、attachment capture 或 publication。该过滤不依赖标题文字，
+也不影响其顶层 parent session。
+
+新版 Codex 的主要 user-visible source 是 `event_msg.user_message`。同一 turn 的
 `response_item.message(role=user)` 只在规范化正文与 event 相等时为该 event 补充更完整的
 结构化附件；没有对应 user event 的 response user 不进入对话。这条规则过滤 Codex Desktop
 以 user role 注入的 `recommended_plugins`、AGENTS instructions 和
 `environment_context`，同时避免复制真实用户消息。
+
+user event 仍需做 provenance-aware normalization：
+
+- `originator=codex_exec`、`source=exec` 的 PocketEngine 已确认固定只读前缀按完整常量匹配
+  并剥离，只保留其后的用户请求；其他来源或部分相似文本不处理；
+- `originator=codex-tui`、`source=cli` 且没有 `client_id` 的已确认
+  `MCP client for ... failed to start: MCP startup failed:` 启动诊断不视为用户请求；带
+  `client_id` 的用户提交保留；
+- 无 `client_id` 且完整匹配已知 context envelope 的合成 event 可过滤；普通提及、混合
+  问题或带真实 client identity 的输入不得因关键词相似而删除。
 
 assistant 优先使用 `response_item.message(role=assistant)`，完全没有 response assistant
 时退回 `event_msg.agent_message`/`assistant_message`。user event 与所选 assistant message
 按 JSONL record 顺序合并。旧 JSONL 完全没有 user event 时兼容 response user message，
 但完整匹配已知注入 envelope 的 response 被排除。完全没有 canonical user message 的
 context-only source 不发布 repository/session 文档，不计为失败；raw source 仍保持只读。
+标题在 normalization 与 internal classification 之后生成：顶层 session 的最新 index title
+优先，否则使用第一条净化后的真实 user message。internal session 不通过解析父 transcript
+伪造“真实标题”。
 
 tool arguments/results、developer/system message 和 reasoning payload 不进入正文。raw
 bytes 保留在 Codex home；导出器只读源数据。
@@ -228,14 +249,35 @@ otherwise                                          -> updated
 ```
 
 内容、标题、renderer 与 metadata 均相同时返回 unchanged，不进入 changeset。human CLI
-不显示 hash 列；GUI 只显示 semantic path。扫描、
-matched、unchanged、busy 和 skipped 计数仍保留在 JSON result 供自动化诊断。
+不显示 hash 列；GUI 只显示 semantic path。扫描、matched、unchanged、busy、
+`filtered_internal` 和 skipped 计数仍保留在 JSON result 供自动化诊断。
 
 changeset 只由本轮发现并成功解析的 source 驱动。archive reader 在导出开始时读取的既有
 entry 不会因为本轮没有对应 source 而被修改或删除；`List` 继续从隐藏 sidecar 派生该
 entry。普通 export 不实现 mirror reconciliation、tombstone 或 prune。唯一的目录删除是
 已验证 layout migration 后对确认空的旧 `sessions/`/device wrapper 调用非递归
 `os.Remove`，它不能删除 session 文档或任何非空目录。未来如需清理必须设计独立显式命令。
+
+### 8.1 Explicit internal cleanup
+
+`cleanup-internal` 只清理由旧 renderer 错误发布、且仍能由当前设备的稳定 raw source 证明为
+`subagent` 或已知 runtime-context-only 的 current document。默认 dry-run；`--apply` 是
+独立、显式的删除授权，不改变普通 export 的 retention 语义。
+
+候选必须依次通过：
+
+1. raw source 经过与 export 相同的稳定窗口与完整 JSONL 检查；
+2. raw session ID、当前配置 device ID、derived session key、repository key 与 sidecar
+   identity 全部一致；
+3. `conversation.md` hash 等于 sidecar `document_hash`；所有 archived attachment bytes
+   等于 manifest size/hash；
+4. session directory 只包含 conversation、session sidecar 和 manifest 声明的 attachment；
+   任意额外文件、目录、symlink 或 unknown required metadata 都阻止删除；
+5. 先把已验证目录原子移动到 export root 下的临时 recovery directory，再次验证后只按
+   manifest 精确移除文件；失败时报告 recovery path，不递归删除未知内容。
+
+source 缺失、busy、跨设备 entry 或无法证明 hosted repository identity 时不得成为候选。
+raw Codex JSONL、repository sidecar、其他 device/session 和 legacy v1/v2 history 永不删除。
 
 ## 9. Owned-file update and publication
 
@@ -325,12 +367,13 @@ SQLite、encryption 或 GUI 状态。旧 `~/.sessionmgr` 保持原样。
 
 layout v4 只改变 repository 可见路径；layout v5 进一步移除 repository 与 device 之间的
 `sessions/` wrapper。schema v1、repository key、session key 与 attachment schema v1
-不变。renderer v5 在 layout v5 内过滤注入的 user-role 上下文；renderer-v4 sidecar 仍可
-严格读取。下次导出先验证
+不变。renderer v6 在 layout v5 内增加 session provenance、subagent exclusion 与来源限定的
+user-event normalization；renderer-v4/v5 sidecar 仍可严格读取。下次导出先验证
 旧 conversation/attachment hashes 与 identity，再将该 session directory rename 到
 layout-v5 device 路径，最后发布 layout-v5 session sidecar。layout-v4 repository sidecar
 与 v5 位于同一路径，只有完整 identity 一致时才原子升级；迁移后只删除确认为空的旧
-device/`sessions` 目录。renderer-v4 污染文档同样只在 document/attachment ownership
+device/`sessions` 目录。旧 renderer 污染文档同样只在 document/attachment ownership
 验证后重写；标题变化时复用安全 semantic-directory rename。旧 layout-v3 repository
 sidecar 和 v1/v2 hash-named 数据不自动删除；`list --history` 仍能检查它们。
-旧归档的删除必须留给一个未来的显式、可 review migration。
+内部旧文档只能由 dry-run-first `cleanup-internal --apply` 显式清理；其他旧归档的删除仍需
+未来独立、可 review 的 migration。

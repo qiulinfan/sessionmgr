@@ -655,6 +655,186 @@ func TestResponseOnlyUserTextThatMentionsContextTagsIsPreserved(t *testing.T) {
 	}
 }
 
+func TestSubagentSessionsAreStructurallyExcluded(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	tests := []struct {
+		id         string
+		source     any
+		sourceKind string
+	}{
+		{
+			id: "guardian", sourceKind: "subagent:guardian",
+			source: map[string]any{"subagent": map[string]any{"other": "guardian"}},
+		},
+		{
+			id: "spawned", sourceKind: "subagent:thread_spawn",
+			source: map[string]any{"subagent": map[string]any{"thread_spawn": map[string]any{
+				"parent_thread_id": "parent", "depth": 1, "agent_path": "/root/worker",
+			}}},
+		},
+	}
+	for _, test := range tests {
+		records := internalSessionRecords(test.id, test.source)
+		raw := attachmentSessionJSONL(t, test.id, records)
+		session, err := parseSession(raw, "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if session.ExcludeReason != "subagent" || session.ThreadSource != "subagent" ||
+			session.ParentThreadID != "parent" || session.SourceKind != test.sourceKind {
+			t.Fatalf("subagent source was not classified: %+v", session)
+		}
+		writeSessionRecords(t, codexHome, test.id, records)
+	}
+	result, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Sources != 2 || result.FilteredInternal != 2 || result.Matched != 0 ||
+		result.Created != 0 || len(result.Changes) != 0 {
+		t.Fatalf("internal sessions were exported: %+v", result)
+	}
+	if entries, err := List(ListOptions{Output: output}); err != nil || len(entries) != 0 {
+		t.Fatalf("internal sessions created archive entries: %+v, %v", entries, err)
+	}
+}
+
+func TestPocketEditorPrefixIsRemovedBeforeTitleAndConversation(t *testing.T) {
+	prompt := "阅读这个游戏, 告诉我它的框架"
+	injected := pocketEditorReadOnlyPrefix + "\n\n" + prompt
+	records := []map[string]any{
+		{"timestamp": "2026-08-05T01:00:00Z", "type": "session_meta", "payload": map[string]any{
+			"id": "pocket", "originator": "codex_exec", "source": "exec", "thread_source": "user",
+		}},
+		{"timestamp": "2026-08-05T01:00:01Z", "type": "response_item", "payload": map[string]any{
+			"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": injected}},
+		}},
+		{"timestamp": "2026-08-05T01:00:01Z", "type": "event_msg", "payload": map[string]any{
+			"type": "user_message", "message": injected,
+		}},
+	}
+	session, err := parseSession(attachmentSessionJSONL(t, "pocket", records), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Title != prompt || session.UserMessages != 1 || len(session.Messages) != 1 ||
+		session.Messages[0].Text != prompt || session.ExcludeReason != "" {
+		t.Fatalf("PocketEngine context was not stripped: %+v", session)
+	}
+}
+
+func TestSyntheticMCPStartupDiagnosticIsContextOnly(t *testing.T) {
+	diagnostic := "MCP client for `codex_apps` failed to start: MCP startup failed: authentication failed"
+	records := []map[string]any{
+		{"timestamp": "2026-08-05T01:00:00Z", "type": "session_meta", "payload": map[string]any{
+			"id": "mcp", "originator": "codex-tui", "source": "cli", "thread_source": "user",
+		}},
+		{"timestamp": "2026-08-05T01:00:01Z", "type": "response_item", "payload": map[string]any{
+			"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": diagnostic}},
+		}},
+		{"timestamp": "2026-08-05T01:00:01Z", "type": "event_msg", "payload": map[string]any{
+			"type": "user_message", "message": diagnostic,
+		}},
+	}
+	session, err := parseSession(attachmentSessionJSONL(t, "mcp", records), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.UserMessages != 0 || session.ExcludeReason != "runtime_context" || session.FilteredUserInput != 2 {
+		t.Fatalf("synthetic MCP diagnostic survived: %+v", session)
+	}
+
+	records[2]["payload"].(map[string]any)["client_id"] = "real-user-input"
+	literal, err := parseSession(attachmentSessionJSONL(t, "mcp-literal", records), "mcp-literal", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if literal.UserMessages != 1 || literal.ExcludeReason != "" || literal.Messages[0].Text != diagnostic {
+		t.Fatalf("a real user diagnostic report was filtered: %+v", literal)
+	}
+}
+
+func TestCleanupInternalIsDryRunFirstAndRefusesManualEdits(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	id := "guardian-cleanup"
+	records := internalSessionRecords(id, map[string]any{"subagent": map[string]any{"other": "guardian"}})
+	raw := attachmentSessionJSONL(t, id, records)
+	writeSessionRecords(t, codexHome, id, records)
+	session, err := parseSession(raw, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := repositoryFromRemote("github.com/example/project")
+	snapshot := makeSnapshot(repository, session, "device:test", "test-device")
+	created, documentPath, _, err := publishSnapshot(output, &snapshot, nil)
+	if err != nil || !created {
+		t.Fatalf("prepare legacy polluted document: %v", err)
+	}
+	originalDocument, err := os.ReadFile(documentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dryRun, err := CleanupInternal(context.Background(), CleanupOptions{
+		CodexHome: codexHome, Output: output, DeviceID: "device:test", StabilityWindow: -1,
+	})
+	if err != nil || !dryRun.DryRun || dryRun.Candidates != 1 || dryRun.Removed != 0 || len(dryRun.Changes) != 1 {
+		t.Fatalf("unexpected cleanup dry run: %+v, %v", dryRun, err)
+	}
+	if _, err := os.Stat(documentPath); err != nil {
+		t.Fatalf("dry run removed its candidate: %v", err)
+	}
+
+	if err := os.WriteFile(documentPath, append(originalDocument, []byte("manual edit\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := CleanupInternal(context.Background(), CleanupOptions{
+		CodexHome: codexHome, Output: output, DeviceID: "device:test", Apply: true, StabilityWindow: -1,
+	})
+	if err == nil || blocked.Removed != 0 || blocked.Skipped != 1 {
+		t.Fatalf("cleanup did not refuse a manual edit: %+v, %v", blocked, err)
+	}
+	if err := os.WriteFile(documentPath, originalDocument, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	applied, err := CleanupInternal(context.Background(), CleanupOptions{
+		CodexHome: codexHome, Output: output, DeviceID: "device:test", Apply: true, StabilityWindow: -1,
+	})
+	if err != nil || applied.DryRun || applied.Candidates != 1 || applied.Removed != 1 || len(applied.Changes) != 1 {
+		t.Fatalf("verified cleanup was not applied: %+v, %v", applied, err)
+	}
+	if _, err := os.Lstat(documentPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cleaned document still exists: %v", err)
+	}
+	if entries, err := List(ListOptions{Output: output}); err != nil || len(entries) != 0 {
+		t.Fatalf("cleaned archive still lists the internal session: %+v, %v", entries, err)
+	}
+	if _, err := os.Stat(filepath.Join(codexHome, "sessions", "2026", "08", "05", "rollout-"+id+".jsonl")); err != nil {
+		t.Fatalf("cleanup modified the raw Codex source: %v", err)
+	}
+}
+
+func internalSessionRecords(id string, source any) []map[string]any {
+	return []map[string]any{
+		{"timestamp": "2026-08-05T01:00:00Z", "type": "session_meta", "payload": map[string]any{
+			"id": id, "originator": "Codex Desktop", "source": source, "thread_source": "subagent",
+			"parent_thread_id": "parent", "cwd": "/private/worktree",
+			"git": map[string]any{"repository_url": "https://github.com/example/project.git", "commit_hash": "abc123", "branch": "main"},
+		}},
+		{"timestamp": "2026-08-05T01:00:01Z", "type": "event_msg", "payload": map[string]any{
+			"type": "user_message", "message": "The following is internal parent history",
+		}},
+		{"timestamp": "2026-08-05T01:00:02Z", "type": "event_msg", "payload": map[string]any{
+			"type": "agent_message", "message": "approval result",
+		}},
+	}
+}
+
 func TestVerifiedReexportRepairsInjectedContextDocument(t *testing.T) {
 	root := t.TempDir()
 	codexHome := filepath.Join(root, "codex")
@@ -686,9 +866,9 @@ func TestVerifiedReexportRepairsInjectedContextDocument(t *testing.T) {
 	if err := os.MkdirAll(oldDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	oldDocument := bytes.Replace(renderSnapshot(snapshot), []byte("renderer_version: 5"), []byte("renderer_version: 4"), 1)
+	oldDocument := bytes.Replace(renderSnapshot(snapshot), []byte("renderer_version: 6"), []byte("renderer_version: 5"), 1)
 	oldRecord := sessionRecord(snapshot, digestBytes(oldDocument))
-	oldRecord.RendererVersion = 4
+	oldRecord.RendererVersion = 5
 	metadata, err := marshalMetadata(oldRecord)
 	if err != nil {
 		t.Fatal(err)

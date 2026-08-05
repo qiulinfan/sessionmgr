@@ -65,6 +65,9 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 - 活跃文件在观察与读取前后必须保持 identity、size 和 mtime 一致；
 - locked、变化中、被替换/移动或尾部 JSONL 不完整的文件必须标记 `busy`，本次静默忽略；
 - `busy` 必须在 JSON 计数中可观察，但不得产生 warning 或非零退出码；
+- 必须读取 `session_meta` 的 `originator`、`source`、`thread_source` 与
+  `parent_thread_id`；Guardian/approval 和 thread-spawned subagent 默认不作为独立用户
+  session 导出，JSON 结果通过 `filtered_internal` 计数保持可观察；
 - 不得修改、移动或删除 Codex 源文件。
 
 ### FR-3 Repository identity
@@ -93,6 +96,11 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 - 新版 Codex 把任务启动上下文写成内部 `role=user` response 时，必须以
   `event_msg.user_message` 识别真实用户输入；未对应真实 user event 的插件列表、AGENTS
   规则、环境信息等注入内容不得进入标题或正文；
+- `event_msg.user_message` 也可能由运行时合成，不得无条件视为用户输入。已知客户端说明
+  必须按 session provenance 和完整固定前缀精确剥离；无 `client_id` 的已确认启动诊断必须
+  屏蔽，而用户主动提交或引用相同诊断时必须保留；
+- 标题只能来自顶层 session 的最新显式 index title，或净化后的第一条真实用户请求；不得
+  从 subagent 继承的父历史、approval transcript、tool history、客户端说明或启动错误生成；
 - 没有任何真实用户消息的 context-only source 不生成归档文档，也不得因此产生 warning
   或修改原始 JSONL；旧格式完全没有 user event 时必须继续兼容真实 response user message；
 - 只归档用户通过聊天框结构化投入的附件；不得从消息正文、tool 参数/输出或 agent 读取过的
@@ -129,6 +137,10 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 - changeset 为空时显示单一的 no-change 状态，不回显历史 catalog。
 - 普通 export 只能新增或更新已发现的 session，不得通过“本次未发现”推导 tombstone、prune
   或删除操作；任何未来清理必须是独立、显式且可审阅的命令。
+- `cleanup-internal` 必须默认 dry-run。只有仍存在且稳定的 raw source 结构化证明该 session
+  是 internal/context-only，且当前设备 identity、repository/session sidecar、document
+  hash、attachment hash 与目录全部归属 Session Manager 时，`--apply` 才能移除派生目录；
+  未知文件、人工修改、symlink、source 缺失或 identity mismatch 必须阻止清理。
 
 ### FR-6 GUI
 
@@ -146,7 +158,8 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 
 ### FR-7 CLI
 
-- 必须提供 `config set-directory`、`config show`、`export`、`list`、`gui`、`version`；
+- 必须提供 `config set-directory`、`config show`、`export`、`list`、`cleanup-internal`、
+  `gui`、`version`；
 - human output 与 JSON output 必须分离；
 - `archive` 作为 `export` 兼容别名；
 - partial export 必须保留成功 changeset，同时以非零退出码和 warning 报告跳过项。
@@ -200,9 +213,15 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 26. GUI 首次加载为英文，切换中文后静态文案与当前动态结果同步切换。
 27. 同时含注入 `role=user` 上下文和真实 `user_message` event 的 Codex source 只导出真实
     对话；标题不得取自 `recommended_plugins`、`AGENTS.md` 或 `environment_context`。
-28. context-only source 不创建文档；renderer-v4 污染文档在 ownership/hash 校验后升级到
-    renderer v5、修复正文并按真实标题安全重命名。
+28. context-only source 不创建文档；旧 renderer 污染文档在 ownership/hash 校验后升级到
+    renderer v6、修复正文并按真实标题安全重命名。
 29. source 从 active 移到 `archived_sessions/` 后重复导出保持 unchanged；随后 source 完全
     消失时，既有 Markdown、sidecar bytes 和 list entry 均保持不变。
 30. GUI 桌面与 390px 窄屏均使用 GitHub Dark 风格，表单和目录树无白色 surface，且没有
     横向溢出。
+31. `source.subagent` 或 `thread_source=subagent` 的 Guardian 与 spawned worker 不创建独立
+    文档，父 session 仍正常导出，JSON/GUI 可观察 filtered 计数。
+32. PocketEngine 固定只读说明从正文和标题剥离而保留其后的真实请求；无 client ID 的纯
+    MCP 启动错误不创建文档，用户主动提交同样文字时仍保留。
+33. `cleanup-internal` dry-run 不改变任何文件；`--apply` 只清除完全验证的当前设备派生
+    文档，人工编辑或额外文件会阻止清理，raw Codex JSONL 保持逐字节不变。

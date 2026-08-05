@@ -73,6 +73,20 @@ No changes.
 人类可读的 CLI 表格不显示 hash；完整 identity/change hash 仅在 JSON 和隐藏 sidecar
 中供校验与自动化使用。
 
+默认导出只保留顶层用户 session。Codex 的 Guardian/approval 与普通 spawned subagent
+会根据 `session_meta.source`/`thread_source` 结构化识别并排除，JSON 结果通过
+`filtered_internal` 计数显示。清理由旧 renderer 错误导出的内部文档时，先运行：
+
+```bash
+sessionmgr cleanup-internal --directory /path/to/session-archive
+# 审阅 dry-run 后再显式应用
+sessionmgr cleanup-internal --directory /path/to/session-archive --apply
+```
+
+清理只处理仍有稳定原始 source、属于当前设备、且 sidecar/document/attachment hash 与
+目录所有权全部验证通过的派生文档；原始 Codex JSONL 不会被删除。普通 `export` 仍不执行
+任何删除。
+
 ## 持久配置
 
 配置使用 schema v1 JSON，位置来自 Go 的系统标准配置目录：
@@ -149,9 +163,16 @@ catalog；历史记录只会在未来显式、可审阅的清理操作中删除�
 用户输入，只从匹配的 response 补充结构化附件；这些注入内容不会进入标题或正文。完全
 没有真实用户对话的 context-only source 保持原始 JSONL 不变，但不创建归档文档。
 
-renderer v5 首次重导旧文档时会产生一次 changeset：被上下文污染的标题会在所有权/hash
-校验后显示为 `RENAMED`，其他需要升级 renderer 的文档显示为 `UPDATED`。完成后重复导出
-恢复为 no-op。
+并非所有 `user_message` 都来自用户：内部 Guardian 会把父会话 transcript 与 tool history
+包装成审批输入，spawned subagent 会继承父会话历史，某些客户端还会把编辑器说明或 MCP
+启动错误写入 user event。renderer v6 使用 session provenance 排除所有 subagent，对已知
+客户端前缀做来源限定的精确剥离，并只在无 `client_id` 的合成事件中屏蔽已确认的运行诊断。
+标题仅来自顶层 session 的显式索引或净化后的第一条真实用户请求。
+
+renderer v6 首次重导旧文档时会产生一次 changeset：可修复的客户端前缀标题会在
+所有权/hash 校验后显示为 `RENAMED`，其他需要升级 renderer 的文档显示为 `UPDATED`。
+内部/context-only 旧文档必须通过上面的显式 dry-run-first 清理移除；完成后重复导出恢复
+为 no-op。
 
 ## 内容与安全边界
 

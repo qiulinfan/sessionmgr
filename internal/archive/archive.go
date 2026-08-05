@@ -106,12 +106,16 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(path), parseErr))
 			continue
 		}
+		if opts.SessionID != "" && session.ID != opts.SessionID {
+			continue
+		}
+		if session.ExcludeReason != "" {
+			result.FilteredInternal++
+			continue
+		}
 		if session.UserMessages == 0 {
 			// Context-only startup records are not conversations. Keep the raw
 			// Codex source untouched and silently leave it out of the archive.
-			continue
-		}
-		if opts.SessionID != "" && session.ID != opts.SessionID {
 			continue
 		}
 		repo, repoErr := repositoryForSession(ctx, session)
@@ -163,7 +167,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			result.Unchanged++
 		}
 	}
-	if opts.SessionID != "" && result.Matched == 0 && result.Busy == 0 {
+	if opts.SessionID != "" && result.Matched == 0 && result.Busy == 0 && result.FilteredInternal == 0 {
 		return result, fmt.Errorf("Codex session %q was not found for the selected repository scope", opts.SessionID)
 	}
 	if result.Skipped > 0 {

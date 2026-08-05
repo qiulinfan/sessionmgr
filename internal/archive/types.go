@@ -5,7 +5,7 @@ import "time"
 const (
 	SchemaVersion      = 1
 	LayoutVersion      = 5
-	RendererVersion    = 5
+	RendererVersion    = 6
 	MaxAttachmentBytes = int64(50 * 1024 * 1024)
 )
 
@@ -31,12 +31,47 @@ type Result struct {
 	Created             int      `json:"created"`
 	Unchanged           int      `json:"unchanged"`
 	Busy                int      `json:"busy"`
+	FilteredInternal    int      `json:"filtered_internal"`
 	Skipped             int      `json:"skipped"`
 	Attachments         int      `json:"attachments"`
 	ArchivedAttachments int      `json:"archived_attachments"`
 	Output              string   `json:"output"`
 	Changes             []Change `json:"changes"`
 	Warnings            []string `json:"warnings,omitempty"`
+}
+
+type CleanupOptions struct {
+	CodexHome string
+	Output    string
+	DeviceID  string
+	Apply     bool
+
+	// StabilityWindow has the same meaning as Options.StabilityWindow.
+	StabilityWindow time.Duration
+}
+
+type CleanupResult struct {
+	SchemaVersion int             `json:"schema_version"`
+	Sources       int             `json:"sources"`
+	Candidates    int             `json:"candidates"`
+	Removed       int             `json:"removed"`
+	Busy          int             `json:"busy"`
+	Skipped       int             `json:"skipped"`
+	DryRun        bool            `json:"dry_run"`
+	Output        string          `json:"output"`
+	Changes       []CleanupChange `json:"changes"`
+	Warnings      []string        `json:"warnings,omitempty"`
+}
+
+type CleanupChange struct {
+	Kind           string `json:"kind"`
+	Reason         string `json:"reason"`
+	RepositoryName string `json:"repository_name"`
+	DeviceName     string `json:"device_name"`
+	SessionID      string `json:"session_id"`
+	SessionKey     string `json:"session_key"`
+	Title          string `json:"title"`
+	Path           string `json:"path"`
 }
 
 type Change struct {
@@ -93,6 +128,12 @@ type Session struct {
 	ID                string
 	Title             string
 	TitleUpdatedAt    time.Time
+	Originator        string
+	SourceKind        string
+	ThreadSource      string
+	ParentThreadID    string
+	ExcludeReason     string
+	FilteredUserInput int
 	CWD               string
 	Remote            string
 	Commit            string
