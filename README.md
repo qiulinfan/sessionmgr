@@ -2,11 +2,16 @@
 
 `sessionmgr` 把本机 Codex sessions 导出成可以由 Git 管理的 Markdown 文件。
 
-它只做三件事：
+它的核心工作流有四部分：
 
 1. 记住一个用户指定的导出目录；
 2. 按规范化后的 Git 远程仓库组织 sessions；
-3. 每次只显示这次真正导出的变化。
+3. 每次只显示这次真正导出的变化；
+4. 通过默认 dry-run 的显式命令，安全清理由旧 renderer 误导出的内部 session 副本。
+
+Codex home 对 Session Manager 始终是只读源：程序只扫描和读取原始 JSONL，不会写入、
+重命名、归档或删除它们。程序的写操作只发生在自己的配置文件和用户指定的导出目录；
+`cleanup-internal --apply` 也只作用于经过身份与 hash 校验的导出副本。
 
 ## GUI
 
@@ -69,7 +74,8 @@ CLI 的人类输出只包含本次 changeset：`NEW`、`UPDATED`、`RENAMED`。�
 No changes.
 ```
 
-`export`、`config`、`list` 支持 `--json`。`archive` 仍作为 `export` 的兼容别名。
+`export`、`config`、`list`、`cleanup-internal` 支持 `--json`。`archive` 仍作为 `export`
+的兼容别名。
 人类可读的 CLI 表格不显示 hash；完整 identity/change hash 仅在 JSON 和隐藏 sidecar
 中供校验与自动化使用。
 
@@ -152,7 +158,8 @@ Codex 的 active `sessions/` 与 `archived_sessions/` 会一起扫描。session 
 改变源文件位置，不会改变已导出的成员身份；内容相同时仍是 no-op。即使某个源文件以后
 从这两个目录都消失，普通导出也不会删除、改名或截断已经存在的 Markdown、附件或隐藏
 sidecar。Session Manager 是追加/更新式归档器，不把 Codex 当前目录镜像成需要删除同步的
-catalog；历史记录只会在未来显式、可审阅的清理操作中删除。
+catalog；内部污染记录只能由当前提供的 dry-run-first `cleanup-internal` 显式删除，其他
+历史归档仍不会被普通导出清理。
 
 每个 Markdown 文档包含明确的时间轴：创建时间、第一条和最后一条可读消息时间、最后
 一条源事件时间、标题更新时间，以及用户/助手消息数量。正文保持源文件顺序，并在每条
