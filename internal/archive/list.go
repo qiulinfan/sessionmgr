@@ -130,7 +130,12 @@ func readRepositoryEntries(root, repositoryDir string) ([]Entry, error) {
 	if err := validateRepositoryMetadata(repository); err != nil {
 		return nil, fmt.Errorf("read %s: %w", metadataPath, err)
 	}
-	repo := Repository{Key: repository.RepositoryKey, Name: repository.RepositoryName, CanonicalRemote: repository.CanonicalRemote}
+	repo := Repository{
+		Key: repository.RepositoryKey, Name: repository.RepositoryName,
+		CanonicalRemote: repository.CanonicalRemote, Kind: repository.RepositoryKind,
+		DirectoryName: repository.DirectoryName, DirectoryID: repository.DirectoryID,
+		DeviceID: repository.DeviceID, DeviceName: repository.DeviceName,
+	}
 	var expected string
 	if repository.LayoutVersion == 3 {
 		expected = filepath.Join(root, "repositories", semanticRepositoryDirectoryV3(repo))
@@ -157,6 +162,9 @@ func readRepositoryEntries(root, repositoryDir string) ([]Entry, error) {
 		}
 		if err := validateSessionMetadata(metadata); err != nil {
 			return fmt.Errorf("read %s: %w", path, err)
+		}
+		if repository.RepositoryKind == repositoryKindLocalDirectory && metadata.LayoutVersion != LayoutVersion {
+			return fmt.Errorf("read %s: local-directory session uses unsupported layout %d", path, metadata.LayoutVersion)
 		}
 		sessionDir := filepath.Dir(path)
 		deviceDir := filepath.Dir(sessionDir)

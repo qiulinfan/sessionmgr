@@ -25,7 +25,12 @@ type repositoryMetadata struct {
 	LayoutVersion   int    `json:"layout_version"`
 	RepositoryKey   string `json:"repository_key"`
 	RepositoryName  string `json:"repository_name"`
-	CanonicalRemote string `json:"canonical_remote"`
+	CanonicalRemote string `json:"canonical_remote,omitempty"`
+	RepositoryKind  string `json:"repository_kind,omitempty"`
+	DirectoryName   string `json:"directory_name,omitempty"`
+	DirectoryID     string `json:"directory_id,omitempty"`
+	DeviceID        string `json:"device_id,omitempty"`
+	DeviceName      string `json:"device_name,omitempty"`
 }
 
 type sessionMetadata struct {
@@ -62,10 +67,19 @@ type attachmentMetadata struct {
 }
 
 func repositoryRecord(repo Repository) repositoryMetadata {
-	return repositoryMetadata{
+	record := repositoryMetadata{
 		SchemaVersion: SchemaVersion, LayoutVersion: LayoutVersion,
 		RepositoryKey: repo.Key, RepositoryName: repo.Name, CanonicalRemote: repo.CanonicalRemote,
 	}
+	if repo.Kind == repositoryKindLocalDirectory {
+		record.SchemaVersion = LocalRepositorySchema
+		record.RepositoryKind = repo.Kind
+		record.DirectoryName = repo.DirectoryName
+		record.DirectoryID = repo.DirectoryID
+		record.DeviceID = repo.DeviceID
+		record.DeviceName = repo.DeviceName
+	}
+	return record
 }
 
 func sessionRecord(snapshot Snapshot, documentHash string) sessionMetadata {
@@ -129,14 +143,28 @@ func readMetadata(path string, target any) error {
 }
 
 func validateRepositoryMetadata(value repositoryMetadata) error {
-	if value.SchemaVersion != SchemaVersion || !supportedLayoutVersion(value.LayoutVersion) {
+	if (value.SchemaVersion != SchemaVersion && value.SchemaVersion != LocalRepositorySchema) || !supportedLayoutVersion(value.LayoutVersion) {
 		return fmt.Errorf("unsupported repository metadata schema/layout %d/%d", value.SchemaVersion, value.LayoutVersion)
 	}
-	if value.RepositoryKey == "" || value.CanonicalRemote == "" {
+	if value.RepositoryKey == "" || value.RepositoryName == "" {
 		return fmt.Errorf("incomplete repository metadata")
 	}
-	if value.RepositoryKey != digest("git-remote-v1\x00"+value.CanonicalRemote) {
-		return fmt.Errorf("repository key does not match canonical remote")
+	if value.RepositoryKind == "" {
+		if value.SchemaVersion != SchemaVersion || value.CanonicalRemote == "" || value.DirectoryName != "" || value.DirectoryID != "" ||
+			value.DeviceID != "" || value.DeviceName != "" {
+			return fmt.Errorf("invalid hosted repository metadata")
+		}
+		if value.RepositoryKey != digest("git-remote-v1\x00"+value.CanonicalRemote) {
+			return fmt.Errorf("repository key does not match canonical remote")
+		}
+		return nil
+	}
+	if value.SchemaVersion != LocalRepositorySchema || value.RepositoryKind != repositoryKindLocalDirectory ||
+		value.LayoutVersion != LayoutVersion || value.CanonicalRemote != "" ||
+		value.DirectoryName == "" || !validSHA256(value.DirectoryID) ||
+		value.DeviceID == "" || value.DeviceName == "" ||
+		value.RepositoryKey != digest("local-directory-v1\x00"+value.DeviceID+"\x00"+value.DirectoryID) {
+		return fmt.Errorf("invalid local-directory repository metadata")
 	}
 	return nil
 }
@@ -307,6 +335,11 @@ func replaceOwnedFile(path string, data []byte) error {
 }
 
 func semanticRepositoryDirectory(repo Repository) string {
+	if repo.Kind == repositoryKindLocalDirectory {
+		namespace := semanticComponent("non-git-"+repo.DeviceName, "non-git-device")
+		name := semanticComponent(repo.DirectoryName, "directory")
+		return filepath.Join(namespace, name)
+	}
 	parts := strings.Split(repo.CanonicalRemote, "/")
 	if len(parts) < 2 {
 		return semanticComponent(repo.CanonicalRemote, "repository")

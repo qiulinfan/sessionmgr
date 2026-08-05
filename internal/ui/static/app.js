@@ -12,6 +12,7 @@ const resultCount = document.querySelector("#result-count");
 const exportButton = document.querySelector("#export");
 const languageSelect = document.querySelector("#language");
 const includeArchived = document.querySelector("#include-archived");
+const includeNonGit = document.querySelector("#include-non-git");
 
 const translations = {
   en: {
@@ -20,7 +21,7 @@ const translations = {
     connected: "Local connection",
     connectionFailed: "Connection failed",
     heroTitle: "Keep only what changed.",
-    heroLede: "Choose a persistent directory and export local Codex sessions as Markdown, grouped by Git remote.",
+    heroLede: "Choose a persistent directory and export local Codex sessions as Markdown, grouped by Git remote or local directory.",
     exportDirectory: "Export directory",
     directoryPlaceholder: "For example, /Users/me/Documents/session-archive",
     browse: "Browse",
@@ -28,9 +29,10 @@ const translations = {
     directoryHint: "This directory is saved in Session Manager's local configuration and restored the next time it starts.",
     exportSessions: "Export sessions",
     exportScope: "Export scope",
-    allRepositories: "All Git repositories",
-    currentRepository: "Current Git repository",
+    allRepositories: "All eligible directories",
+    currentRepository: "Current directory",
     includeArchived: "Include archived sessions",
+    includeNonGit: "Include non-Git directories (full export)",
     exportChanges: "Export changes",
     exporting: "Exporting…",
     exportedChanges: "Changes from this export",
@@ -39,6 +41,7 @@ const translations = {
     noChanges: "No changes. The export directory is up to date.",
     busySessions: "No exported changes; {count} active session(s) will be retried next time.",
     filteredSessions: "No exported changes; {count} internal session(s) were excluded.",
+    filteredNonGit: "No exported changes; {count} non-Git session(s) were excluded. Enable full export to include them.",
     saving: "Saving…",
     saved: "Saved",
     waitingForDirectory: "Waiting for a directory…",
@@ -49,6 +52,7 @@ const translations = {
     badgeNew: "New",
     badgeUpdated: "Updated",
     badgeRenamed: "Renamed",
+    badgeFull: "Full",
     attachmentSummary: "{attachments} attachment(s) · {archived} copied",
   },
   zh: {
@@ -57,7 +61,7 @@ const translations = {
     connected: "本地连接",
     connectionFailed: "连接失败",
     heroTitle: "只保存这次发生的变化。",
-    heroLede: "选择一个持久目录，将本机 Codex sessions 按 Git 远程仓库导出为 Markdown。",
+    heroLede: "选择一个持久目录，将本机 Codex sessions 按 Git 远程仓库或本地目录导出为 Markdown。",
     exportDirectory: "导出目录",
     directoryPlaceholder: "例如 /Users/me/Documents/session-archive",
     browse: "浏览",
@@ -65,9 +69,10 @@ const translations = {
     directoryHint: "目录会保存在当前系统的 Session Manager 配置中，下次启动自动恢复。",
     exportSessions: "导出 sessions",
     exportScope: "导出范围",
-    allRepositories: "全部 Git 仓库",
-    currentRepository: "当前 Git 仓库",
+    allRepositories: "全部可用目录",
+    currentRepository: "当前目录",
     includeArchived: "包括已归档的 sessions",
+    includeNonGit: "包括非 Git 目录（全量导出）",
     exportChanges: "导出变化",
     exporting: "正在导出…",
     exportedChanges: "本次导出变化",
@@ -76,6 +81,7 @@ const translations = {
     noChanges: "没有变化，导出目录已经是最新状态。",
     busySessions: "没有导出变化；{count} 个正在写入的 session 已留到下次。",
     filteredSessions: "没有导出变化；已排除 {count} 个内部 session。",
+    filteredNonGit: "没有导出变化；已排除 {count} 个非 Git session。开启全量导出即可包括它们。",
     saving: "保存中…",
     saved: "已保存",
     waitingForDirectory: "等待选择…",
@@ -86,6 +92,7 @@ const translations = {
     badgeNew: "新增",
     badgeUpdated: "更新",
     badgeRenamed: "重命名",
+    badgeFull: "全量",
     attachmentSummary: "附件 {attachments} · 已复制 {archived}",
   },
 };
@@ -258,7 +265,7 @@ function sessionChange(item) {
   title.textContent = item.title;
   const badge = document.createElement("span");
   badge.className = `badge ${item.kind}`;
-  badge.textContent = t({ new: "badgeNew", updated: "badgeUpdated", renamed: "badgeRenamed" }[item.kind] || item.kind);
+  badge.textContent = t({ new: "badgeNew", updated: "badgeUpdated", renamed: "badgeRenamed", full: "badgeFull" }[item.kind] || item.kind);
   heading.append(title, badge);
 
   const path = document.createElement("p");
@@ -282,13 +289,16 @@ function renderChanges(payload) {
   const items = payload.result.changes || [];
   const busy = payload.result.busy || 0;
   const filtered = payload.result.filtered_internal || 0;
+  const filteredNonGit = payload.result.filtered_non_git || 0;
   resultCount.textContent = String(items.length);
   if (items.length === 0) {
-    message.className = busy > 0 || filtered > 0 ? "empty busy" : "empty success";
+    message.className = busy > 0 || filtered > 0 || filteredNonGit > 0 ? "empty busy" : "empty success";
     message.textContent = busy > 0
       ? t("busySessions", { count: busy })
       : filtered > 0
         ? t("filteredSessions", { count: filtered })
+        : filteredNonGit > 0
+          ? t("filteredNonGit", { count: filteredNonGit })
         : t("noChanges");
   } else {
     message.className = "hidden";
@@ -375,6 +385,7 @@ exportButton.addEventListener("click", async () => {
         directory: directory.value,
         scope: document.querySelector("#scope").value,
         include_archived: includeArchived.checked,
+        include_non_git: includeNonGit.checked,
       }),
     });
     resultState = { kind: "payload", value: payload };

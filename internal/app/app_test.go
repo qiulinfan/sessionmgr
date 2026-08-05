@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,6 +131,79 @@ func TestCLIArchivedSessionsRequireIncludeFlag(t *testing.T) {
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &included); err != nil || included.Sources != 1 || included.Created != 1 {
 		t.Fatalf("--include-archived did not export session: %s (%v)", stdout.String(), err)
+	}
+}
+
+func TestCLINonGitDirectoriesRequireIncludeFlagAndRepeatFully(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	localDirectory := filepath.Join(root, "loose-work")
+	if err := os.MkdirAll(localDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(codexHome, "sessions", "2026", "08", "05", "non-git.jsonl")
+	if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf(`{"timestamp":"2026-08-05T01:00:00Z","type":"session_meta","payload":{"id":"non-git-cli","cwd":%q}}
+{"timestamp":"2026-08-05T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"export loose work"}}
+`, localDirectory)
+	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SESSIONMGR_CONFIG", filepath.Join(root, "config.json"))
+	output := filepath.Join(root, "exports")
+
+	var stdout, stderr bytes.Buffer
+	code, err := Run(context.Background(), []string{
+		"export", "--all", "--directory", output, "--codex-home", codexHome, "--json",
+	}, &stdout, &stderr)
+	if err != nil || code != 0 {
+		t.Fatalf("default export failed: code=%d err=%v stderr=%s", code, err, stderr.String())
+	}
+	var excluded struct {
+		FilteredNonGit int `json:"filtered_non_git"`
+		Created        int `json:"created"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &excluded); err != nil || excluded.FilteredNonGit != 1 || excluded.Created != 0 {
+		t.Fatalf("default CLI export included non-Git data: %s (%v)", stdout.String(), err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code, err = Run(context.Background(), []string{
+		"export", "--all", "--include-non-git", "--codex-home", codexHome, "--json",
+	}, &stdout, &stderr)
+	if err != nil || code != 0 {
+		t.Fatalf("included export failed: code=%d err=%v stderr=%s", code, err, stderr.String())
+	}
+	var first struct {
+		Created int `json:"created"`
+		Changes []struct {
+			Kind string `json:"kind"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &first); err != nil || first.Created != 1 || len(first.Changes) != 1 || first.Changes[0].Kind != "new" {
+		t.Fatalf("--include-non-git did not export the session: %s (%v)", stdout.String(), err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code, err = Run(context.Background(), []string{
+		"export", "--all", "--include-non-git", "--codex-home", codexHome, "--json",
+	}, &stdout, &stderr)
+	if err != nil || code != 0 {
+		t.Fatalf("repeat full export failed: code=%d err=%v stderr=%s", code, err, stderr.String())
+	}
+	var repeated struct {
+		FullExported int `json:"full_exported"`
+		Changes      []struct {
+			Kind string `json:"kind"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &repeated); err != nil || repeated.FullExported != 1 ||
+		len(repeated.Changes) != 1 || repeated.Changes[0].Kind != "full" {
+		t.Fatalf("repeat CLI export was not full: %s (%v)", stdout.String(), err)
 	}
 }
 

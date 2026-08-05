@@ -16,7 +16,7 @@ import (
 	"github.com/sessionmgr/sessionmgr/internal/ui"
 )
 
-const version = "0.4.0-dev"
+const version = "0.5.0-dev"
 
 type commandError struct {
 	exitCode int
@@ -113,10 +113,11 @@ func commandCleanupInternal(ctx context.Context, args []string, stdout, stderr i
 
 func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags := newFlagSet("export", stderr)
-	repo := flags.String("repo", ".", "export only sessions for this Git repository")
-	all := flags.Bool("all", false, "export sessions for every hosted Git repository (default)")
+	repo := flags.String("repo", ".", "export only sessions for this Git repository or included local directory")
+	all := flags.Bool("all", false, "export sessions for every eligible directory (hosted Git by default)")
 	sessionID := flags.String("session", "", "export one Codex session ID")
 	includeArchived := flags.Bool("include-archived", false, "also export Codex archived sessions")
+	includeNonGit := flags.Bool("include-non-git", false, "also fully export sessions from directories without a hosted Git remote")
 	source := flags.String("codex-home", "", "Codex state directory (default: CODEX_HOME or ~/.codex)")
 	directory := flags.String("directory", "", "export directory to use and remember")
 	output := flags.String("output", "", "one-time export directory (compatibility alias)")
@@ -158,6 +159,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 		CodexHome: *source, Output: resolvedDirectory, Repo: *repo,
 		AllRepos: !repoWasSet || *all, SessionID: *sessionID,
 		IncludeArchived: *includeArchived,
+		IncludeNonGit:   *includeNonGit,
 		DeviceID:        device.DeviceID, DeviceName: device.DeviceName,
 	})
 	if *jsonOutput {
@@ -405,7 +407,7 @@ Usage:
   sessionmgr gui [--no-open]
   sessionmgr config set-directory PATH
   sessionmgr config show
-  sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived] [--directory PATH]
+  sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived] [--include-non-git] [--directory PATH]
   sessionmgr list [--history]
   sessionmgr cleanup-internal [--directory PATH] [--apply]
   sessionmgr version

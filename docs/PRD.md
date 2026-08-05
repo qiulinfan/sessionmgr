@@ -1,4 +1,4 @@
-# Session Manager v0.4 产品需求
+# Session Manager v0.5 产品需求
 
 ## 1. 产品定义
 
@@ -23,17 +23,21 @@ sessions 转成可读、可由 Git 跟踪历史的文件。
 1. Session Manager 自动恢复已配置目录；
 2. 用户执行导出；
 3. 系统默认扫描本机 active Codex sessions；用户显式开启时同时扫描 archived sessions；
-4. source 与已记录内容没有变化时不显示；
-5. 只显示本次新增、内容更新或名称变化。
+4. 默认只导出 hosted Git sessions；用户显式开启时也包括非 Git/本地-only 目录；
+5. hosted Git source 与已记录内容没有变化时不显示；非 Git目录每轮全量发布并显示；
+6. 只显示本次新增、内容更新、名称变化或非 Git全量发布。
 
 ## 3. 核心模型
 
 ```text
-hosted Git remote key -> set(device ID + native session ID -> current Markdown + attachments)
+hosted Git remote key | device-local directory key
+  -> set(device ID + native session ID -> current Markdown + attachments)
 ```
 
 - repository key 必须在同一 hosted repository 的 SSH/HTTPS clone 间稳定；
 - 不允许用本机路径猜测跨机器仓库身份；
+- 非 Git目录必须先把规范化绝对 CWD 哈希为 directory ID，再由 device ID 与 directory ID
+  生成可重新验证的 key；key 只在该设备稳定，绝对路径不得进入导出文件；
 - session key 是持久 device ID 与 Codex 原生 session ID 的组合 hash；
 - session 名称是可变的人类语义，只用于可见目录名而不承担身份职责；
 - source hash 用于源变化检测，document hash 用于保护生成文件，二者均只进入隐藏 sidecar；
@@ -57,6 +61,8 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 
 - 默认只扫描 Codex `sessions/` JSONL；CLI `--include-archived` 或 GUI 对应选项开启时才把
   `archived_sessions/` 加入 discovery；
+- CLI `--include-non-git` 或 GUI 对应选项未开启时，可识别的非 Git/本地-only目录 session
+  必须安静排除并通过 `filtered_non_git` 计数保持可观察；开启后才进入匹配与发布；
 - 首次导出前已经位于 `archived_sessions/` 的 session 默认不得导出；显式包括 archived
   sessions 时必须按同一 native ID/device identity 处理；
 - session 在成功导出后从 active 移入 `archived_sessions/` 时，默认导出不得因为 source
@@ -78,13 +84,16 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 - hosted remote 去掉 scheme、Git username、HTTP credentials、query、fragment 和结尾
   `.git` 后作为身份输入；
 - host 转小写，path 在 v1 中保留大小写；
-- 空 remote、local path remote、`file://` remote 必须跳过；
+- 空 remote、local path remote、`file://` remote 默认跳过；显式包括非 Git目录时，若 CWD
+  仍是可访问目录，则必须走 device-local directory identity；
 - repository identity 冲突不得覆盖已有文件。
 - 可见 repository 路径直接位于导出根目录，使用
   `<host>-<owner-or-namespace>/<repo>`，不包含 `repositories/` wrapper 或 hash；
 - host 与 Git owner/多级 namespace 必须合并为一个跨平台安全 component，例如
   `github.com-qiulinfan/sessionmgr` 与 `gitlab.com-team-platform/project`；
-- 完整 key 与 canonical remote 必须保存在 `.sessionmgr-repository.json`。
+- hosted repository 的完整 key 与 canonical remote 必须保存在 `.sessionmgr-repository.json`。
+- 非 Git目录可见路径必须是 `non-git-<device-name>/<directory-name>`；repository metadata
+  使用 schema v2 保存 `local_directory` kind、可读目录名与设备 identity，但不得保存绝对 CWD；
 
 ### FR-4 Markdown export
 
@@ -133,6 +142,8 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 - source hash 变化时标记 `updated`；
 - source hash 不变但显示名称变化时标记 `renamed`；
 - source、标题、renderer 与生成内容均相同时必须是 no-op；
+- 上述 no-op 只适用于 hosted Git sessions。选中的非 Git session 每轮必须重新解析、过滤、
+  渲染、验证并发布；第一次标记 `new`，之后标记 `full`；
 - 更新前必须验证当前 `conversation.md` 匹配 sidecar 的 document hash；人工编辑或
   identity/path collision 必须保留原文件并把该 source 作为 skipped 报告；
 - 标题变化时，在所有权验证后重命名语义目录并更新同一个文档；
@@ -151,8 +162,8 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 - GUI 必须由同一二进制提供，不依赖 Node 或平台 WebView SDK；
 - 服务只能监听 loopback；
 - 每次启动必须生成随机 API token；
-- GUI 必须支持保存目录、系统目录选择、导出范围、包括 archived sessions 的显式勾选项和
-  changeset 展示；
+- GUI 必须支持保存目录、系统目录选择、导出范围、包括 archived sessions 与包括非 Git目录
+  的独立显式勾选项，以及 changeset 展示；非 Git选项必须明确说明全量导出；
 - changeset 必须按 repository/device 目录分组，并可逐层展开或收起，不得只显示无分组的
   session 卡片列表；
 - GUI 默认使用接近 GitHub Dark 的黑灰背景、surface、边框和状态色，不得回退为白底；
@@ -168,6 +179,7 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 - `archive` 作为 `export` 兼容别名；
 - `export --include-archived` 必须显式包括 Codex `archived_sessions/`，未传时只处理 active
   sessions；
+- `export --include-non-git` 必须显式包括没有 hosted remote 的可访问 CWD；未传时不得发布；
 - partial export 必须保留成功 changeset，同时以非零退出码和 warning 报告跳过项。
 
 ### FR-8 三系统分发
@@ -193,8 +205,8 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
 1. GUI 保存目录后重载仍显示该目录。
 2. CLI 配置目录后，后续 `export` 无需再次传路径。
 3. 同一 GitHub 仓库的 SSH/HTTPS sessions 进入同一 repository set。
-4. 没有 hosted remote 的 session 被明确跳过。
-5. 首次导出显示 `new`，重复导出只显示 no-change。
+4. 没有 hosted remote 的 session 默认被排除且不导致失败；显式包括非 Git目录后才导出。
+5. hosted Git session 首次导出显示 `new`，重复导出只显示 no-change。
 6. JSONL 追加后显示 `updated`。
 7. 只重命名 session 后显示 `renamed`。
 8. 同一 device/session 重复导出只保留一个 `conversation.md`；内容更新原地更新该文件。
@@ -232,3 +244,10 @@ hosted Git remote key -> set(device ID + native session ID -> current Markdown +
     MCP 启动错误不创建文档，用户主动提交同样文字时仍保留。
 33. `cleanup-internal` dry-run 不改变任何文件；`--apply` 只清除完全验证的当前设备派生
     文档，人工编辑或额外文件会阻止清理，raw Codex JSONL 保持逐字节不变。
+34. CLI `--include-non-git` 与 GUI 对应复选框都能导出真实存在、没有 hosted remote 的 CWD。
+35. 非 Git目录第一次导出显示 `new`，重复执行显示 `full`，并继续拒绝覆盖人工修改。
+36. 非 Git session 使用 `non-git-<device>/<directory>` 可见布局；绝对 CWD 不出现在 Markdown
+    或 repository/session sidecar 中。
+37. 非 Git Guardian、spawned subagent、runtime context 与敏感内容仍经过和 hosted Git
+    session 完全相同的过滤、脱敏与附件策略。
+38. 非 Git source 后来消失时，既有全量归档仍保留，不推导删除或 tombstone。

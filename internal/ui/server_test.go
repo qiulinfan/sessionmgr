@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -134,6 +135,63 @@ func TestGUIArchivedSessionsRequireExplicitInclusion(t *testing.T) {
 	}
 }
 
+func TestGUINonGitDirectoriesRequireExplicitFullExport(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	localDirectory := filepath.Join(root, "loose-work")
+	if err := os.MkdirAll(localDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(codexHome, "sessions", "2026", "08", "05", "non-git.jsonl")
+	if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf(`{"timestamp":"2026-08-05T01:00:00Z","type":"session_meta","payload":{"id":"non-git-gui","cwd":%q}}
+{"timestamp":"2026-08-05T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"export loose GUI work"}}
+`, localDirectory)
+	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := config.Store{Path: filepath.Join(root, "config.json")}
+	if _, err := store.SetExportDirectory(filepath.Join(root, "exports")); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler("test-token", store, codexHome, localDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defaultRequest := authenticatedRequest(http.MethodPost, "/api/export", map[string]interface{}{"scope": "all"})
+	defaultResult := httptest.NewRecorder()
+	handler.ServeHTTP(defaultResult, defaultRequest)
+	defaultResponse := decodeExportResponse(t, defaultResult)
+	if defaultResponse.Error != "" || defaultResponse.Result.FilteredNonGit != 1 || defaultResponse.Result.Created != 0 {
+		t.Fatalf("default GUI export included non-Git data: %+v", defaultResponse)
+	}
+
+	includedRequest := authenticatedRequest(http.MethodPost, "/api/export", map[string]interface{}{
+		"scope": "current", "include_non_git": true,
+	})
+	includedResult := httptest.NewRecorder()
+	handler.ServeHTTP(includedResult, includedRequest)
+	includedResponse := decodeExportResponse(t, includedResult)
+	if includedResponse.Error != "" || includedResponse.Result.Created != 1 || len(includedResponse.Result.Changes) != 1 ||
+		includedResponse.Result.Changes[0].Kind != "new" {
+		t.Fatalf("explicit GUI non-Git export failed: %+v", includedResponse)
+	}
+
+	repeatRequest := authenticatedRequest(http.MethodPost, "/api/export", map[string]interface{}{
+		"scope": "current", "include_non_git": true,
+	})
+	repeatResult := httptest.NewRecorder()
+	handler.ServeHTTP(repeatResult, repeatRequest)
+	repeatResponse := decodeExportResponse(t, repeatResult)
+	if repeatResponse.Error != "" || repeatResponse.Result.FullExported != 1 || len(repeatResponse.Result.Changes) != 1 ||
+		repeatResponse.Result.Changes[0].Kind != "full" {
+		t.Fatalf("repeat GUI non-Git export was not full: %+v", repeatResponse)
+	}
+}
+
 func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	handler, err := NewHandler("token", config.Store{Path: filepath.Join(t.TempDir(), "config.json")}, "", ".")
 	if err != nil {
@@ -158,6 +216,9 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	if !bytes.Contains(page, []byte(`id="include-archived"`)) || !bytes.Contains(page, []byte("Include archived sessions")) {
 		t.Fatal("GUI archived-session option is missing")
 	}
+	if !bytes.Contains(page, []byte(`id="include-non-git"`)) || !bytes.Contains(page, []byte("Include non-Git directories")) {
+		t.Fatal("GUI non-Git full-export option is missing")
+	}
 
 	scriptRequest := httptest.NewRequest(http.MethodGet, "/app.js", nil)
 	scriptResult := httptest.NewRecorder()
@@ -168,7 +229,8 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	script := scriptResult.Body.Bytes()
 	if !bytes.Contains(script, []byte("function groupChanges")) || !bytes.Contains(script, []byte("repository-tree")) ||
 		!bytes.Contains(script, []byte("sessionmgr-language")) || !bytes.Contains(script, []byte("filtered_internal")) ||
-		!bytes.Contains(script, []byte("include_archived")) {
+		!bytes.Contains(script, []byte("include_archived")) || !bytes.Contains(script, []byte("include_non_git")) ||
+		!bytes.Contains(script, []byte("filtered_non_git")) || !bytes.Contains(script, []byte("badgeFull")) {
 		t.Fatal("GUI script is missing grouped directory changes or persistent language selection")
 	}
 

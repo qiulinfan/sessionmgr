@@ -38,6 +38,7 @@ type exportRequest struct {
 	Directory       string `json:"directory"`
 	Scope           string `json:"scope"`
 	IncludeArchived bool   `json:"include_archived"`
+	IncludeNonGit   bool   `json:"include_non_git"`
 }
 
 type exportResponse struct {
@@ -178,6 +179,7 @@ func NewHandler(token string, store config.Store, codexHome, repo string) (http.
 		result, exportErr := archive.Export(request.Context(), archive.Options{
 			CodexHome: codexHome, Output: directory, Repo: repo, AllRepos: allRepos,
 			IncludeArchived: body.IncludeArchived,
+			IncludeNonGit:   body.IncludeNonGit,
 			DeviceID:        device.DeviceID, DeviceName: device.DeviceName,
 		})
 		response := exportResponse{Result: result}

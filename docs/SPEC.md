@@ -1,4 +1,4 @@
-# Session Manager v0.4 技术规格
+# Session Manager v0.5 技术规格
 
 ## 1. 进程与命令面
 
@@ -8,6 +8,7 @@ sessionmgr gui [--listen 127.0.0.1:0] [--no-open]
 sessionmgr config set-directory [--json] PATH
 sessionmgr config show [--json]
 sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived]
+                  [--include-non-git]
                   [--directory PATH] [--codex-home PATH] [--json]
 sessionmgr list [--directory PATH] [--history] [--json]
 sessionmgr cleanup-internal [--directory PATH] [--codex-home PATH]
@@ -19,7 +20,8 @@ sessionmgr version
 新调用应使用会保存目录的 `--directory`。
 
 默认 source 为 `$CODEX_HOME`，未设置时是 `~/.codex`。`export` 默认处理全部 hosted
-Git repositories；显式 `--repo` 时只处理该仓库。
+Git repositories；显式 `--repo` 时只处理该仓库。`--include-non-git` 开启后，all scope
+也包括无法映射到 hosted remote 的可访问 CWD，显式 `--repo PATH` 也可直接指向这种目录。
 
 普通 discovery 只扫描 `sessions/`。`--include-archived` 或 GUI request 的
 `include_archived: true` 才把 `archived_sessions/` 加入同一次并集扫描。active/archived 是
@@ -27,6 +29,9 @@ Codex 的生命周期位置，不参与 Session Manager identity；显式包括�
 移动目录后仍映射到同一个 device/session key。未在本轮 discovery 中出现的旧 archive
 entry 不会生成 tombstone，也不会进入任何删除队列，因此已导出的 session 后来被归档或
 删除 raw source 时，其派生文件保持不变。
+
+非 Git目录默认通过 `filtered_non_git` 计数排除。`--include-non-git` 或 GUI request 的
+`include_non_git: true` 才进入本机目录匹配。该选项不持久化，且不隐含 archived inclusion。
 
 ## 2. 持久配置 v1
 
@@ -80,8 +85,25 @@ sha256("git-remote-v1\0" + canonical_remote)
 ```
 
 host 转小写；path 保留大小写；协议、userinfo、query、fragment 和 `.git` 不参与。
-local/file/empty remote 不生成 key。若 session metadata 没有 remote，转换器只允许从
-其仍可访问的 CWD 查询 hosted `remote.origin.url`；仍没有则跳过。
+local/file/empty remote 不生成 hosted key。若 session metadata 没有 remote，转换器只允许从
+其仍可访问的 CWD 查询 hosted `remote.origin.url`；仍没有则默认排除，显式 opt-in 时改用
+下述 local directory key。
+
+### 3.1 Local directory key v1
+
+显式包括非 Git目录后，仍可访问但无法解析 hosted remote 的 CWD 使用：
+
+```text
+canonical_directory = Abs + EvalSymlinks(best effort) + Clean(CWD)
+directory_id = sha256("local-directory-path-v1\0" + canonical_directory)
+directory_key = sha256("local-directory-v1\0" + device_id + "\0" + directory_id)
+```
+
+该 key 只在当前 device identity 下稳定，不声称跨设备表示同一个目录。绝对 CWD 只作为
+hash 输入，绝不写入 Markdown、repository sidecar、session sidecar 或 CLI/GUI changeset。
+可见 repository name 为 `non-git:<directory-name>`，可见路径为
+`non-git-<device-name>/<directory-name>`。目录名或设备名规范化碰撞由 hidden identity
+检测并拒绝，不增加可见 hash 后缀。
 
 ## 4. Identity and change hashes / layout v5 / renderer v6
 
@@ -107,6 +129,13 @@ document_hash = sha256(rendered_conversation_md_bytes)
     ├── conversation.md
     └── attachments/                  # only when archived bytes exist
         └── <sequence>-<readable-name>
+
+<export-directory>/non-git-<device-name>/<directory-name>/
+├── .sessionmgr-repository.json
+└── <device-name>/<created-time>--<session-title>/
+    ├── .sessionmgr-session.json
+    ├── conversation.md
+    └── attachments/
 ```
 
 可见路径只承担语义：导出根目录下不存在 `repositories/` wrapper，repository 与 device
@@ -117,8 +146,15 @@ namespace、设备名、UTC 创建时间和最新标题经过跨平台安全的 
 每段最多 80 UTF-8 bytes。它不通过附加 hash 解决碰撞；若两个身份
 规范化到同一路径，hidden metadata 必须发现 collision 并拒绝第二次写入。
 
-`.sessionmgr-repository.json` 包含 `schema_version`、`layout_version`、`repository_key`、
-`repository_name` 与 `canonical_remote`。
+hosted `.sessionmgr-repository.json` 包含 `schema_version`、`layout_version`、
+`repository_key`、`repository_name` 与 `canonical_remote`。
+
+hosted repository metadata 继续使用 schema v1。local-directory repository metadata 使用
+schema v2：`canonical_remote` 为空，增加 `repository_kind=local_directory`、
+`directory_name`、不可逆的 `directory_id`、`device_id` 与 `device_name`。schema v2 不保存
+canonical/absolute CWD；reader 必须由 device ID 和 directory ID 重新计算 repository key，并
+严格验证 kind、设备字段和 semantic path。session metadata、layout v5、renderer v6 与
+attachment schema v1 不变。
 
 `.sessionmgr-session.json` 包含 `schema_version`、`layout_version`、`renderer_version`、
 repository identity、device ID/name、native session ID、session key、当前标题、source hash、
@@ -252,13 +288,23 @@ otherwise                                          -> updated
 
 内容、标题、renderer 与 metadata 均相同时返回 unchanged，不进入 changeset。human CLI
 不显示 hash 列；GUI 只显示 semantic path。扫描、matched、unchanged、busy、
-`filtered_internal` 和 skipped 计数仍保留在 JSON result 供自动化诊断。
+`filtered_internal`、`filtered_non_git` 和 skipped 计数仍保留在 JSON result 供自动化诊断。
+
+export result JSON 在 v0.5 使用 schema v2，增加 `filtered_non_git` 与 `full_exported`，并允许
+change kind `full`。hosted Git session 保持上述增量规则。local-directory session 不使用
+unchanged 快路：每次 opt-in export 都重新执行 canonical message selection、屏蔽、附件处理、
+render、document/attachment ownership 验证和 sidecar-last 发布。第一次没有 current entry 时
+仍标记 `new`；已有 current entry 时标记 `full` 并增加 `full_exported`。即使 bytes 相同也要
+重新发布 owned document/sidecar，但不得加入 export timestamp 或其他制造 Git 内容差异的字段。
 
 changeset 只由本轮发现并成功解析的 source 驱动。archive reader 在导出开始时读取的既有
 entry 不会因为本轮没有对应 source 而被修改或删除；`List` 继续从隐藏 sidecar 派生该
 entry。普通 export 不实现 mirror reconciliation、tombstone 或 prune。唯一的目录删除是
 已验证 layout migration 后对确认空的旧 `sessions/`/device wrapper 调用非递归
 `os.Remove`，它不能删除 session 文档或任何非空目录。未来如需清理必须设计独立显式命令。
+
+local-directory 的“全量”同样只由本轮已发现 source 驱动，不是 mirror/prune。未发现的旧
+local-directory entry 保持不变，不生成 tombstone，也不授权删除附件或 session directory。
 
 ### 8.1 Explicit internal cleanup
 
@@ -334,15 +380,16 @@ API：
 - `GET /api/state`：当前持久目录；
 - `PUT /api/config`：验证并保存目录；
 - `POST /api/pick-directory`：调用平台目录对话框；
-- `POST /api/export`：接受 `directory`、all/current `scope` 与布尔值 `include_archived`，执行
-  对应范围并返回当前 changeset。
+- `POST /api/export`：接受 `directory`、all/current `scope`、布尔值 `include_archived` 与
+  `include_non_git`，执行对应范围并返回当前 changeset。两个 include 选项彼此独立且默认 false。
 
 前端首次加载使用 English；用户可切换 English/中文，选择只保存在浏览器本地，不改变
 跨机器 config schema。静态文案以及连接、保存、导出、busy/no-change、计数、change badge
 与附件摘要等动态状态共享同一语言字典。changeset 在客户端按 `repository_key` 和
 `device_name` 分成两级原生 `<details>` 目录树；repository/device summary 可独立展开，
-session 变化作为对应 device 的叶节点显示。后端 JSON changeset 保持扁平，避免为显示结构
-改变 CLI/API contract。
+session 变化作为对应 device 的叶节点显示。非 Git复选框必须明确标注 full export，`full`
+change 使用独立双语 badge。后端 JSON changeset 保持扁平，避免为显示结构改变 CLI/API
+contract。
 
 默认视觉使用 GitHub Dark 风格的固定暗色 palette：页面 `#0d1117`、surface `#161b22`、
 raised surface `#21262d`、border `#30363d`、正文 `#f0f6fc`，操作强调色使用 GitHub green。
@@ -371,6 +418,13 @@ SQLite、encryption 或 GUI 状态。旧 `~/.sessionmgr` 保持原样。
 archived discovery 的默认值从“总是包括”改为“显式 opt-in”。这不改变任何持久 schema、
 identity 或现有归档 bytes；已存在但本轮未扫描到的 entry 继续保留。自动化若依赖旧行为，
 必须增加 `--include-archived` 或在 GUI API request 中发送 `include_archived: true`。
+
+v0.5 的 non-Git inclusion 同样默认关闭且按 operation opt-in。现有 hosted repository sidecar、
+session schema、layout、renderer、附件和配置 bytes 不迁移。只有首次发布 local-directory
+repository 时创建 repository metadata schema v2；v0.5 reader 同时支持 hosted schema v1 与
+local schema v2。v0.4 binary 遇到 local schema v2 会 fail closed，但仍可读取未混入 local
+directory sidecar 的旧 hosted archive。export JSON 从 schema v1 升为 v2，新增两个计数和
+`full` change kind；调用方必须在升级后接受该 schema 才能使用 v0.5 automation。
 
 layout v4 只改变 repository 可见路径；layout v5 进一步移除 repository 与 device 之间的
 `sessions/` wrapper。schema v1、repository key、session key 与 attachment schema v1

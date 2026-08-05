@@ -98,6 +98,31 @@ func TestRepositoryRequiresHostedRemote(t *testing.T) {
 	}
 }
 
+func TestLocalDirectoryRepositoryIdentityIsDeviceScoped(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "Loose Notes")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	first, err := localDirectoryRepositoryFromPath(directory, "device:one", "Workstation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := localDirectoryRepositoryFromPath(directory, "device:one", "Workstation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherDevice, err := localDirectoryRepositoryFromPath(directory, "device:two", "Laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Key != repeated.Key || first.Key == otherDevice.Key || first.Kind != repositoryKindLocalDirectory {
+		t.Fatalf("unexpected local identities: first=%+v repeated=%+v other=%+v", first, repeated, otherDevice)
+	}
+	if got := semanticRepositoryDirectory(first); got != filepath.Join("non-git-workstation", "loose-notes") {
+		t.Fatalf("unexpected local semantic path %q", got)
+	}
+}
+
 func gitForTest(t *testing.T, directory string, args ...string) {
 	t.Helper()
 	command := exec.Command("git", args...)

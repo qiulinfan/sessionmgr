@@ -1,12 +1,13 @@
 # sessionmgr
 
-`sessionmgr` 把本机 Codex sessions 导出成可以由 Git 管理的 Markdown 文件。
+`sessionmgr` 把本机 Codex sessions 导出成可以由 Git 管理的 Markdown 文件。默认按 hosted
+Git remote 组织；v0.5 也可以显式包括没有 hosted remote 的本地目录。
 
 它的核心工作流有四部分：
 
 1. 记住一个用户指定的导出目录；
-2. 按规范化后的 Git 远程仓库组织 sessions；
-3. 每次只显示这次真正导出的变化；
+2. 按规范化后的 Git 远程仓库组织 sessions，并可选择包括非 Git/本地-only 目录；
+3. Git 仓库只显示增量变化，非 Git目录每次显式执行全量导出；
 4. 通过默认 dry-run 的显式命令，安全清理由旧 renderer 误导出的内部 session 副本。
 
 Codex home 对 Session Manager 始终是只读源：程序只扫描和读取原始 JSONL，不会写入、
@@ -26,8 +27,8 @@ sessionmgr gui
 程序会在随机 loopback 端口启动本地页面并打开默认浏览器。GUI 可以：
 
 - 选择、保存并恢复导出目录；
-- 导出全部 Git 仓库或当前 Git 仓库的 active sessions，并可勾选包括 Codex 已归档的
-  sessions；
+- 导出全部目录或当前目录的 active sessions，并可分别勾选包括 Codex 已归档的 sessions
+  与非 Git目录；非 Git选项明确标记为全量导出；
 - 按 repository 与设备目录折叠展示本次新增、更新或重命名的 Markdown 文档，并标出
   该变化中的附件/复制数；
 - 使用接近 GitHub Dark 的黑色界面，表单、状态和目录树保持统一暗色层级；
@@ -68,14 +69,26 @@ sessionmgr export --session <codex-session-id>
 sessionmgr export --include-archived
 ```
 
+默认也不会导出无法映射到 hosted Git remote 的 session。需要把非 Git目录或只有本地 Git
+历史、没有 hosted origin 的目录一并全量导出时运行：
+
+```bash
+sessionmgr export --include-non-git
+sessionmgr export --repo /path/to/non-git-directory --include-non-git
+```
+
+非 Git目录每次都会重新解析、过滤、渲染并安全发布全部匹配 session。第一次显示 `NEW`，
+之后显示 `FULL`；所有权/hash 校验仍会阻止覆盖人工修改或冲突文件。未再次发现的旧归档也
+不会被删除。
+
 临时指定并持久保存一个新目录：
 
 ```bash
 sessionmgr export --directory /new/archive/path
 ```
 
-CLI 的人类输出只包含本次 changeset：`NEW`、`UPDATED`、`RENAMED`。重复执行且没有
-变化时只输出：
+CLI 的人类输出只包含本次 changeset：`NEW`、`UPDATED`、`RENAMED`，以及非 Git目录的
+`FULL`。只有 hosted Git sessions 且重复执行没有变化时输出：
 
 ```text
 No changes.
@@ -123,6 +136,16 @@ sessionmgr cleanup-internal --directory /path/to/session-archive --apply
                 ├── conversation.md
                 └── attachments/
                     └── 001-<readable-file-name>
+
+<configured-directory>/
+└── non-git-<device-name>/
+    └── <directory-name>/
+        ├── .sessionmgr-repository.json
+        └── <device-name>/
+            └── <created-time>--<session-title>/
+                ├── .sessionmgr-session.json
+                ├── conversation.md
+                └── attachments/
 ```
 
 - repository key 来自去掉协议和凭据后的 hosted Git remote；同一仓库的 SSH 与
@@ -131,7 +154,10 @@ sessionmgr cleanup-internal --directory /path/to/session-archive --apply
   wrapper，host 与用户/多级 namespace 合并为一层，例如
   `github.com-qiulinfan/sessionmgr`。
 - repository 后直接是 `<device-name>`；当前布局不再创建多余的 `sessions/` wrapper。
-- 没有 hosted remote 的 session 不会被猜测归类，而是明确跳过并给出 warning。
+- 没有 hosted remote 的 session 默认不导出；`--include-non-git` 或 GUI 对应选项开启后，
+  按其稳定 CWD 与当前 device ID 组成的本机目录身份全量导出。
+- 非 Git身份的绝对路径只参与本机 hash 计算，不进入 Markdown 或隐藏 sidecar。可见路径用
+  `non-git-<device-name>/<directory-name>`；同名规范化碰撞仍拒绝覆盖。
 - 每台机器首次导出时在本地配置中生成持久 device ID；session key 由 device ID 与
   Codex 原生 session ID 共同生成。
 - hash 不出现在可见目录或 Markdown 文件名中。repository/session identity、source hash
@@ -147,7 +173,8 @@ sessionmgr cleanup-internal --directory /path/to/session-archive --apply
 - 仅当附件 bytes 能证明等于 session 记录 commit 中的 tracked Git blob 时才不重复复制。
   普通消息里的路径、tool payload 和 agent 自行读取的文件不会被猜测为附件；
   HTTP(S) 引用也不会被自动下载。
-- 重复导出相同内容是 no-op；不同机器按可读设备目录产生文件，可由普通 Git 合并。
+- hosted Git session 重复导出相同内容是 no-op；选中的非 Git session 每次显示 `FULL`。
+  不同机器仍按可读设备目录产生文件，可由普通 Git 合并。
 - 更新前会校验 document hash；手工改过的 Markdown 或语义目录 identity collision 不会
   被覆盖，而会作为 skipped 项提示。
 
@@ -168,6 +195,9 @@ layout-v3 的 `repositories/<host>/<owner>/<repo>` 与 layout-v4 的
 时，同一原生 session 仍映射到原来的 device/session identity，并可安全更新。Session
 Manager 是追加/更新式归档器，不把 Codex 当前目录镜像成需要删除同步的 catalog；内部污染
 记录只能由 dry-run-first `cleanup-internal` 显式删除，其他历史归档不会被普通导出清理。
+
+非 Git全量导出只改变“匹配 source 每轮都重新发布并显示”的策略，不授予删除权限，也不改变
+上述 archived/source-missing retention 规则。
 
 每个 Markdown 文档包含明确的时间轴：创建时间、第一条和最后一条可读消息时间、最后
 一条源事件时间、标题更新时间，以及用户/助手消息数量。正文保持源文件顺序，并在每条
@@ -244,4 +274,4 @@ make dist
 ```
 
 产品契约见 [PRD](./docs/PRD.md)，格式与算法见 [SPEC](./docs/SPEC.md)，工程证据见
-[v0.4 devlog](./docs/devlogs/v0.4.0-dev.md)。
+[v0.5 devlog](./docs/devlogs/v0.5.0-dev.md)。

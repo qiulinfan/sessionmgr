@@ -12,7 +12,7 @@
         <div>
           <p class="eyebrow">CODEX SESSION ARCHIVE</p>
           <h1 data-i18n="heroTitle">Keep only what changed.</h1>
-          <p class="lede" data-i18n="heroLede">Choose a persistent directory and export local Codex sessions as Markdown, grouped by Git remote.</p>
+          <p class="lede" data-i18n="heroLede">Choose a persistent directory and export local Codex sessions as Markdown, grouped by Git remote or local directory.</p>
         </div>
         <div class="hero-tools">
           <label class="language-picker">
@@ -49,13 +49,17 @@
             <h2 data-i18n="exportSessions">Export sessions</h2>
           </div>
           <select id="scope" data-i18n-aria-label="exportScope" aria-label="Export scope">
-            <option value="all" data-i18n="allRepositories">All Git repositories</option>
-            <option value="current" data-i18n="currentRepository">Current Git repository</option>
+            <option value="all" data-i18n="allRepositories">All eligible directories</option>
+            <option value="current" data-i18n="currentRepository">Current directory</option>
           </select>
         </div>
         <label class="archive-option">
           <input id="include-archived" type="checkbox" />
           <span data-i18n="includeArchived">Include archived sessions</span>
+        </label>
+        <label class="archive-option">
+          <input id="include-non-git" type="checkbox" />
+          <span data-i18n="includeNonGit">Include non-Git directories (full export)</span>
         </label>
         <button id="export" class="button primary" type="button" data-i18n="exportChanges">Export changes</button>
       </section>

@@ -239,6 +239,111 @@ func TestArchivedSessionRequiresExplicitInclusionBeforeFirstExport(t *testing.T)
 	}
 }
 
+func TestNonGitDirectoryRequiresOptInAndIsFullyRepublished(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	localDirectory := filepath.Join(root, "scratch notes")
+	if err := os.MkdirAll(localDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSessionFixtureWithCWD(t, codexHome, "local-session", localDirectory, "", "local answer")
+	internalPath := filepath.Join(codexHome, "sessions", "2026", "08", "05", "rollout-local-internal.jsonl")
+	internal := attachmentSessionJSONL(t, "local-internal", []map[string]any{
+		{"timestamp": "2026-08-05T01:00:00Z", "type": "session_meta", "payload": map[string]any{
+			"id": "local-internal", "cwd": localDirectory, "thread_source": "subagent",
+			"source": map[string]any{"subagent": map[string]any{"thread_spawn": map[string]any{}}},
+		}},
+		{"timestamp": "2026-08-05T01:00:01Z", "type": "event_msg", "payload": map[string]any{
+			"type": "user_message", "message": "inherited parent request",
+		}},
+	})
+	if err := os.WriteFile(internalPath, internal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := testExportOptions(codexHome, output)
+	excluded, err := Export(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if excluded.FilteredNonGit != 1 || excluded.FilteredInternal != 1 || excluded.Matched != 0 ||
+		excluded.Created != 0 || len(excluded.Changes) != 0 {
+		t.Fatalf("default export did not quietly exclude the non-Git directory: %+v", excluded)
+	}
+
+	opts.IncludeNonGit = true
+	first, err := Export(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Created != 1 || first.FullExported != 0 || len(first.Changes) != 1 || first.Changes[0].Kind != "new" {
+		t.Fatalf("first non-Git export was not new: %+v", first)
+	}
+	if first.SchemaVersion != ExportResultSchemaVersion {
+		t.Fatalf("non-Git export used result schema %d, want %d", first.SchemaVersion, ExportResultSchemaVersion)
+	}
+	wantRepositoryDir := filepath.Join(output, "non-git-test-device", "scratch-notes")
+	if !strings.HasPrefix(first.Changes[0].Path, wantRepositoryDir+string(filepath.Separator)) {
+		t.Fatalf("non-Git export used an unexpected path: %s", first.Changes[0].Path)
+	}
+	metadataPath := filepath.Join(wantRepositoryDir, repositoryMetadataName)
+	privatePrefix := []byte(filepath.Dir(localDirectory))
+	for _, path := range []string{
+		metadataPath,
+		first.Changes[0].Path,
+		filepath.Join(filepath.Dir(first.Changes[0].Path), sessionMetadataName),
+	} {
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if bytes.Contains(data, privatePrefix) {
+			t.Fatalf("exported file %s exposed the absolute local path: %s", path, data)
+		}
+	}
+	var metadata repositoryMetadata
+	if err := readMetadata(metadataPath, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.SchemaVersion != LocalRepositorySchema || metadata.RepositoryKind != repositoryKindLocalDirectory ||
+		metadata.DeviceID != opts.DeviceID || metadata.DirectoryName != filepath.Base(localDirectory) ||
+		!validSHA256(metadata.DirectoryID) {
+		t.Fatalf("non-Git repository metadata is incomplete: %+v", metadata)
+	}
+	tampered := metadata
+	tampered.DeviceID = "device:other"
+	if err := validateRepositoryMetadata(tampered); err == nil {
+		t.Fatal("local repository key remained valid after device identity tampering")
+	}
+	tampered = metadata
+	tampered.LayoutVersion = 4
+	if err := validateRepositoryMetadata(tampered); err == nil {
+		t.Fatal("local repository metadata accepted a legacy layout")
+	}
+
+	repeated, err := Export(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated.Created != 1 || repeated.FullExported != 1 || repeated.Unchanged != 0 ||
+		len(repeated.Changes) != 1 || repeated.Changes[0].Kind != "full" {
+		t.Fatalf("repeat non-Git export was not full: %+v", repeated)
+	}
+
+	documentPath := repeated.Changes[0].Path
+	if err := os.WriteFile(documentPath, []byte("manual edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refused, err := Export(context.Background(), opts)
+	if err == nil || refused.Skipped != 1 || len(refused.Changes) != 0 {
+		t.Fatalf("full export overwrote or accepted a manual edit: %+v, %v", refused, err)
+	}
+	if data, readErr := os.ReadFile(documentPath); readErr != nil || string(data) != "manual edit\n" {
+		t.Fatalf("manual edit was not preserved: %q, %v", data, readErr)
+	}
+}
+
 func TestExportRefusesToOverwriteManuallyEditedDocument(t *testing.T) {
 	root := t.TempDir()
 	codexHome := filepath.Join(root, "codex")
@@ -990,6 +1095,10 @@ func testExportOptions(codexHome, output string) Options {
 }
 
 func writeSessionFixture(t *testing.T, home, id, remote, answer string) {
+	writeSessionFixtureWithCWD(t, home, id, "/missing/on/this/machine", remote, answer)
+}
+
+func writeSessionFixtureWithCWD(t *testing.T, home, id, cwd, remote, answer string) {
 	t.Helper()
 	directory := filepath.Join(home, "sessions", "2026", "08", "05")
 	if err := os.MkdirAll(directory, 0o700); err != nil {
@@ -997,7 +1106,7 @@ func writeSessionFixture(t *testing.T, home, id, remote, answer string) {
 	}
 	records := []map[string]interface{}{
 		{"timestamp": "2026-08-05T01:00:00Z", "type": "session_meta", "payload": map[string]interface{}{
-			"id": id, "cwd": "/missing/on/this/machine", "cli_version": "1.2.3",
+			"id": id, "cwd": cwd, "cli_version": "1.2.3",
 			"git": map[string]interface{}{"repository_url": remote, "commit_hash": "abc123", "branch": "main"},
 		}},
 		{"timestamp": "2026-08-05T01:00:01Z", "type": "response_item", "payload": map[string]interface{}{

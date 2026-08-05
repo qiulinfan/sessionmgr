@@ -160,6 +160,7 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 .badge.new { color: var(--green); background: var(--green-soft); }
 .badge.updated { color: #79c0ff; background: rgba(31, 111, 235, .18); }
 .badge.renamed { color: #e3b341; background: rgba(187, 128, 9, .18); }
+.badge.full { color: #d2a8ff; background: rgba(137, 87, 229, .20); }
 
 @media (max-width: 680px) {
   .shell { width: min(calc(100% - 24px), 960px); padding-top: 38px; }

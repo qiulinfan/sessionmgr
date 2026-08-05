@@ -3,10 +3,12 @@ package archive
 import "time"
 
 const (
-	SchemaVersion      = 1
-	LayoutVersion      = 5
-	RendererVersion    = 6
-	MaxAttachmentBytes = int64(50 * 1024 * 1024)
+	SchemaVersion             = 1
+	ExportResultSchemaVersion = 2
+	LocalRepositorySchema     = 2
+	LayoutVersion             = 5
+	RendererVersion           = 6
+	MaxAttachmentBytes        = int64(50 * 1024 * 1024)
 )
 
 type Options struct {
@@ -20,8 +22,13 @@ type Options struct {
 	// exports inspect only active sessions/ so users can archive a conversation
 	// before its first export to leave it out of the archive.
 	IncludeArchived bool
-	DeviceID        string
-	DeviceName      string
+
+	// IncludeNonGit adds sessions whose CWD cannot be assigned to a hosted Git
+	// remote. Those directories use a device-local identity and are fully
+	// republished on every selected export rather than treated incrementally.
+	IncludeNonGit bool
+	DeviceID      string
+	DeviceName    string
 
 	// StabilityWindow is the shared quiet period used before reading discovered
 	// session files. Zero selects the production default; a negative value
@@ -37,6 +44,8 @@ type Result struct {
 	Unchanged           int      `json:"unchanged"`
 	Busy                int      `json:"busy"`
 	FilteredInternal    int      `json:"filtered_internal"`
+	FilteredNonGit      int      `json:"filtered_non_git"`
+	FullExported        int      `json:"full_exported"`
 	Skipped             int      `json:"skipped"`
 	Attachments         int      `json:"attachments"`
 	ArchivedAttachments int      `json:"archived_attachments"`
@@ -99,6 +108,11 @@ type Repository struct {
 	Key             string
 	Name            string
 	CanonicalRemote string
+	Kind            string
+	DirectoryName   string
+	DirectoryID     string
+	DeviceID        string
+	DeviceName      string
 }
 
 type Message struct {

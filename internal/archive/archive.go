@@ -13,7 +13,7 @@ import (
 )
 
 func Export(ctx context.Context, opts Options) (Result, error) {
-	result := Result{SchemaVersion: SchemaVersion, Changes: []Change{}}
+	result := Result{SchemaVersion: ExportResultSchemaVersion, Changes: []Change{}}
 	if opts.CodexHome == "" {
 		var err error
 		opts.CodexHome, err = DefaultCodexHome()
@@ -59,6 +59,9 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			opts.Repo = "."
 		}
 		target, err = RepositoryFromPath(ctx, opts.Repo)
+		if err != nil && opts.IncludeNonGit {
+			target, err = localDirectoryRepositoryFromPath(opts.Repo, opts.DeviceID, opts.DeviceName)
+		}
 		if err != nil {
 			return result, err
 		}
@@ -120,11 +123,22 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		}
 		repo, repoErr := repositoryForSession(ctx, session)
 		if repoErr != nil {
-			if opts.AllRepos || opts.SessionID != "" {
-				result.Skipped++
-				result.Warnings = append(result.Warnings, fmt.Sprintf("session %s: %v", session.ID, repoErr))
+			localRepo, localErr := localDirectoryRepositoryFromPath(session.CWD, opts.DeviceID, opts.DeviceName)
+			if localErr == nil {
+				if !opts.IncludeNonGit {
+					result.FilteredNonGit++
+					continue
+				}
+				repo = localRepo
+				repoErr = nil
 			}
-			continue
+			if repoErr != nil && (opts.AllRepos || opts.SessionID != "") {
+				result.Skipped++
+				result.Warnings = append(result.Warnings, fmt.Sprintf("session %s: %v; local-directory fallback: %v", session.ID, repoErr, localErr))
+			}
+			if repoErr != nil {
+				continue
+			}
 		}
 		if !opts.AllRepos && repo.Key != target.Key {
 			continue
@@ -144,6 +158,9 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		result.ArchivedAttachments += archivedFiles
 		if created {
 			result.Created++
+			if repo.Kind == repositoryKindLocalDirectory && len(history[key]) > 0 {
+				result.FullExported++
+			}
 			for _, warning := range attachmentWarnings(snapshot.Session) {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("session %s: %s", session.ID, warning))
 			}
@@ -204,7 +221,8 @@ func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, 
 		document := renderSnapshot(*snapshot)
 		documentHash := digestBytes(document)
 		record := sessionRecord(*snapshot, documentHash)
-		return updatePublishedSession(latest, desiredDir, document, record, snapshot.Session)
+		return updatePublishedSession(latest, desiredDir, document, record, snapshot.Session,
+			snapshot.Repository.Kind == repositoryKindLocalDirectory)
 	}
 
 	metadataPath := filepath.Join(desiredDir, sessionMetadataName)
@@ -221,7 +239,8 @@ func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, 
 			document := renderSnapshot(*snapshot)
 			documentHash := digestBytes(document)
 			record := sessionRecord(*snapshot, documentHash)
-			return updatePublishedSession(entryFromMetadata(current, filepath.Join(desiredDir, conversationName)), desiredDir, document, record, snapshot.Session)
+			return updatePublishedSession(entryFromMetadata(current, filepath.Join(desiredDir, conversationName)), desiredDir, document, record, snapshot.Session,
+				snapshot.Repository.Kind == repositoryKindLocalDirectory)
 		} else if !errors.Is(readErr, os.ErrNotExist) {
 			return false, "", "", fmt.Errorf("read existing session metadata: %w", readErr)
 		}
@@ -256,7 +275,7 @@ func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, 
 	return true, documentPath, documentHash, nil
 }
 
-func updatePublishedSession(previous Entry, desiredDir string, document []byte, record sessionMetadata, session Session) (bool, string, string, error) {
+func updatePublishedSession(previous Entry, desiredDir string, document []byte, record sessionMetadata, session Session, forceFull bool) (bool, string, string, error) {
 	oldDocumentPath := previous.Path
 	oldDir := filepath.Dir(oldDocumentPath)
 	previousDir := oldDir
@@ -287,7 +306,7 @@ func updatePublishedSession(previous Entry, desiredDir string, document []byte, 
 	dirChanged := filepath.Clean(oldDir) != filepath.Clean(desiredDir)
 	contentChanged := actualHash != newHash
 	metadataChanged := !reflect.DeepEqual(current, record)
-	if !dirChanged && !contentChanged && !metadataChanged {
+	if !dirChanged && !contentChanged && !metadataChanged && !forceFull {
 		return false, oldDocumentPath, newHash, nil
 	}
 	if dirChanged {
@@ -308,7 +327,7 @@ func updatePublishedSession(previous Entry, desiredDir string, document []byte, 
 	if err != nil {
 		return false, "", "", err
 	}
-	if contentChanged {
+	if contentChanged || forceFull {
 		if err := replaceOwnedFile(oldDocumentPath, document); err != nil {
 			return false, "", "", err
 		}
@@ -323,7 +342,7 @@ func updatePublishedSession(previous Entry, desiredDir string, document []byte, 
 	if dirChanged {
 		removeEmptyLegacySessionParents(previousDir)
 	}
-	return dirChanged || contentChanged || metadataChanged || attachmentsChanged, oldDocumentPath, newHash, nil
+	return dirChanged || contentChanged || metadataChanged || attachmentsChanged || forceFull, oldDocumentPath, newHash, nil
 }
 
 func removeEmptyLegacySessionParents(sessionDir string) {
@@ -548,6 +567,9 @@ func readOwnedDocument(path string) ([]byte, error) {
 func changeKind(history []Entry, snapshot Snapshot) string {
 	if len(history) == 0 {
 		return "new"
+	}
+	if snapshot.Repository.Kind == repositoryKindLocalDirectory {
+		return "full"
 	}
 	latest := history[0]
 	for _, candidate := range history[1:] {

@@ -6,13 +6,17 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	pathpkg "path"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
+
+const repositoryKindLocalDirectory = "local_directory"
 
 var scpRemote = regexp.MustCompile(`^(?:[^@/]+@)?([^/:]+):(.+)$`)
 
@@ -47,6 +51,44 @@ func repositoryFromRemote(canonical string) Repository {
 		Name:            name,
 		CanonicalRemote: canonical,
 	}
+}
+
+func localDirectoryRepositoryFromPath(path, deviceID, deviceName string) (Repository, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return Repository{}, fmt.Errorf("local directory is missing")
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return Repository{}, err
+	}
+	info, err := os.Stat(absolute)
+	if err != nil {
+		return Repository{}, fmt.Errorf("inspect local directory: %w", err)
+	}
+	if !info.IsDir() {
+		return Repository{}, fmt.Errorf("local path is not a directory: %s", absolute)
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(absolute); resolveErr == nil {
+		absolute = resolved
+	}
+	absolute = filepath.Clean(absolute)
+	directoryName := filepath.Base(absolute)
+	if directoryName == "." || directoryName == string(filepath.Separator) || strings.TrimSpace(directoryName) == "" {
+		directoryName = "directory"
+	}
+	displayName, _ := redact("non-git:" + directoryName)
+	directoryName, _ = redact(directoryName)
+	directoryID := digest("local-directory-path-v1\x00" + absolute)
+	return Repository{
+		Key:           digest("local-directory-v1\x00" + deviceID + "\x00" + directoryID),
+		Name:          displayName,
+		Kind:          repositoryKindLocalDirectory,
+		DirectoryName: directoryName,
+		DirectoryID:   directoryID,
+		DeviceID:      deviceID,
+		DeviceName:    deviceName,
+	}, nil
 }
 
 // NormalizeRemote removes transport and credentials so SSH and HTTPS clones of
