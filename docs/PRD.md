@@ -1,11 +1,11 @@
-# Session Manager v0.5 产品需求
+# Session Manager v0.6 产品需求
 
 ## 1. 产品定义
 
-Session Manager 是一个跨 macOS、Linux、Windows 的 Codex session Markdown 导出器，
-同时提供 CLI 和本地 GUI。
+Session Manager 是一个跨 macOS、Linux、Windows 的 Codex 与 DeepSeek Harness session
+Markdown 导出器，同时提供 CLI 和本地 GUI。
 
-Git 已经负责代码历史和跨机器同步。本产品只负责把分散在本机 Codex 状态目录中的
+Git 已经负责代码历史和跨机器同步。本产品只负责把分散在本机 agent harness 状态目录中的
 sessions 转成可读、可由 Git 跟踪历史的文件。
 
 ## 2. 核心用户流程
@@ -22,23 +22,25 @@ sessions 转成可读、可由 Git 跟踪历史的文件。
 
 1. Session Manager 自动恢复已配置目录；
 2. 用户执行导出；
-3. 系统默认扫描本机 active Codex sessions；用户显式开启时同时扫描 archived sessions；
+3. 系统默认扫描本机 active Codex sessions；用户可独立显式开启 Codex archived sessions 与
+   DeepSeek Harness sessions；
 4. 默认只导出 hosted Git sessions；用户显式开启时也包括非 Git/本地-only 目录；
 5. hosted Git source 与已记录内容没有变化时不显示；非 Git目录每轮全量发布并显示；
-6. 只显示本次新增、内容更新、名称变化或非 Git全量发布。
+6. 只显示本次新增、内容更新、名称变化或非 Git全量发布，并标明来源 harness。
 
 ## 3. 核心模型
 
 ```text
 hosted Git remote key | device-local directory key
-  -> set(device ID + native session ID -> current Markdown + attachments)
+  -> set(device ID + harness + native session ID -> current Markdown + attachments)
 ```
 
 - repository key 必须在同一 hosted repository 的 SSH/HTTPS clone 间稳定；
 - 不允许用本机路径猜测跨机器仓库身份；
 - 非 Git目录必须先把规范化绝对 CWD 哈希为 directory ID，再由 device ID 与 directory ID
   生成可重新验证的 key；key 只在该设备稳定，绝对路径不得进入导出文件；
-- session key 是持久 device ID 与 Codex 原生 session ID 的组合 hash；
+- Codex session key 保持既有 device ID + native session ID 算法；DeepSeek Harness session key
+  加入 harness discriminator，防止跨 harness 的 native ID 冲突；
 - session 名称是可变的人类语义，只用于可见目录名而不承担身份职责；
 - source hash 用于源变化检测，document hash 用于保护生成文件，二者均只进入隐藏 sidecar；
 - 每个设备/session 只有一个 `conversation.md`，历史版本由 Git 保存；
@@ -61,6 +63,11 @@ hosted Git remote key | device-local directory key
 
 - 默认只扫描 Codex `sessions/` JSONL；CLI `--include-archived` 或 GUI 对应选项开启时才把
   `archived_sessions/` 加入 discovery；
+- DeepSeek Harness 默认关闭；CLI `--include-deepseek` 或 GUI 对应选项开启时，扫描
+  `$DSH_HOME/sessions`（默认 `~/.dsh/sessions`）下每个 session 目录唯一的
+  `session.jsonl.zstd` 或 `session.jsonl`；
+- DeepSeek compressed source 必须验证追加的 Zstandard frames、每 frame checksum、512 MiB
+  解压上限与最终 JSONL 完整性；截断写入标记 `busy`，确定损坏或不支持格式标记 skipped；
 - CLI `--include-non-git` 或 GUI 对应选项未开启时，可识别的非 Git/本地-only目录 session
   必须安静排除并通过 `filtered_non_git` 计数保持可观察；开启后才进入匹配与发布；
 - 首次导出前已经位于 `archived_sessions/` 的 session 默认不得导出；显式包括 archived
@@ -77,7 +84,9 @@ hosted Git remote key | device-local directory key
 - 必须读取 `session_meta` 的 `originator`、`source`、`thread_source` 与
   `parent_thread_id`；Guardian/approval 和 thread-spawned subagent 默认不作为独立用户
   session 导出，JSON 结果通过 `filtered_internal` 计数保持可观察；
-- 不得修改、移动或删除 Codex 源文件。
+- DeepSeek header 必须读取 `origin`、`parentSession` 与 `delegationDepth`；任何 subagent
+  provenance 都不得作为独立用户 session 导出；
+- 不得修改、移动或删除 Codex 或 DeepSeek Harness 源文件与原生附件对象。
 
 ### FR-3 Repository identity
 
@@ -102,7 +111,8 @@ hosted Git remote key | device-local directory key
 - 可见文档固定命名为 `conversation.md`，父目录使用创建时间与最新 session 名称；
 - 设备、原生 session ID、session key、源 hash 与文档 hash 只保存在
   `.sessionmgr-session.json`；
-- Markdown 保存 session 名称、设备显示名、Codex 版本和 Git 提示，不暴露 identity hash；
+- Markdown 保存 session 名称、来源 harness、设备显示名、可用的 Codex 版本和 Git 提示，
+  不暴露 identity hash；
 - 分别保存创建、首条消息、末条消息、末事件、标题更新和总体更新时间；
 - 保存总消息、用户消息和助手消息数量；
 - 保存用户与助手的可读对话；
@@ -135,7 +145,12 @@ hosted Git remote key | device-local directory key
 - tool 调用只保存数量，不保存参数或输出；
 - developer/system 指令、内部 reasoning、认证数据和环境变量值不得进入导出；
 - 常见私钥、token、credential URL 与 secret assignment 必须脱敏；
-- malformed/omitted records 必须通过计数保持可见。
+- malformed/omitted records 必须通过计数保持可见；
+- DeepSeek event `seq` 必须连续，packed chunk row 必须验证成员数和时间；正文只保留
+  `surfaceOp=append`、`source.kind=user` 的用户 message 与 model assistant 的可见 text，
+  plugin/internal user injection、surface replacement、reasoning 与 tool payload 必须排除；
+- DeepSeek 最新 `session/title` 用作标题；image block 只允许引用 DSH content-addressed object，
+  复制前必须同时验证声明 SHA-256 与 byte size。
 
 ### FR-5 Incremental changeset
 
@@ -163,8 +178,8 @@ hosted Git remote key | device-local directory key
 - GUI 必须由同一二进制提供，不依赖 Node 或平台 WebView SDK；
 - 服务只能监听 loopback；
 - 每次启动必须生成随机 API token；
-- GUI 必须支持保存目录、系统目录选择、导出范围、包括 archived sessions 与包括非 Git目录
-  的独立显式勾选项，以及 changeset 展示；非 Git选项必须明确说明全量导出；
+- GUI 必须支持保存目录、系统目录选择、导出范围、包括 archived sessions、DeepSeek Harness
+  sessions 与非 Git目录的独立显式勾选项，以及 changeset 展示；非 Git选项必须明确说明全量导出；
 - hosted Git changeset 必须按 repository/device 目录分组，并可逐层展开或收起；非 Git
   repository 根已经包含 device scope，必须直接显示 session 叶节点，不得把 session 目录
   误作第二级 device folder；
@@ -181,19 +196,22 @@ hosted Git remote key | device-local directory key
 - `archive` 作为 `export` 兼容别名；
 - `export --include-archived` 必须显式包括 Codex `archived_sessions/`，未传时只处理 active
   sessions；
+- `export --include-deepseek` 必须显式包括 DeepSeek Harness sessions，未传时保持 Codex-only
+  行为；`--deepseek-home` 可覆盖 `DSH_HOME`/`~/.dsh`；
 - `export --include-non-git` 必须显式包括没有 hosted remote 的可访问 CWD；未传时不得发布；
 - partial export 必须保留成功 changeset，同时以非零退出码和 warning 报告跳过项。
 
 ### FR-8 三系统分发
 
-- 核心与 GUI 必须保持纯 Go、`CGO_ENABLED=0` 可构建；
+- 核心与 GUI 必须保持纯 Go、`CGO_ENABLED=0` 可构建；Zstandard 依赖必须是可固定版本且支持
+  checksum 验证的纯 Go 实现；
 - 必须能交叉构建 macOS、Linux、Windows；
 - 目录打开/浏览使用各平台最接近的可用方式，并提供手工路径 fallback。
 
 ## 5. 非目标
 
 - workspace capture/restore；
-- Codex native resume/import；
+- Codex 或 DeepSeek Harness native resume/import；
 - SQLite catalog；
 - Capsule、加密、SSH Store 或自定义同步协议；
 - 自动 Git commit/push；
@@ -215,11 +233,12 @@ hosted Git remote key | device-local directory key
 9. GUI API 没有随机 token 时返回 unauthorized。
 10. GUI 拒绝非 loopback listen address。
 11. macOS、Linux、Windows no-CGO 构建全部通过。
-12. 原始 Codex JSONL 在导出前后字节一致。
+12. 原始 Codex JSONL 与 DeepSeek session/attachment objects 在导出前后字节一致。
 13. 稳定窗口内发生变化或尾部不完整的 session 只增加 `busy`，不生成文档且导出成功。
 14. Markdown 明确区分创建、首次/最后对话与最后源事件时间，并为每条消息显示时间点。
 15. 可见路径和 Markdown 文件名不包含 repository/session/content hash。
-16. 隐藏 sidecar 中的 session key 可由 device ID 与 Codex native session ID 重新计算验证。
+16. 隐藏 sidecar 中的 Codex session key 可由既有算法重新计算；DeepSeek key 可由 device ID、
+    harness 与 native session ID 重新计算验证。
 17. 手工改过的 `conversation.md` 与语义路径 identity collision 均不会被覆盖。
 18. v1/v2 hash-named archive 仍可由 `list --history` 检查，但不会自动删除或改写。
 19. 结构化聊天附件在 `attachments/` 中使用可读名称，并由隐藏 sidecar 的 SHA-256 保护。
@@ -234,7 +253,7 @@ hosted Git remote key | device-local directory key
 27. 同时含注入 `role=user` 上下文和真实 `user_message` event 的 Codex source 只导出真实
     对话；标题不得取自 `recommended_plugins`、`AGENTS.md` 或 `environment_context`。
 28. context-only source 不创建文档；旧 renderer 污染文档在 ownership/hash 校验后升级到
-    renderer v6、修复正文并按真实标题安全重命名。
+    renderer v7、修复正文并按真实标题安全重命名。
 29. 首次导出前已归档的 source 默认不创建文档，CLI/GUI 显式包括 archived sessions 后才
     导出；已导出的 source 从 active 移入 `archived_sessions/` 或完全消失后，既有 Markdown、
     sidecar bytes 和 list entry 均保持不变。
@@ -255,3 +274,14 @@ hosted Git remote key | device-local directory key
 38. 非 Git source 后来消失时，既有全量归档仍保留，不推导删除或 tombstone。
 39. GUI 中 hosted Git repository 保留 device folder；非 Git repository 下直接显示 session
     卡片，不为每个 session 生成 folder summary。
+40. 未开启 DeepSeek 时，现有 Codex discovery、identity 与导出结果保持兼容；开启后 CLI 与 GUI
+    可以导出真实 DSH format-v0 plain/compressed top-level session，并在 Markdown、sidecar、
+    `list` 与 changeset 中标明 `deepseek` harness。
+41. DeepSeek plugin user injection、subagent、surface replacement、reasoning 与 tool payload 不进入
+    正文；append 的直接用户文本和 model assistant 文本保持 event 顺序。
+42. DeepSeek 多 frame Zstandard source 的 checksum、event sequence 和 packed rows 均验证；截断
+    frame/JSONL 记为 busy，checksum 损坏或 sequence discontinuity 不发布文档。
+43. 同一设备上 Codex 与 DeepSeek 使用相同 native session ID、创建时间和标题时，session key 与
+    可见语义目录仍不同且不得覆盖。
+44. DeepSeek image object 只有在 path、声明 hash、声明大小和稳定读取全部一致时才可归档；重复
+    导出是 no-op，原生 session 与 object bytes 均保持不变。

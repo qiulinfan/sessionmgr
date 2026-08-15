@@ -12,7 +12,8 @@ The repository-level requirements are defined in
 
 | Version | Status | Date | Summary |
 | --- | --- | --- | --- |
-| [`v0.5.0-dev`](./v0.5.0-dev.md) | Development | 2026-08-05 | Explicit full export for non-Git and local-only session directories |
+| [`v0.6.0-dev`](./v0.6.0-dev.md) | Development | 2026-08-15 | Opt-in DeepSeek Harness discovery, transcript projection, and source-integrity validation |
+| [`v0.5.0-dev`](./v0.5.0-dev.md) | Superseded | 2026-08-05 | Explicit full export for non-Git and local-only session directories |
 | [`v0.4.0-dev`](./v0.4.0-dev.md) | Superseded | 2026-08-05 | Archived-session opt-in, append-only retention, and reliable first-time portable builds |
 | [`v0.3.0-dev`](./v0.3.0-dev.md) | Superseded | 2026-08-05 | Persistent changeset export with active-session safety, message timelines, CLI, and cross-platform GUI |
 | [`v0.2.0-dev`](./v0.2.0-dev.md) | Superseded | 2026-07-30 | Desktop GUI architecture and preview; superseded by the v0.3 product reset |

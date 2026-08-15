@@ -10,9 +10,9 @@
     <main class="shell">
       <header class="hero">
         <div>
-          <p class="eyebrow">CODEX SESSION ARCHIVE</p>
+          <p class="eyebrow">AGENT SESSION ARCHIVE</p>
           <h1 data-i18n="heroTitle">Keep only what changed.</h1>
-          <p class="lede" data-i18n="heroLede">Choose a persistent directory and export local Codex sessions as Markdown, grouped by Git remote or local directory.</p>
+          <p class="lede" data-i18n="heroLede">Choose a persistent directory and export Codex or DeepSeek Harness sessions as Markdown, grouped by Git remote or local directory.</p>
         </div>
         <div class="hero-tools">
           <label class="language-picker">
@@ -55,7 +55,11 @@
         </div>
         <label class="archive-option">
           <input id="include-archived" type="checkbox" />
-          <span data-i18n="includeArchived">Include archived sessions</span>
+          <span data-i18n="includeArchived">Include archived Codex sessions</span>
+        </label>
+        <label class="archive-option">
+          <input id="include-deepseek" type="checkbox" />
+          <span data-i18n="includeDeepSeek">Include DeepSeek Harness sessions</span>
         </label>
         <label class="archive-option">
           <input id="include-non-git" type="checkbox" />

@@ -12,6 +12,7 @@ const resultCount = document.querySelector("#result-count");
 const exportButton = document.querySelector("#export");
 const languageSelect = document.querySelector("#language");
 const includeArchived = document.querySelector("#include-archived");
+const includeDeepSeek = document.querySelector("#include-deepseek");
 const includeNonGit = document.querySelector("#include-non-git");
 
 const translations = {
@@ -21,7 +22,7 @@ const translations = {
     connected: "Local connection",
     connectionFailed: "Connection failed",
     heroTitle: "Keep only what changed.",
-    heroLede: "Choose a persistent directory and export local Codex sessions as Markdown, grouped by Git remote or local directory.",
+    heroLede: "Choose a persistent directory and export Codex or DeepSeek Harness sessions as Markdown, grouped by Git remote or local directory.",
     exportDirectory: "Export directory",
     directoryPlaceholder: "For example, /Users/me/Documents/session-archive",
     browse: "Browse",
@@ -31,13 +32,14 @@ const translations = {
     exportScope: "Export scope",
     allRepositories: "All eligible directories",
     currentRepository: "Current directory",
-    includeArchived: "Include archived sessions",
+    includeArchived: "Include archived Codex sessions",
+    includeDeepSeek: "Include DeepSeek Harness sessions",
     includeNonGit: "Include non-Git directories (full export)",
     exportChanges: "Export changes",
     exporting: "Exporting…",
     exportedChanges: "Changes from this export",
     notExported: "No export has been run yet.",
-    readingSessions: "Reading Codex sessions…",
+    readingSessions: "Reading agent sessions…",
     noChanges: "No changes. The export directory is up to date.",
     busySessions: "No exported changes; {count} active session(s) will be retried next time.",
     filteredSessions: "No exported changes; {count} internal session(s) were excluded.",
@@ -61,7 +63,7 @@ const translations = {
     connected: "本地连接",
     connectionFailed: "连接失败",
     heroTitle: "只保存这次发生的变化。",
-    heroLede: "选择一个持久目录，将本机 Codex sessions 按 Git 远程仓库或本地目录导出为 Markdown。",
+    heroLede: "选择一个持久目录，将本机 Codex 或 DeepSeek Harness sessions 按 Git 远程仓库或本地目录导出为 Markdown。",
     exportDirectory: "导出目录",
     directoryPlaceholder: "例如 /Users/me/Documents/session-archive",
     browse: "浏览",
@@ -71,13 +73,14 @@ const translations = {
     exportScope: "导出范围",
     allRepositories: "全部可用目录",
     currentRepository: "当前目录",
-    includeArchived: "包括已归档的 sessions",
+    includeArchived: "包括已归档的 Codex sessions",
+    includeDeepSeek: "包括 DeepSeek Harness sessions",
     includeNonGit: "包括非 Git 目录（全量导出）",
     exportChanges: "导出变化",
     exporting: "正在导出…",
     exportedChanges: "本次导出变化",
     notExported: "尚未执行导出。",
-    readingSessions: "正在读取 Codex sessions…",
+    readingSessions: "正在读取 agent sessions…",
     noChanges: "没有变化，导出目录已经是最新状态。",
     busySessions: "没有导出变化；{count} 个正在写入的 session 已留到下次。",
     filteredSessions: "没有导出变化；已排除 {count} 个内部 session。",
@@ -277,7 +280,7 @@ function sessionChange(item) {
 
   const path = document.createElement("p");
   path.className = "path";
-  path.textContent = `${item.sessionFolder}/conversation.md`;
+  path.textContent = `${item.harness || "codex"} · ${item.sessionFolder}/conversation.md`;
   card.append(heading, path);
 
   if ((item.attachments || 0) > 0) {
@@ -399,6 +402,7 @@ exportButton.addEventListener("click", async () => {
         directory: directory.value,
         scope: document.querySelector("#scope").value,
         include_archived: includeArchived.checked,
+        include_deepseek: includeDeepSeek.checked,
         include_non_git: includeNonGit.checked,
       }),
     });

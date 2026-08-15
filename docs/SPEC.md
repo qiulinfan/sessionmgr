@@ -1,15 +1,15 @@
-# Session Manager v0.5 技术规格
+# Session Manager v0.6 技术规格
 
 ## 1. 进程与命令面
 
 ```text
 sessionmgr                                      # GUI
-sessionmgr gui [--listen 127.0.0.1:0] [--no-open]
+sessionmgr gui [--listen 127.0.0.1:0] [--no-open] [--deepseek-home PATH]
 sessionmgr config set-directory [--json] PATH
 sessionmgr config show [--json]
 sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived]
-                  [--include-non-git]
-                  [--directory PATH] [--codex-home PATH] [--json]
+                  [--include-deepseek] [--include-non-git]
+                  [--directory PATH] [--codex-home PATH] [--deepseek-home PATH] [--json]
 sessionmgr list [--directory PATH] [--history] [--json]
 sessionmgr cleanup-internal [--directory PATH] [--codex-home PATH]
                             [--apply] [--json]
@@ -22,6 +22,10 @@ sessionmgr version
 默认 source 为 `$CODEX_HOME`，未设置时是 `~/.codex`。`export` 默认处理全部 hosted
 Git repositories；显式 `--repo` 时只处理该仓库。`--include-non-git` 开启后，all scope
 也包括无法映射到 hosted remote 的可访问 CWD，显式 `--repo PATH` 也可直接指向这种目录。
+
+DeepSeek Harness source 只有在 `--include-deepseek` 或 GUI request 的
+`include_deepseek: true` 时加入。home 依次取 `--deepseek-home`、`DSH_HOME`、`~/.dsh`；选项
+不持久化，也不隐含 Codex archived 或 non-Git inclusion。
 
 普通 discovery 只扫描 `sessions/`。`--include-archived` 或 GUI request 的
 `include_archived: true` 才把 `archived_sessions/` 加入同一次并集扫描。active/archived 是
@@ -106,19 +110,23 @@ hash 输入，绝不写入 Markdown、repository sidecar、session sidecar 或 C
 表达 device scope，因此 session 直接位于 directory identity 下，不再重复 device 目录。
 目录名或设备名规范化碰撞由 hidden identity 检测并拒绝，不增加可见 hash 后缀。
 
-## 4. Identity and change hashes / layout v5 / renderer v6
+## 4. Identity and change hashes / layout v5 / renderer v7
 
 ```text
-source_hash = sha256(raw_jsonl_bytes)
+source_hash = sha256(raw_source_bytes)
 
-session_key = sha256("device-session-v1\0" + device_id + "\0" + native_session_id)
+Codex session_key = sha256("device-session-v1\0" + device_id + "\0" + native_session_id)
+
+DeepSeek session_key = sha256("device-harness-session-v1\0" + device_id + "\0"
+                              + "deepseek" + "\0" + native_session_id)
 
 document_hash = sha256(rendered_conversation_md_bytes)
 ```
 
-三者职责不得混用：`session_key` 表达跨导出的稳定成员身份，`source_hash` 检测 Codex
+三者职责不得混用：`session_key` 表达跨导出的稳定成员身份，`source_hash` 检测 harness
 原始数据变化，`document_hash` 验证准备更新的 Markdown 仍是 Session Manager 上次写入
-的内容。renderer 产生影响 Markdown 的变化时必须增加 `RendererVersion`。
+的内容。Codex key 保持历史兼容；新增 harness 必须使用带 harness discriminator 的算法。
+renderer 产生影响 Markdown 的变化时必须增加 `RendererVersion`。
 
 ## 5. 文件布局与 schema
 
@@ -139,6 +147,10 @@ document_hash = sha256(rendered_conversation_md_bytes)
     └── attachments/
 ```
 
+DeepSeek session 在相同 hosted/local repository 结构中使用
+`deepseek--<created-time>--<session-title>` 语义目录。Codex 目录名保持原样；该前缀与不同的
+session key 共同防止跨 harness identity/path collision。
+
 可见路径只承担语义：导出根目录下不存在 `repositories/` wrapper，hosted repository 与
 device 之间也不存在 `sessions/` wrapper；local-directory repository 的 device 已在
 `(non-git)<device-name>` 根中表达，不创建第二个 device component。canonical remote 的
@@ -155,18 +167,19 @@ hosted repository metadata 继续使用 schema v1。local-directory repository m
 schema v2：`canonical_remote` 为空，增加 `repository_kind=local_directory`、
 `directory_name`、不可逆的 `directory_id`、`device_id` 与 `device_name`。schema v2 不保存
 canonical/absolute CWD；reader 必须由 device ID 和 directory ID 重新计算 repository key，并
-严格验证 kind、设备字段和 semantic path。session metadata、layout v5、renderer v6 与
-attachment schema v1 不变。
+严格验证 kind、设备字段和 semantic path。repository metadata、layout v5 与 attachment
+schema v1 不变。
 
-`.sessionmgr-session.json` 包含 `schema_version`、`layout_version`、`renderer_version`、
-repository identity、device ID/name、native session ID、session key、当前标题、source hash、
-document hash、创建与更新时间，以及可选 attachments manifest。manifest 每项保存
+`.sessionmgr-session.json` 在 v0.6 使用 schema v2，包含 `schema_version`、`layout_version`、
+`renderer_version`、repository identity、`harness`、device ID/name、native session ID、
+session key、当前标题、source hash、document hash、创建与更新时间，以及可选 attachments
+manifest。manifest 每项保存
 message/attachment 序号、可读原名、MIME、来源类型、状态、相对归档路径、byte 大小和
 content hash；不保存绝对本机路径、data URL 或带 credential/query 的远程 URL。它是可检查
 的身份/所有权 sidecar，不是 secret store。
 
 `conversation.md` 的 frontmatter 不包含 identity/hash。它保存 repository/device/session
-显示名、Codex/Git hints，以及以下 renderer-v6 字段：
+显示名、`harness`、可用的 Codex/Git hints，以及以下 renderer-v7 字段：
 
 - `created_at`、`first_message_at`、`last_message_at`、`last_event_at`、
   `title_updated_at` 与用于排序的总体 `updated_at`；
@@ -176,6 +189,10 @@ content hash；不保存绝对本机路径、data URL 或带 credential/query �
 
 时间字段没有可信源 timestamp 时省略。renderer v1 的 `started_at` 仍可由读取器检查；
 renderer v2 不修改或删除任何既有 v1 文件。
+
+session metadata schema v1 只允许省略 `harness`，并严格解释为 `codex`，按既有 key 算法
+验证。schema v2 必须声明 `codex` 或 `deepseek`，并按对应算法验证。读取旧 v1 sidecar 不会
+立即写回；只有该 source 再次安全发布时才以 sidecar-last 顺序升级为 v2。
 
 ## 6. Codex parsing
 
@@ -217,7 +234,56 @@ context-only source 不发布 repository/session 文档，不计为失败；raw 
 tool arguments/results、developer/system message 和 reasoning payload 不进入正文。raw
 bytes 保留在 Codex home；导出器只读源数据。
 
-### 6.1 Structured chat attachments
+### 6.1 DeepSeek Harness parsing
+
+discovery 递归扫描 `<DSH_HOME>/sessions`，每个 session 目录只接受一个
+`session.jsonl.zstd` 或 `session.jsonl`。两者同时存在时整次 discovery fail closed，避免在
+不明确的 source 中择一。plain source 直接作为 JSONL 读取；compressed source 是多个独立
+Zstandard frame 的顺序拼接，解压后的逻辑内容按 frame 顺序连接。
+
+每个 Zstandard frame 必须有标准 magic、合法 header/block layout 与 content checksum。
+decoder 必须验证 checksum、支持 concatenated frames、限制并发为 1，并将解压后 session
+限制为 512 MiB。截断 frame/header/block/checksum 或完整 frame 后的半条 JSONL 归为
+`busy`；非法 magic、reserved bits、无 checksum、checksum mismatch 或解码错误归为 skipped。
+
+第一条 JSONL record 必须是：
+
+```json
+{
+  "type": "session",
+  "version": 0,
+  "id": "<native-session-id>",
+  "createdAt": 1786766400000,
+  "cwd": "/workspace",
+  "delegationDepth": 0
+}
+```
+
+`delegationDepth` 必须存在且非负。`origin=subagent`、非空 `parentSession` 或 depth > 0 任一
+成立时，session 计入 `filtered_internal` 并停止 repository/attachment/publication 处理。
+`createdAt` 必须存在且是支持范围内的毫秒时间，header `id` 必须与承载日志的 session 目录名
+完全一致。
+后续普通 event 必须包含连续、从 0 开始的 `seq`、毫秒 `time`、`type` 与 `data`。packed
+`text-chunks`、`reasoning-chunks`、`tool-call-chunks` 使用 `seq0`/`time0`，成员至少 3 个，
+`dt` 数量必须比成员少 1；其逻辑 seq 和最后时间参与连续性与 timeline 校验，但 chunk 内容
+不进入正文。
+
+human transcript 是 append source events 的安全投影：
+
+- `user/message` 必须是 `role=user`、`surfaceOp="append"`、`source.kind=user`；plugin 或其他
+  source、`replace` surface 只计入 omitted/filtered，不进入标题或正文；
+- `assistant/message.data.message` 必须是 `role=assistant`、`source.kind=model`；只有 append
+  surface 的 `text` block 进入正文；
+- `reasoning`、`tool-call` 与 `tool-result` block 不进入正文；`tool/call` 只增加计数；
+- 最新有效 `session/title` event 覆盖标题；不存在时取第一条非空直接用户文本，再退回
+  `DeepSeek session <ID>`；
+- 未知 surface-bearing event fail closed；不影响 transcript surface 的未知 storage event 可以
+  保留为 omitted，以兼容 format-v0 的非对话记录。
+
+source hash 始终对压缩/原始文件 bytes 计算，而不是对解压结果计算。raw session bytes 不被
+重写、移动、删除或替代为 normalized event。
+
+### 6.2 Structured chat attachments
 
 附件只能来自 user message 的结构化字段。已确认的 Codex 形式是
 `response_item.message.content` 中的 `input_image` / `input_audio`，以及 legacy
@@ -225,6 +291,12 @@ bytes 保留在 Codex home；导出器只读源数据。
 兼容结构化 `input_file`、`local_files`、`files` 和 `attachments`，但不得解析普通消息
 文本中的路径。现代记录以 user event 为可见消息，并在正文匹配时优先采用 response 中的
 embedded attachment bytes；旧记录只存在一种来源时直接使用该来源，附件不得重复。
+
+DeepSeek `user/message` 的 `image` content block 必须包含 `attachmentId=sha256:<64 hex>`、
+正 byte size 与 MIME。对象只从
+`<DSH_HOME>/attachments/v1/objects/<digest-prefix>/<digest>` 读取；使用现有 no-symlink、
+identity/size/mtime 稳定读取后，实际 SHA-256 和大小还必须等于 event 声明值。缺失、忙碌、
+超限或不一致都按附件级状态处理，不得猜测替代路径或修改原生 object。
 
 单文件上限 `MaxAttachmentBytes = 50 * 1024 * 1024`；`size <= MaxAttachmentBytes`
 允许，`size > MaxAttachmentBytes` 记为 `too_large`。data URL 在解码前先做编码长度
@@ -247,7 +319,8 @@ warning：对话文档仍
 user message 下用相对路径链接 `archived` 附件，其他状态只显示不含本机绝对路径
 的说明。
 
-`created_at` 来自 `session_meta`；`first_message_at`/`last_message_at` 是所选可读消息中
+Codex `created_at` 来自 `session_meta`，DeepSeek 来自 header `createdAt`；
+`first_message_at`/`last_message_at` 是所选可读消息中
 最早/最晚的原始 timestamp；`last_event_at` 是所有可解析源记录中的最大 timestamp。
 消息正文保持 JSONL 文件顺序，标题格式为 `序号 · Role · timestamp`；无 timestamp
 时只省略时间，不使用 filesystem metadata 补值。
@@ -261,7 +334,8 @@ discovery 完成后，对所有候选文件执行一次批量观察：
 3. 再次记录 fingerprint；变化或消失的 source 记为 `busy`；
 4. 打开稳定文件，并确认 handle identity 与观察对象相同；
 5. 读取后同时检查 handle 与 pathname fingerprint；
-6. 验证最后一个非空 JSONL record 是完整 JSON；
+6. 验证最后一个非空 JSONL record 是完整 JSON；DeepSeek compressed source 还按 6.1
+   验证 frame、checksum 与解压上限；
 7. 任一步出现 source mutation、replacement、OS sharing/lock violation 或 incomplete
    tail 时记为 `busy`，不解析和发布。
 
@@ -292,8 +366,10 @@ otherwise                                          -> updated
 不显示 hash 列；GUI 只显示 semantic path。扫描、matched、unchanged、busy、
 `filtered_internal`、`filtered_non_git` 和 skipped 计数仍保留在 JSON result 供自动化诊断。
 
-export result JSON 在 v0.5 使用 schema v2，增加 `filtered_non_git` 与 `full_exported`，并允许
-change kind `full`。hosted Git session 保持上述增量规则。local-directory session 不使用
+export result JSON 在 v0.6 使用 schema v3；`Change` 增加 required `harness`，`list` current
+entry 增加 `harness`（legacy Codex sidecar 规范化为 `codex`）。v0.5 的
+`filtered_non_git`、`full_exported` 与 change kind `full` 保持。hosted Git session 保持上述
+增量规则。local-directory session 不使用
 unchanged 快路：每次 opt-in export 都重新执行 canonical message selection、屏蔽、附件处理、
 render、document/attachment ownership 验证和 sidecar-last 发布。第一次没有 current entry 时
 仍标记 `new`；已有 current entry 时标记 `full` 并增加 `full_exported`。即使 bytes 相同也要
@@ -310,7 +386,7 @@ local-directory entry 保持不变，不生成 tombstone，也不授权删除附
 
 ### 8.1 Explicit internal cleanup
 
-`cleanup-internal` 只清理由旧 renderer 错误发布、且仍能由当前设备的稳定 raw source 证明为
+`cleanup-internal` 当前只清理由旧 Codex renderer 错误发布、且仍能由当前设备的稳定 raw source 证明为
 `subagent` 或已知 runtime-context-only 的 current document。默认 dry-run；`--apply` 是
 独立、显式的删除授权，不改变普通 export 的 retention 语义。
 
@@ -383,7 +459,8 @@ API：
 - `PUT /api/config`：验证并保存目录；
 - `POST /api/pick-directory`：调用平台目录对话框；
 - `POST /api/export`：接受 `directory`、all/current `scope`、布尔值 `include_archived` 与
-  `include_non_git`，执行对应范围并返回当前 changeset。两个 include 选项彼此独立且默认 false。
+  `include_non_git`、`include_deepseek`，执行对应范围并返回当前 changeset。三个 include 选项
+  彼此独立且默认 false。
 
 前端首次加载使用 English；用户可切换 English/中文，选择只保存在浏览器本地，不改变
 跨机器 config schema。静态文案以及连接、保存、导出、busy/no-change、计数、change badge
@@ -408,8 +485,9 @@ raised surface `#21262d`、border `#30363d`、正文 `#f0f6fc`，操作强调色
 | 选择目录 | `osascript` | Zenity，回退 KDialog/手填 | PowerShell FolderBrowserDialog |
 | 配置目录 | Application Support | XDG config | AppData |
 
-核心只依赖 Go standard library 和运行时 Git。`make cross-check` 编译 darwin/arm64、
-linux/amd64、windows/amd64；`make dist` 额外产出三系统 AMD64/ARM64 binaries。
+核心依赖 Go standard library、固定版本的纯 Go `github.com/klauspost/compress/zstd` 与运行时
+Git。`make cross-check` 编译 darwin/arm64、linux/amd64、windows/amd64；`make dist` 额外
+产出三系统 AMD64/ARM64 binaries，均必须保持 `CGO_ENABLED=0` 可构建。
 
 ## 12. 兼容性
 
@@ -448,3 +526,14 @@ device/`sessions` 目录。旧 renderer 污染文档同样只在 document/attach
 sidecar 和 v1/v2 hash-named 数据不自动删除；`list --history` 仍能检查它们。
 内部旧文档只能由 dry-run-first `cleanup-internal --apply` 显式清理；其他旧归档的删除仍需
 未来独立、可 review 的 migration。
+
+v0.6 的 DeepSeek Harness discovery 默认关闭，因此未使用新 flag 的 Codex-only CLI/GUI 行为
+保持不变。layout v5、repository schema、attachment schema 与 config schema 不变；renderer
+升为 v7，session metadata 从 schema v1 升为 v2，export result 从 schema v2 升为 v3。
+v1 session sidecar 继续严格读取为 Codex 并在验证后升级；Codex session key 与语义目录不变。
+DeepSeek sidecar 必须是 schema v2，旧 v0.5 binary 遇到它会因 unknown schema fail closed，
+不会覆盖。使用 export JSON 的自动化必须接受 schema v3 和 `Change.harness`。
+
+DeepSeek adapter 当前只承诺 DSH session format v0；未知 header version、未知 required surface
+semantics 或同目录双 encoding 均 fail closed。DeepSeek native resume/replay、subagent 导出与
+`cleanup-internal` 删除不在 v0.6 范围内。

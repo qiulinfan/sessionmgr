@@ -213,8 +213,11 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	if !bytes.Contains(page, []byte(`<option value="en">English</option>`)) || !bytes.Contains(page, []byte(`<option value="zh">中文</option>`)) {
 		t.Fatal("GUI language selector is missing English or Chinese")
 	}
-	if !bytes.Contains(page, []byte(`id="include-archived"`)) || !bytes.Contains(page, []byte("Include archived sessions")) {
+	if !bytes.Contains(page, []byte(`id="include-archived"`)) || !bytes.Contains(page, []byte("Include archived Codex sessions")) {
 		t.Fatal("GUI archived-session option is missing")
+	}
+	if !bytes.Contains(page, []byte(`id="include-deepseek"`)) || !bytes.Contains(page, []byte("Include DeepSeek Harness sessions")) {
+		t.Fatal("GUI DeepSeek Harness option is missing")
 	}
 	if !bytes.Contains(page, []byte(`id="include-non-git"`)) || !bytes.Contains(page, []byte("Include non-Git directories")) {
 		t.Fatal("GUI non-Git full-export option is missing")
@@ -230,7 +233,8 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	if !bytes.Contains(script, []byte("function groupChanges")) || !bytes.Contains(script, []byte("repository-tree")) ||
 		!bytes.Contains(script, []byte("repository.localDirectory")) || !bytes.Contains(script, []byte("repository-session-list")) ||
 		!bytes.Contains(script, []byte("sessionmgr-language")) || !bytes.Contains(script, []byte("filtered_internal")) ||
-		!bytes.Contains(script, []byte("include_archived")) || !bytes.Contains(script, []byte("include_non_git")) ||
+		!bytes.Contains(script, []byte("include_archived")) || !bytes.Contains(script, []byte("include_deepseek")) ||
+		!bytes.Contains(script, []byte("include_non_git")) ||
 		!bytes.Contains(script, []byte("filtered_non_git")) || !bytes.Contains(script, []byte("badgeFull")) {
 		t.Fatal("GUI script is missing grouped directory changes or persistent language selection")
 	}
@@ -247,6 +251,42 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 		!bytes.Contains(style, []byte("--surface: #161b22")) ||
 		bytes.Contains(style, []byte("color-scheme: light")) {
 		t.Fatal("GUI stylesheet is not using the GitHub Dark palette")
+	}
+}
+
+func TestGUIDeepSeekOptInExportsConfiguredSource(t *testing.T) {
+	root := t.TempDir()
+	deepSeekHome := filepath.Join(root, "dsh")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(deepSeekHome, "sessions", "--workspace--", "session-gui-deepseek", "session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf(`{"type":"session","version":0,"id":"session-gui-deepseek","createdAt":1786766400000,"cwd":%q,"delegationDepth":0,"agentPreset":"standard"}
+{"type":"user/message","seq":0,"time":1786766401000,"data":{"id":"user","role":"user","content":[{"type":"text","text":"GUI export"}],"source":{"kind":"user"}},"surfaceOp":"append"}
+`, workspace)
+	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := config.Store{Path: filepath.Join(root, "config.json")}
+	if _, err := store.SetExportDirectory(filepath.Join(root, "exports")); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandlerWithSources("test-token", store, filepath.Join(root, "codex"), deepSeekHome, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := authenticatedRequest(http.MethodPost, "/api/export", map[string]any{
+		"scope": "all", "include_deepseek": true, "include_non_git": true,
+	})
+	result := httptest.NewRecorder()
+	handler.ServeHTTP(result, request)
+	response := decodeExportResponse(t, result)
+	if response.Error != "" || response.Result.Created != 1 || len(response.Result.Changes) != 1 || response.Result.Changes[0].Harness != "deepseek" {
+		t.Fatalf("GUI did not export the DeepSeek session: %+v", response)
 	}
 }
 

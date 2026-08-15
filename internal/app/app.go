@@ -16,7 +16,7 @@ import (
 	"github.com/sessionmgr/sessionmgr/internal/ui"
 )
 
-const version = "0.5.0-dev"
+const version = "0.6.0-dev"
 
 type commandError struct {
 	exitCode int
@@ -115,10 +115,12 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	flags := newFlagSet("export", stderr)
 	repo := flags.String("repo", ".", "export only sessions for this Git repository or included local directory")
 	all := flags.Bool("all", false, "export sessions for every eligible directory (hosted Git by default)")
-	sessionID := flags.String("session", "", "export one Codex session ID")
+	sessionID := flags.String("session", "", "export one native session ID")
 	includeArchived := flags.Bool("include-archived", false, "also export Codex archived sessions")
+	includeDeepSeek := flags.Bool("include-deepseek", false, "also export DeepSeek Harness sessions")
 	includeNonGit := flags.Bool("include-non-git", false, "also fully export sessions from directories without a hosted Git remote")
 	source := flags.String("codex-home", "", "Codex state directory (default: CODEX_HOME or ~/.codex)")
+	deepSeekSource := flags.String("deepseek-home", "", "DeepSeek Harness state directory (default: DSH_HOME or ~/.dsh)")
 	directory := flags.String("directory", "", "export directory to use and remember")
 	output := flags.String("output", "", "one-time export directory (compatibility alias)")
 	jsonOutput := flags.Bool("json", false, "emit JSON")
@@ -156,9 +158,11 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return err
 	}
 	result, exportErr := archive.Export(ctx, archive.Options{
-		CodexHome: *source, Output: resolvedDirectory, Repo: *repo,
+		CodexHome: *source, DeepSeekHome: *deepSeekSource,
+		Output: resolvedDirectory, Repo: *repo,
 		AllRepos: !repoWasSet || *all, SessionID: *sessionID,
 		IncludeArchived: *includeArchived,
+		IncludeDeepSeek: *includeDeepSeek,
 		IncludeNonGit:   *includeNonGit,
 		DeviceID:        device.DeviceID, DeviceName: device.DeviceName,
 	})
@@ -280,13 +284,15 @@ func commandList(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "REPOSITORY\tUPDATED\tTITLE\tDEVICE\tSESSION")
+	fmt.Fprintln(table, "REPOSITORY\tHARNESS\tUPDATED\tTITLE\tDEVICE\tSESSION")
 	for _, entry := range entries {
 		device := entry.DeviceName
+		harness := entry.Harness
 		if entry.Legacy {
 			device = "legacy"
+			harness = "legacy"
 		}
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", entry.RepositoryName, entry.UpdatedAt,
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", entry.RepositoryName, harness, entry.UpdatedAt,
 			oneLine(entry.Title), oneLine(device), short(entry.SessionID))
 	}
 	return table.Flush()
@@ -297,6 +303,7 @@ func commandGUI(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	listen := flags.String("listen", "127.0.0.1:0", "loopback address for the local GUI")
 	noOpen := flags.Bool("no-open", false, "do not open the default browser")
 	source := flags.String("codex-home", "", "Codex state directory")
+	deepSeekSource := flags.String("deepseek-home", "", "DeepSeek Harness state directory")
 	repo := flags.String("repo", ".", "current Git repository for the GUI scope")
 	if err := flags.Parse(args); err != nil {
 		return flagError(err)
@@ -309,7 +316,7 @@ func commandGUI(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		return err
 	}
 	return ui.Run(ctx, ui.Options{
-		Listen: *listen, CodexHome: *source, Repo: *repo,
+		Listen: *listen, CodexHome: *source, DeepSeekHome: *deepSeekSource, Repo: *repo,
 		OpenBrowser: !*noOpen, ConfigStore: store, Log: stderr,
 		Ready: func(url string) {
 			fmt.Fprintf(stdout, "Session Manager GUI: %s\n", url)
@@ -400,14 +407,14 @@ func short(value string) string {
 }
 
 func printHelp(output io.Writer) {
-	fmt.Fprintln(output, `sessionmgr exports Codex conversations as readable Markdown files.
+	fmt.Fprintln(output, `sessionmgr exports Codex and DeepSeek Harness conversations as readable Markdown files.
 
 Usage:
   sessionmgr                         Open the GUI
-  sessionmgr gui [--no-open]
+  sessionmgr gui [--no-open] [--deepseek-home PATH]
   sessionmgr config set-directory PATH
   sessionmgr config show
-  sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived] [--include-non-git] [--directory PATH]
+  sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived] [--include-deepseek] [--include-non-git] [--directory PATH]
   sessionmgr list [--history]
   sessionmgr cleanup-internal [--directory PATH] [--apply]
   sessionmgr version

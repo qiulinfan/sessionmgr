@@ -177,6 +177,17 @@ func fingerprintSource(path string) (sourceFingerprint, error) {
 }
 
 func readObservedSource(ctx context.Context, path string, expected sourceFingerprint) ([]byte, error) {
+	data, err := readObservedFile(ctx, path, expected)
+	if err != nil {
+		return nil, err
+	}
+	if !completeJSONL(data) {
+		return nil, fmt.Errorf("%w: source ends with an incomplete JSONL record", errSourceBusy)
+	}
+	return data, nil
+}
+
+func readObservedFile(ctx context.Context, path string, expected sourceFingerprint) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -239,9 +250,6 @@ func readObservedSource(ctx context.Context, path string, expected sourceFingerp
 	if !sameFingerprint(expected, handleAfter) || !sameFingerprint(expected, pathAfter) {
 		return nil, fmt.Errorf("%w: source changed while being read", errSourceBusy)
 	}
-	if !completeJSONL(data) {
-		return nil, fmt.Errorf("%w: source ends with an incomplete JSONL record", errSourceBusy)
-	}
 	return data, nil
 }
 
@@ -264,7 +272,7 @@ func sourceErrorIsBusy(err error) bool {
 }
 
 func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) (Session, error) {
-	result := Session{RawHash: digestBytes(raw)}
+	result := Session{Harness: harnessCodex, RawHash: digestBytes(raw)}
 	var responseUsers, responseAssistants, eventUsers, eventAssistants []orderedMessage
 	filteredUserInput := 0
 	remaining := raw

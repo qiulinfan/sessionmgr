@@ -1111,9 +1111,12 @@ func TestVerifiedReexportRepairsInjectedContextDocument(t *testing.T) {
 	if err := os.MkdirAll(oldDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	oldDocument := bytes.Replace(renderSnapshot(snapshot), []byte("renderer_version: 6"), []byte("renderer_version: 5"), 1)
+	oldDocument := bytes.Replace(renderSnapshot(snapshot), []byte("renderer_version: 7"), []byte("renderer_version: 6"), 1)
+	oldDocument = bytes.Replace(oldDocument, []byte("harness: \"codex\"\n"), nil, 1)
 	oldRecord := sessionRecord(snapshot, digestBytes(oldDocument))
-	oldRecord.RendererVersion = 5
+	oldRecord.SchemaVersion = SchemaVersion
+	oldRecord.RendererVersion = 6
+	oldRecord.Harness = ""
 	metadata, err := marshalMetadata(oldRecord)
 	if err != nil {
 		t.Fatal(err)
@@ -1153,7 +1156,7 @@ func TestVerifiedReexportRepairsInjectedContextDocument(t *testing.T) {
 	if err := readMetadata(filepath.Join(filepath.Dir(newPath), sessionMetadataName), &current); err != nil {
 		t.Fatal(err)
 	}
-	if current.RendererVersion != RendererVersion {
+	if current.SchemaVersion != SessionMetadataSchema || current.RendererVersion != RendererVersion || current.Harness != harnessCodex {
 		t.Fatalf("renderer metadata was not upgraded: %+v", current)
 	}
 	repeated, err := Export(context.Background(), testExportOptions(codexHome, output))

@@ -192,6 +192,7 @@ func readRepositoryEntries(root, repositoryDir string) ([]Entry, error) {
 		}
 		result = append(result, Entry{
 			RepositoryKey: metadata.RepositoryKey, RepositoryName: metadata.RepositoryName,
+			Harness:  sessionMetadataHarness(metadata),
 			DeviceID: metadata.DeviceID, DeviceName: metadata.DeviceName,
 			SessionID: metadata.SessionID, SessionKey: metadata.SessionKey, Title: metadata.Title,
 			DocumentHash: metadata.DocumentHash, SourceHash: metadata.SourceHash,

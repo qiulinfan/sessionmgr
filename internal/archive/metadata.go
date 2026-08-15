@@ -40,6 +40,7 @@ type sessionMetadata struct {
 	AttachmentSchemaVersion int                  `json:"attachment_schema_version,omitempty"`
 	RepositoryKey           string               `json:"repository_key"`
 	RepositoryName          string               `json:"repository_name"`
+	Harness                 string               `json:"harness,omitempty"`
 	DeviceID                string               `json:"device_id"`
 	DeviceName              string               `json:"device_name"`
 	SessionID               string               `json:"session_id"`
@@ -66,6 +67,13 @@ type attachmentMetadata struct {
 	ContentHash     string `json:"content_hash,omitempty"`
 }
 
+func sessionMetadataHarness(value sessionMetadata) string {
+	if value.Harness == "" {
+		return harnessCodex
+	}
+	return value.Harness
+}
+
 func repositoryRecord(repo Repository) repositoryMetadata {
 	record := repositoryMetadata{
 		SchemaVersion: SchemaVersion, LayoutVersion: LayoutVersion,
@@ -84,9 +92,10 @@ func repositoryRecord(repo Repository) repositoryMetadata {
 
 func sessionRecord(snapshot Snapshot, documentHash string) sessionMetadata {
 	record := sessionMetadata{
-		SchemaVersion: SchemaVersion, LayoutVersion: LayoutVersion, RendererVersion: RendererVersion,
+		SchemaVersion: SessionMetadataSchema, LayoutVersion: LayoutVersion, RendererVersion: RendererVersion,
 		AttachmentSchemaVersion: 1,
 		RepositoryKey:           snapshot.Repository.Key, RepositoryName: snapshot.Repository.Name,
+		Harness:  snapshot.Session.Harness,
 		DeviceID: snapshot.DeviceID, DeviceName: snapshot.DeviceName,
 		SessionID: snapshot.Session.ID, SessionKey: snapshot.SessionKey,
 		Title: snapshot.Session.Title, SourceHash: snapshot.Session.RawHash,
@@ -170,7 +179,7 @@ func validateRepositoryMetadata(value repositoryMetadata) error {
 }
 
 func validateSessionMetadata(value sessionMetadata) error {
-	if value.SchemaVersion != SchemaVersion || !supportedLayoutVersion(value.LayoutVersion) {
+	if (value.SchemaVersion != SchemaVersion && value.SchemaVersion != SessionMetadataSchema) || !supportedLayoutVersion(value.LayoutVersion) {
 		return fmt.Errorf("unsupported session metadata schema/layout %d/%d", value.SchemaVersion, value.LayoutVersion)
 	}
 	if value.RepositoryKey == "" || value.RepositoryName == "" || value.DeviceID == "" || value.DeviceName == "" ||
@@ -178,7 +187,16 @@ func validateSessionMetadata(value sessionMetadata) error {
 		value.SessionKey == "" || value.DocumentHash == "" {
 		return fmt.Errorf("incomplete session metadata")
 	}
-	want := digest("device-session-v1\x00" + value.DeviceID + "\x00" + value.SessionID)
+	harness := value.Harness
+	if value.SchemaVersion == SchemaVersion {
+		if harness != "" {
+			return fmt.Errorf("legacy session metadata declares a harness")
+		}
+		harness = harnessCodex
+	} else if harness != harnessCodex && harness != harnessDeepSeek {
+		return fmt.Errorf("unsupported session harness %q", harness)
+	}
+	want := sessionKey(value.DeviceID, harness, value.SessionID)
 	if value.SessionKey != want {
 		return fmt.Errorf("session key does not match device and native session identity")
 	}
@@ -369,8 +387,12 @@ func semanticRepositoryDirectoryV3(repo Repository) string {
 
 func semanticSessionDirectory(snapshot Snapshot) string {
 	title := semanticComponent(snapshot.Session.Title, "codex-session")
-	if snapshot.Session.CreatedAt.IsZero() {
-		return title
+	prefix := ""
+	if snapshot.Session.Harness == harnessDeepSeek {
+		prefix = "deepseek--"
 	}
-	return snapshot.Session.CreatedAt.UTC().Format("2006-01-02T15-04-05Z") + "--" + title
+	if snapshot.Session.CreatedAt.IsZero() {
+		return prefix + title
+	}
+	return prefix + snapshot.Session.CreatedAt.UTC().Format("2006-01-02T15-04-05Z") + "--" + title
 }

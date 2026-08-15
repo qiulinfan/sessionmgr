@@ -4,24 +4,30 @@ import "time"
 
 const (
 	SchemaVersion             = 1
-	ExportResultSchemaVersion = 2
+	ExportResultSchemaVersion = 3
 	LocalRepositorySchema     = 2
+	SessionMetadataSchema     = 2
 	LayoutVersion             = 5
-	RendererVersion           = 6
+	RendererVersion           = 7
 	MaxAttachmentBytes        = int64(50 * 1024 * 1024)
 )
 
 type Options struct {
-	CodexHome string
-	Output    string
-	Repo      string
-	AllRepos  bool
-	SessionID string
+	CodexHome    string
+	DeepSeekHome string
+	Output       string
+	Repo         string
+	AllRepos     bool
+	SessionID    string
 
 	// IncludeArchived adds Codex archived_sessions/ to discovery. Ordinary
 	// exports inspect only active sessions/ so users can archive a conversation
 	// before its first export to leave it out of the archive.
 	IncludeArchived bool
+
+	// IncludeDeepSeek adds top-level DeepSeek Harness sessions from
+	// DSH_HOME/sessions. Codex remains the only source unless this is selected.
+	IncludeDeepSeek bool
 
 	// IncludeNonGit adds sessions whose CWD cannot be assigned to a hosted Git
 	// remote. Those directories use a device-local identity and are fully
@@ -90,6 +96,7 @@ type CleanupChange struct {
 
 type Change struct {
 	Kind           string `json:"kind"`
+	Harness        string `json:"harness"`
 	RepositoryKey  string `json:"repository_key"`
 	RepositoryName string `json:"repository_name"`
 	DeviceName     string `json:"device_name"`
@@ -135,16 +142,20 @@ type Attachment struct {
 	Size            int64
 	ContentHash     string
 
-	// SourceValue and Data exist only while one export is being prepared. They
-	// are never written to Markdown or metadata because they may contain a
-	// machine-local absolute path, a remote URL, or embedded file bytes.
-	SourceValue string
-	LocalPath   string
-	Data        []byte
+	// SourceValue, Data, and Expected* exist only while one export is being
+	// prepared. They are never written to Markdown or metadata because they may
+	// contain a machine-local absolute path, embedded bytes, or redundant source
+	// integrity facts.
+	SourceValue  string
+	LocalPath    string
+	Data         []byte
+	ExpectedHash string
+	ExpectedSize int64
 }
 
 type Session struct {
 	ID                string
+	Harness           string
 	Title             string
 	TitleUpdatedAt    time.Time
 	Originator        string
@@ -190,6 +201,7 @@ type ListOptions struct {
 type Entry struct {
 	RepositoryKey  string `json:"repository_key"`
 	RepositoryName string `json:"repository_name"`
+	Harness        string `json:"harness,omitempty"`
 	DeviceID       string `json:"device_id,omitempty"`
 	DeviceName     string `json:"device_name,omitempty"`
 	SessionID      string `json:"session_id"`

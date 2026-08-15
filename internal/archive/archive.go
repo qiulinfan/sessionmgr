@@ -12,11 +12,24 @@ import (
 	"strings"
 )
 
+type nativeSessionSource struct {
+	path       string
+	harness    string
+	compressed bool
+}
+
 func Export(ctx context.Context, opts Options) (Result, error) {
 	result := Result{SchemaVersion: ExportResultSchemaVersion, Changes: []Change{}}
 	if opts.CodexHome == "" {
 		var err error
 		opts.CodexHome, err = DefaultCodexHome()
+		if err != nil {
+			return result, err
+		}
+	}
+	if opts.IncludeDeepSeek {
+		var err error
+		opts.DeepSeekHome, err = resolveDeepSeekHome(opts.DeepSeekHome)
 		if err != nil {
 			return result, err
 		}
@@ -44,11 +57,30 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		key := entryIdentity(entry)
 		history[key] = append(history[key], entry)
 	}
-	files, err := discoverSessionFiles(opts.CodexHome, opts.IncludeArchived)
+	codexFiles, err := discoverSessionFiles(opts.CodexHome, opts.IncludeArchived)
 	if err != nil {
 		return result, err
 	}
-	result.Sources = len(files)
+	sources := make([]nativeSessionSource, 0, len(codexFiles))
+	paths := make([]string, 0, len(codexFiles))
+	for _, path := range codexFiles {
+		sources = append(sources, nativeSessionSource{path: path, harness: harnessCodex})
+		paths = append(paths, path)
+	}
+	if opts.IncludeDeepSeek {
+		deepSeekFiles, err := discoverDeepSeekSessionFiles(opts.DeepSeekHome)
+		if err != nil {
+			return result, err
+		}
+		for _, path := range deepSeekFiles {
+			sources = append(sources, nativeSessionSource{
+				path: path, harness: harnessDeepSeek,
+				compressed: filepath.Base(path) == deepSeekCompressedFilename,
+			})
+			paths = append(paths, path)
+		}
+	}
+	result.Sources = len(sources)
 	titles, err := loadTitles(opts.CodexHome)
 	if err != nil {
 		return result, fmt.Errorf("read Codex session titles: %w", err)
@@ -72,7 +104,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	} else if window < 0 {
 		window = 0
 	}
-	stable, busy, observationIssues, observeErr := observeStableSources(ctx, files, window)
+	stable, busy, observationIssues, observeErr := observeStableSources(ctx, paths, window)
 	if observeErr != nil {
 		return result, observeErr
 	}
@@ -81,15 +113,22 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		result.Skipped++
 		result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(issue.path), issue.err))
 	}
-	for _, path := range files {
+	for _, source := range sources {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
+		path := source.path
 		expected, ok := stable[path]
 		if !ok {
 			continue
 		}
-		raw, readErr := readObservedSource(ctx, path, expected)
+		var raw []byte
+		var readErr error
+		if source.harness == harnessDeepSeek {
+			raw, readErr = readObservedFile(ctx, path, expected)
+		} else {
+			raw, readErr = readObservedSource(ctx, path, expected)
+		}
 		if readErr != nil {
 			if errors.Is(readErr, context.Canceled) || errors.Is(readErr, context.DeadlineExceeded) {
 				return result, readErr
@@ -102,9 +141,22 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(path), readErr))
 			continue
 		}
-		fallbackID := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-		session, parseErr := parseSession(raw, fallbackID, titles)
+		var session Session
+		var parseErr error
+		if source.harness == harnessDeepSeek {
+			session, parseErr = parseDeepSeekSession(raw, source.compressed, opts.DeepSeekHome)
+			if parseErr == nil && filepath.Base(filepath.Dir(path)) != session.ID {
+				parseErr = fmt.Errorf("DeepSeek session directory ID %q does not match header ID %q", filepath.Base(filepath.Dir(path)), session.ID)
+			}
+		} else {
+			fallbackID := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			session, parseErr = parseSession(raw, fallbackID, titles)
+		}
 		if parseErr != nil {
+			if sourceErrorIsBusy(parseErr) {
+				result.Busy++
+				continue
+			}
 			result.Skipped++
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(path), parseErr))
 			continue
@@ -166,7 +218,8 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			}
 			kind := changeKind(history[key], snapshot)
 			change := Change{
-				Kind: kind, RepositoryKey: repo.Key, RepositoryName: repo.Name,
+				Kind: kind, Harness: snapshot.Session.Harness,
+				RepositoryKey: repo.Key, RepositoryName: repo.Name,
 				DeviceName: snapshot.DeviceName, SessionID: snapshot.Session.ID,
 				SessionKey: snapshot.SessionKey, Title: snapshot.Session.Title,
 				DocumentHash: documentHash, SourceHash: snapshot.Session.RawHash,
@@ -176,6 +229,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			result.Changes = append(result.Changes, change)
 			history[key] = append(history[key], Entry{
 				RepositoryKey: repo.Key, RepositoryName: repo.Name, SessionID: snapshot.Session.ID,
+				Harness:  snapshot.Session.Harness,
 				DeviceID: snapshot.DeviceID, DeviceName: snapshot.DeviceName, SessionKey: snapshot.SessionKey,
 				Title: snapshot.Session.Title, DocumentHash: documentHash,
 				SourceHash: snapshot.Session.RawHash, UpdatedAt: formatTime(snapshot.SourceUpdate), Path: snapshotPath,
@@ -185,7 +239,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		}
 	}
 	if opts.SessionID != "" && result.Matched == 0 && result.Busy == 0 && result.FilteredInternal == 0 {
-		return result, fmt.Errorf("Codex session %q was not found for the selected repository scope", opts.SessionID)
+		return result, fmt.Errorf("session %q was not found for the selected repository scope", opts.SessionID)
 	}
 	if result.Skipped > 0 {
 		sortChanges(result.Changes)
@@ -592,6 +646,7 @@ func verifyClaimableSessionDirectory(directory string, document []byte, session 
 func entryFromMetadata(value sessionMetadata, path string) Entry {
 	return Entry{
 		RepositoryKey: value.RepositoryKey, RepositoryName: value.RepositoryName,
+		Harness:  sessionMetadataHarness(value),
 		DeviceID: value.DeviceID, DeviceName: value.DeviceName,
 		SessionID: value.SessionID, SessionKey: value.SessionKey, Title: value.Title,
 		DocumentHash: value.DocumentHash, SourceHash: value.SourceHash,

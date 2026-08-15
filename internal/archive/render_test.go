@@ -33,6 +33,11 @@ func TestSessionKeyUsesDeviceAndNativeSessionIdentity(t *testing.T) {
 	if makeSnapshot(repo, base, "device:b", "workstation").SessionKey == first.SessionKey {
 		t.Fatal("different devices shared one session identity")
 	}
+	deepSeek := base
+	deepSeek.Harness = harnessDeepSeek
+	if makeSnapshot(repo, deepSeek, "device:a", "workstation").SessionKey == first.SessionKey {
+		t.Fatal("different harnesses shared one session identity")
+	}
 }
 
 func TestRenderSnapshotIncludesConversationTimeline(t *testing.T) {
@@ -52,7 +57,8 @@ func TestRenderSnapshotIncludesConversationTimeline(t *testing.T) {
 	}, "device:a", "workstation")
 	markdown := string(renderSnapshot(snapshot))
 	for _, expected := range []string{
-		"renderer_version: 6",
+		"renderer_version: 7",
+		`harness: "codex"`,
 		`created_at: "2026-08-05T01:00:00Z"`,
 		`first_message_at: "2026-08-05T01:01:00Z"`,
 		`last_message_at: "2026-08-05T01:02:00Z"`,
@@ -69,6 +75,20 @@ func TestRenderSnapshotIncludesConversationTimeline(t *testing.T) {
 	for _, hidden := range []string{"sha256:", "session-1", "source_hash:", "session_key:"} {
 		if strings.Contains(markdown, hidden) {
 			t.Fatalf("Markdown exposes hidden identity %q:\n%s", hidden, markdown)
+		}
+	}
+}
+
+func TestRenderSnapshotNamesDeepSeekHarness(t *testing.T) {
+	repo := repositoryFromRemote("github.com/example/project")
+	snapshot := makeSnapshot(repo, Session{
+		ID: "session-1", Harness: harnessDeepSeek, Title: "DeepSeek transcript", RawHash: digest("raw"),
+		Messages: []Message{{Role: "user", Text: "hello"}}, UserMessages: 1,
+	}, "device:a", "workstation")
+	markdown := string(renderSnapshot(snapshot))
+	for _, expected := range []string{`harness: "deepseek"`, "Exported from DeepSeek Harness"} {
+		if !strings.Contains(markdown, expected) {
+			t.Fatalf("DeepSeek Markdown is missing %q:\n%s", expected, markdown)
 		}
 	}
 }

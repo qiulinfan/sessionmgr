@@ -25,19 +25,21 @@ import (
 var staticFiles embed.FS
 
 type Options struct {
-	Listen      string
-	CodexHome   string
-	Repo        string
-	OpenBrowser bool
-	ConfigStore config.Store
-	Ready       func(string)
-	Log         io.Writer
+	Listen       string
+	CodexHome    string
+	DeepSeekHome string
+	Repo         string
+	OpenBrowser  bool
+	ConfigStore  config.Store
+	Ready        func(string)
+	Log          io.Writer
 }
 
 type exportRequest struct {
 	Directory       string `json:"directory"`
 	Scope           string `json:"scope"`
 	IncludeArchived bool   `json:"include_archived"`
+	IncludeDeepSeek bool   `json:"include_deepseek"`
 	IncludeNonGit   bool   `json:"include_non_git"`
 }
 
@@ -74,7 +76,7 @@ func Run(ctx context.Context, opts Options) error {
 		address = "[::1]:" + port
 	}
 	url := "http://" + address + "/#" + token
-	handler, err := NewHandler(token, opts.ConfigStore, opts.CodexHome, opts.Repo)
+	handler, err := NewHandlerWithSources(token, opts.ConfigStore, opts.CodexHome, opts.DeepSeekHome, opts.Repo)
 	if err != nil {
 		return err
 	}
@@ -110,6 +112,10 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 func NewHandler(token string, store config.Store, codexHome, repo string) (http.Handler, error) {
+	return NewHandlerWithSources(token, store, codexHome, "", repo)
+}
+
+func NewHandlerWithSources(token string, store config.Store, codexHome, deepSeekHome, repo string) (http.Handler, error) {
 	if token == "" {
 		return nil, fmt.Errorf("GUI API token is required")
 	}
@@ -177,8 +183,10 @@ func NewHandler(token string, store config.Store, codexHome, repo string) (http.
 		}
 		allRepos := body.Scope != "current"
 		result, exportErr := archive.Export(request.Context(), archive.Options{
-			CodexHome: codexHome, Output: directory, Repo: repo, AllRepos: allRepos,
+			CodexHome: codexHome, DeepSeekHome: deepSeekHome,
+			Output: directory, Repo: repo, AllRepos: allRepos,
 			IncludeArchived: body.IncludeArchived,
+			IncludeDeepSeek: body.IncludeDeepSeek,
 			IncludeNonGit:   body.IncludeNonGit,
 			DeviceID:        device.DeviceID, DeviceName: device.DeviceName,
 		})

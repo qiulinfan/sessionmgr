@@ -1,18 +1,21 @@
 # sessionmgr
 
-`sessionmgr` 把本机 Codex sessions 导出成可以由 Git 管理的 Markdown 文件。默认按 hosted
-Git remote 组织；v0.5 也可以显式包括没有 hosted remote 的本地目录。
+`sessionmgr` 把本机 Codex 与 DeepSeek Harness sessions 导出成可以由 Git 管理的 Markdown
+文件。默认仍只扫描 Codex；DeepSeek Harness 与没有 hosted remote 的本地目录都需要显式
+开启。
 
 它的核心工作流有四部分：
 
 1. 记住一个用户指定的导出目录；
-2. 按规范化后的 Git 远程仓库组织 sessions，并可选择包括非 Git/本地-only 目录；
+2. 按规范化后的 Git 远程仓库组织 sessions，并可选择包括 DeepSeek Harness 与非 Git/本地-only
+   目录；
 3. Git 仓库只显示增量变化，非 Git目录每次显式执行全量导出；
 4. 通过默认 dry-run 的显式命令，安全清理由旧 renderer 误导出的内部 session 副本。
 
-Codex home 对 Session Manager 始终是只读源：程序只扫描和读取原始 JSONL，不会写入、
-重命名、归档或删除它们。程序的写操作只发生在自己的配置文件和用户指定的导出目录；
-`cleanup-internal --apply` 也只作用于经过身份与 hash 校验的导出副本。
+Codex home 与 DeepSeek Harness home 对 Session Manager 始终是只读源：程序只扫描和读取
+原始 JSONL/Zstandard 日志及显式引用的附件对象，不会写入、重命名、归档或删除它们。程序
+的写操作只发生在自己的配置文件和用户指定的导出目录；`cleanup-internal --apply` 也只作用于
+经过身份与 hash 校验的 Codex 导出副本。
 
 ## GUI
 
@@ -27,8 +30,8 @@ sessionmgr gui
 程序会在随机 loopback 端口启动本地页面并打开默认浏览器。GUI 可以：
 
 - 选择、保存并恢复导出目录；
-- 导出全部目录或当前目录的 active sessions，并可分别勾选包括 Codex 已归档的 sessions
-  与非 Git目录；非 Git选项明确标记为全量导出；
+- 导出全部目录或当前目录的 sessions，并可分别勾选包括 Codex 已归档 sessions、DeepSeek
+  Harness sessions 与非 Git目录；非 Git选项明确标记为全量导出；
 - 按 repository 与设备目录折叠展示本次新增、更新或重命名的 Markdown 文档，并标出
   该变化中的附件/复制数；
 - 非 Git根节点已经表示设备，其变化直接显示为 session 卡片，不为每个对话创建重复的
@@ -62,7 +65,7 @@ sessionmgr export
 
 ```bash
 sessionmgr export --repo /path/to/repo
-sessionmgr export --session <codex-session-id>
+sessionmgr export --session <native-session-id>
 ```
 
 默认不会导出已经位于 Codex `archived_sessions/` 的 session。需要显式包括它们时运行：
@@ -70,6 +73,17 @@ sessionmgr export --session <codex-session-id>
 ```bash
 sessionmgr export --include-archived
 ```
+
+DeepSeek Harness 默认不扫描。需要把 `$DSH_HOME/sessions`（未设置时 `~/.dsh/sessions`）中的
+顶层会话加入同一次导出时运行：
+
+```bash
+sessionmgr export --include-deepseek
+sessionmgr export --include-deepseek --deepseek-home /path/to/dsh-home
+```
+
+`--include-deepseek`、`--include-archived` 与 `--include-non-git` 相互独立；例如 DeepSeek
+会话的 CWD 没有 hosted remote 时，还需要同时传 `--include-non-git`。
 
 默认也不会导出无法映射到 hosted Git remote 的 session。需要把非 Git目录或只有本地 Git
 历史、没有 hosted origin 的目录一并全量导出时运行：
@@ -101,9 +115,10 @@ No changes.
 人类可读的 CLI 表格不显示 hash；完整 identity/change hash 仅在 JSON 和隐藏 sidecar
 中供校验与自动化使用。
 
-默认导出只保留顶层用户 session。Codex 的 Guardian/approval 与普通 spawned subagent
-会根据 `session_meta.source`/`thread_source` 结构化识别并排除，JSON 结果通过
-`filtered_internal` 计数显示。清理由旧 renderer 错误导出的内部文档时，先运行：
+默认导出只保留顶层用户 session。Codex 的 Guardian/approval 与 spawned subagent 会根据
+`session_meta.source`/`thread_source` 结构化识别；DeepSeek Harness 会根据 header 中的
+`origin`、`parentSession` 与 `delegationDepth` 识别 subagent。它们都由
+`filtered_internal` 计数显示。清理由旧 renderer 错误导出的 Codex 内部文档时，先运行：
 
 ```bash
 sessionmgr cleanup-internal --directory /path/to/session-archive
@@ -160,12 +175,15 @@ sessionmgr cleanup-internal --directory /path/to/session-archive --apply
   按其稳定 CWD 与当前 device ID 组成的本机目录身份全量导出。
 - 非 Git身份的绝对路径只参与本机 hash 计算，不进入 Markdown 或隐藏 sidecar。可见路径用
   `(non-git)<device-name>/<directory-name>`；同名规范化碰撞仍拒绝覆盖。
-- 每台机器首次导出时在本地配置中生成持久 device ID；session key 由 device ID 与
-  Codex 原生 session ID 共同生成。
+- 每台机器首次导出时在本地配置中生成持久 device ID；Codex session 继续沿用 device ID 与
+  原生 session ID 的既有 key，DeepSeek Harness key 额外包含 harness identity，防止两个
+  harness 的同名原生 ID 冲突。
 - hash 不出现在可见目录或 Markdown 文件名中。repository/session identity、source hash
   和 document hash 分别保存在两个隐藏的 `.sessionmgr-*.json` 文件中。
 - 每个设备/session 只有一个 `conversation.md`；内容更新时安全更新它，名称改变时重命名
   语义目录，旧版本由 Git 历史保存。
+- DeepSeek Harness 的语义 session 目录带 `deepseek--` 前缀，使相同创建时间和标题也不会与
+  Codex 可见路径碰撞；Markdown、sidecar、`list` 与 changeset 都显式记录 `harness`。
 - 用户在聊天框中结构化投入的图片、音频与可识别文件会跟随对话导出。可见
   文件名使用稳定序号和可读原名，hash、大小、MIME、状态与消息位置只保存在
   `.sessionmgr-session.json`。
@@ -186,9 +204,11 @@ layout-v3 的 `repositories/<host>/<owner>/<repo>` 与 layout-v4 的
 所有权/hash 校验的导出时移到上面的 layout-v5 路径。确认没有其他内容后，迁移会移除空的
 旧 `sessions/`/device 目录；程序不会自动删除旧 repository sidecar 或 v1/v2 归档。
 
-导出不会锁住 Codex 的源文件。所有 JSONL 共用一次短暂稳定观察窗口；在窗口内仍在
-变化、读取时被替换、被操作系统报告为锁定，或尾部记录不完整的 session 会记入 JSON
-结果的 `busy` 计数并留到下次处理。`busy` 不产生 warning 或失败退出码。
+导出不会锁住原生源文件。所有 Codex 与已选择的 DeepSeek source 共用一次短暂稳定观察窗口；
+在窗口内仍在变化、读取时被替换、被操作系统报告为锁定，或尾部记录不完整的 session 会
+记入 JSON 结果的 `busy` 计数并留到下次处理。DeepSeek `.jsonl.zstd` 支持当前 harness 的
+多 frame 追加格式；每个 frame 的结构、checksum、解压上限和最终 JSONL 完整性都会验证。
+`busy` 不产生 warning 或失败退出码，确定的损坏或不支持格式则作为 skipped 报告。
 
 普通导出只扫描 Codex active `sessions/`；`--include-archived` 或 GUI 的对应选项才会把
 `archived_sessions/` 加入同一次扫描。因此，在首次导出前已经被用户归档的 session 默认
@@ -201,6 +221,13 @@ Manager 是追加/更新式归档器，不把 Codex 当前目录镜像成需要�
 非 Git全量导出只改变“匹配 source 每轮都重新发布并显示”的策略，不授予删除权限，也不改变
 上述 archived/source-missing retention 规则。
 
+DeepSeek Harness discovery 只接受每个 session 目录中的一个 `session.jsonl.zstd` 或
+`session.jsonl`。header 必须是 format v0 的顶层会话；event `seq` 必须连续，packed chunk
+记录也要通过成员与时间校验。正文只投影 `surfaceOp=append` 且 `source.kind=user` 的真实
+用户消息，以及 model assistant 的可见 text block；plugin 注入、surface replacement、
+reasoning 和 tool payload 不进入正文。最新 `session/title` 作为标题。图片引用只从
+`attachments/v1/objects` 读取，并在复制前同时验证声明的 SHA-256 与大小。
+
 每个 Markdown 文档包含明确的时间轴：创建时间、第一条和最后一条可读消息时间、最后
 一条源事件时间、标题更新时间，以及用户/助手消息数量。正文保持源文件顺序，并在每条
 消息标题上显示其原始 UTC 时间；源记录没有 timestamp 时不会使用文件时间猜测。
@@ -212,11 +239,11 @@ Manager 是追加/更新式归档器，不把 Codex 当前目录镜像成需要�
 
 并非所有 `user_message` 都来自用户：内部 Guardian 会把父会话 transcript 与 tool history
 包装成审批输入，spawned subagent 会继承父会话历史，某些客户端还会把编辑器说明或 MCP
-启动错误写入 user event。renderer v6 使用 session provenance 排除所有 subagent，对已知
+启动错误写入 user event。renderer v7 使用 session provenance 排除所有 subagent，对已知
 客户端前缀做来源限定的精确剥离，并只在无 `client_id` 的合成事件中屏蔽已确认的运行诊断。
 标题仅来自顶层 session 的显式索引或净化后的第一条真实用户请求。
 
-renderer v6 首次重导旧文档时会产生一次 changeset：可修复的客户端前缀标题会在
+renderer v7 首次重导旧文档时会产生一次 changeset：可修复的客户端前缀标题会在
 所有权/hash 校验后显示为 `RENAMED`，其他需要升级 renderer 的文档显示为 `UPDATED`。
 内部/context-only 旧文档必须通过上面的显式 dry-run-first 清理移除；完成后重复导出恢复
 为 no-op。
@@ -226,12 +253,13 @@ renderer v6 首次重导旧文档时会产生一次 changeset：可修复的客�
 Markdown 保存用户/助手对话、完整消息时间轴、Git commit/branch 和少量计数。用户明确
 投入的附件保留原始 bytes，因此同样需要在公开提交前审阅。它不复制
 developer/system 指令、tool 参数、tool 输出、认证数据库、内部 reasoning 或环境变量
-值，也不复制 Codex 为任务启动注入的插件、仓库规则或运行环境上下文；常见 token、
+值，也不复制 Codex 为任务启动注入的插件、仓库规则、运行环境上下文或 DeepSeek plugin
+user messages；常见 token、
 私钥、credential URL 和 secret assignment 会替换成明确的
 `[REDACTED ...]`。
 
-原始 Codex JSONL 始终只读并保留在 Codex home。生成内容仍应在提交到公开 Git
-仓库前人工审阅，因为自由文本可能包含无法自动识别的敏感信息。
+原始 Codex JSONL 与 DeepSeek session/attachment objects 始终只读并保留在各自 home。
+生成内容仍应在提交到公开 Git 仓库前人工审阅，因为自由文本可能包含无法自动识别的敏感信息。
 
 ## 构建与验证
 
@@ -276,4 +304,4 @@ make dist
 ```
 
 产品契约见 [PRD](./docs/PRD.md)，格式与算法见 [SPEC](./docs/SPEC.md)，工程证据见
-[v0.5 devlog](./docs/devlogs/v0.5.0-dev.md)。
+[v0.6 devlog](./docs/devlogs/v0.6.0-dev.md)。

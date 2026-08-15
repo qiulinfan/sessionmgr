@@ -86,13 +86,19 @@ func resolveAttachment(ctx context.Context, session Session, repo Repository, at
 		return
 	}
 	attachment.MIMEType = normalizedAttachmentMIME(attachment.MIMEType, mediaType, attachment.Name, data)
+	contentHash := digestBytes(data)
+	if (attachment.ExpectedHash != "" && attachment.ExpectedHash != contentHash) ||
+		(attachment.ExpectedSize > 0 && attachment.ExpectedSize != int64(len(data))) {
+		attachment.Status = attachmentStatusUnavailable
+		return
+	}
 	if sensitiveAttachment(attachment.Name, attachment.MIMEType, data) {
 		attachment.Status = attachmentStatusSensitive
 		attachment.Data = nil
 		return
 	}
 	attachment.Size = int64(len(data))
-	attachment.ContentHash = digestBytes(data)
+	attachment.ContentHash = contentHash
 	if repositoryPath, ok := gitTrackedAttachment(ctx, session, repo, attachment.LocalPath, data); ok {
 		attachment.Status = attachmentStatusGitTracked
 		attachment.RepositoryPath = repositoryPath

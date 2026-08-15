@@ -286,3 +286,59 @@ func TestCLIReportsBusySessionWithoutFailing(t *testing.T) {
 		t.Fatalf("unexpected busy JSON: %s", stdout.String())
 	}
 }
+
+func TestCLIIncludesDeepSeekOnlyWhenRequested(t *testing.T) {
+	root := t.TempDir()
+	deepSeekHome := filepath.Join(root, "dsh")
+	localDirectory := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(localDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(deepSeekHome, "sessions", "--workspace--", "session-cli-deepseek", "session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf(`{"type":"session","version":0,"id":"session-cli-deepseek","createdAt":1786762800000,"cwd":%q,"delegationDepth":0,"agentPreset":"standard"}
+{"type":"user/message","seq":0,"time":1786762801000,"data":{"id":"user","role":"user","content":[{"type":"text","text":"export dsh"}],"source":{"kind":"user"}},"surfaceOp":"append"}
+{"type":"assistant/message","seq":1,"time":1786762802000,"data":{"turn":0,"step":0,"message":{"id":"assistant","role":"assistant","content":[{"type":"text","text":"done"}],"source":{"kind":"model","provider":"deepseek","model":"fixture"}}},"surfaceOp":"append"}
+`, localDirectory)
+	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SESSIONMGR_CONFIG", filepath.Join(root, "config.json"))
+	output := filepath.Join(root, "exports")
+	var stdout, stderr bytes.Buffer
+	code, err := Run(context.Background(), []string{
+		"export", "--all", "--directory", output, "--codex-home", filepath.Join(root, "codex"),
+		"--deepseek-home", deepSeekHome, "--include-non-git", "--json",
+	}, &stdout, &stderr)
+	if err != nil || code != 0 {
+		t.Fatalf("default export failed: code=%d err=%v stderr=%s", code, err, stderr.String())
+	}
+	var defaultResult struct {
+		Sources int `json:"sources"`
+		Created int `json:"created"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &defaultResult); err != nil || defaultResult.Sources != 0 || defaultResult.Created != 0 {
+		t.Fatalf("CLI included DeepSeek without opt-in: %s (%v)", stdout.String(), err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code, err = Run(context.Background(), []string{
+		"export", "--all", "--directory", output, "--codex-home", filepath.Join(root, "codex"),
+		"--deepseek-home", deepSeekHome, "--include-deepseek", "--include-non-git", "--json",
+	}, &stdout, &stderr)
+	if err != nil || code != 0 {
+		t.Fatalf("DeepSeek export failed: code=%d err=%v stderr=%s", code, err, stderr.String())
+	}
+	var included struct {
+		Created int `json:"created"`
+		Changes []struct {
+			Harness string `json:"harness"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &included); err != nil || included.Created != 1 || len(included.Changes) != 1 || included.Changes[0].Harness != "deepseek" {
+		t.Fatalf("--include-deepseek did not export the session: %s (%v)", stdout.String(), err)
+	}
+}
