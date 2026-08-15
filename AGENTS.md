@@ -77,3 +77,6 @@ Use `docs/devlogs/TEMPLATE.md` when starting a new version.
 - Prefer focused commits with messages that describe the product outcome.
 - Before push, inspect the staged diff and confirm the current devlog accurately
   describes it.
+
+
+
