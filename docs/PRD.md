@@ -215,6 +215,8 @@ hosted Git remote key | device-local directory key
   resource；架构相关的中间 resource object 不进入 Git；
 - release job 必须先执行 dependency verification、vet、普通测试与 race 测试，任一步失败时
   不得创建 Release；
+- Windows release 的本地与 CI 构建必须复用同一个 PowerShell 实现，避免图标、版本、PE 与
+  checksum 契约在两套脚本中漂移；
 - tag version 必须匹配 source version，且同版本 devlog 必须已审阅并标记为 `Released`；
 - Windows release 当前未签名时，下载说明必须明确 SmartScreen 风险，不得暗示已完成
   Authenticode 验证。

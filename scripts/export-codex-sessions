@@ -1,8 +1,0 @@
-#!/bin/sh
-set -eu
-
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repository_dir=$(dirname -- "$script_dir")
-
-cd "$repository_dir"
-exec sh "$repository_dir/scripts/go" run ./cmd/sessionmgr export --all --directory "$repository_dir/sessions" "$@"

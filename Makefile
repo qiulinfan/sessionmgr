@@ -1,4 +1,4 @@
-.PHONY: bootstrap build test vet race cross-check dist check clean clean-tools prepare-bin prepare-dist \
+.PHONY: build test vet race cross-check dist check clean prepare-bin prepare-dist \
 	cross-darwin-arm64 cross-linux-amd64 cross-windows-amd64 \
 	dist-darwin-arm64 dist-darwin-amd64 dist-linux-amd64 dist-linux-arm64 \
 	dist-windows-amd64 dist-windows-arm64
@@ -6,18 +6,15 @@
 BIN_DIR := bin
 DIST_DIR := dist
 NATIVE_WINDOWS := false
+GO ?= go
 
 ifeq ($(OS),Windows_NT)
 EXEEXT := .exe
 ifeq ($(strip $(MSYSTEM)),)
 NATIVE_WINDOWS := true
-GO ?= scripts\go.cmd
-else
-GO ?= sh ./scripts/go
 endif
 else
 EXEEXT :=
-GO ?= sh ./scripts/go
 endif
 
 BIN_PATH := $(BIN_DIR)/sessionmgr$(EXEEXT)
@@ -35,8 +32,6 @@ clean:
 	if exist "$(subst /,\,$(BIN_PATH))" del /Q "$(subst /,\,$(BIN_PATH))"
 	if exist "$(DIST_DIR)" rmdir /S /Q "$(DIST_DIR)"
 
-clean-tools:
-	if exist ".tools" rmdir /S /Q ".tools"
 else
 prepare-bin:
 	mkdir -p "$(BIN_DIR)"
@@ -48,8 +43,6 @@ clean:
 	rm -f "$(BIN_PATH)"
 	rm -rf "$(DIST_DIR)"
 
-clean-tools:
-	rm -rf ".tools"
 endif
 
 CROSS_TARGETS := cross-darwin-arm64 cross-linux-amd64 cross-windows-amd64
@@ -62,9 +55,6 @@ NO_CGO_TARGETS := build test vet $(CROSS_TARGETS) $(DIST_TARGETS)
 # syntax. Keep the race target on Go's native CGO setting because -race needs
 # CGO on supported hosts.
 $(NO_CGO_TARGETS): export CGO_ENABLED := 0
-
-bootstrap:
-	$(GO) version
 
 build: | prepare-bin
 	$(GO) build -trimpath -o "$(BIN_PATH)" ./cmd/sessionmgr

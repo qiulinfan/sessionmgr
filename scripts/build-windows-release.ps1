@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $distributionRoot = Join-Path $repositoryRoot 'dist'
-$goWrapper = Join-Path $PSScriptRoot 'go.cmd'
+$goExecutable = (Get-Command go -CommandType Application -ErrorAction Stop).Source
 $iconPath = Join-Path $repositoryRoot 'assets\sessionmgr.png'
 $resourceTool = 'github.com/tc-hib/go-winres@v0.3.3'
 $resourcePrefix = 'cmd/sessionmgr/rsrc'
@@ -35,7 +35,7 @@ $resourcesGenerated = $false
 Push-Location $repositoryRoot
 try {
     $resourcesGenerated = $true
-    & $goWrapper run $resourceTool simply `
+    & $goExecutable run $resourceTool simply `
         --arch amd64,arm64 `
         --out $resourcePrefix `
         --manifest cli `
@@ -68,7 +68,7 @@ try {
                 throw "Cannot replace the existing release build artifact: $staleAsset"
             }
         }
-        & $goWrapper build -trimpath -ldflags $linkerFlags -o $asset ./cmd/sessionmgr
+        & $goExecutable build -trimpath -ldflags $linkerFlags -o $asset ./cmd/sessionmgr
         if ($LASTEXITCODE -ne 0) {
             throw "Go failed to build the Windows/$architecture release asset."
         }
@@ -112,7 +112,7 @@ if ($LASTEXITCODE -ne 0 -or $reportedVersion.Trim() -ne "sessionmgr $Version") {
 foreach ($asset in $assets) {
     $resourceCheckDirectory = Join-Path $distributionRoot ".resource-check-$([Guid]::NewGuid().ToString('N'))"
     try {
-        & $goWrapper run $resourceTool extract --dir $resourceCheckDirectory $asset
+        & $goExecutable run $resourceTool extract --dir $resourceCheckDirectory $asset
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to inspect Windows resources in $asset."
         }

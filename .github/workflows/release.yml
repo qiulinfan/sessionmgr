@@ -13,10 +13,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  validate-and-build:
-    name: Validate and build Windows executables
+  validate:
+    name: Validate tagged source
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      release_version: ${{ steps.release.outputs.release_version }}
 
     steps:
       - name: Check out the tagged source
@@ -31,6 +33,7 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Validate the release tag
+        id: release
         shell: bash
         run: |
           if [[ "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
@@ -52,7 +55,7 @@ jobs:
             exit 1
           fi
 
-          echo "RELEASE_VERSION=$release_version" >> "$GITHUB_ENV"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
 
       - name: Verify dependencies
         shell: bash
@@ -74,65 +77,27 @@ jobs:
       - name: Test with the race detector
         run: go test -race ./...
 
-      - name: Build Windows release assets
-        shell: bash
-        run: |
-          mkdir -p dist
-          resource_prefix="cmd/sessionmgr/rsrc"
-          resource_files=(
-            "${resource_prefix}_windows_amd64.syso"
-            "${resource_prefix}_windows_arm64.syso"
-          )
-          for resource_file in "${resource_files[@]}"; do
-            if [[ -e "$resource_file" ]]; then
-              echo "Refusing to overwrite $resource_file" >&2
-              exit 1
-            fi
-          done
-          trap 'rm -f -- "${resource_files[@]}"' EXIT
+  build:
+    name: Build Windows executables
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 20
 
-          go run github.com/tc-hib/go-winres@v0.3.3 simply \
-            --arch amd64,arm64 \
-            --out "$resource_prefix" \
-            --manifest cli \
-            --product-version "$RELEASE_VERSION" \
-            --file-version "$RELEASE_VERSION" \
-            --file-description "Session Manager" \
-            --product-name "Session Manager" \
-            --original-filename "sessionmgr.exe" \
-            --icon assets/sessionmgr.png
-          for resource_file in "${resource_files[@]}"; do
-            test -s "$resource_file"
-          done
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
-          linker_flags="-s -w -X github.com/sessionmgr/sessionmgr/internal/app.version=$RELEASE_VERSION"
-          for architecture in amd64 arm64; do
-            asset="dist/sessionmgr-v$RELEASE_VERSION-windows-$architecture.exe"
-            CGO_ENABLED=0 GOOS=windows GOARCH="$architecture" \
-              go build -trimpath -ldflags "$linker_flags" -o "$asset" ./cmd/sessionmgr
-            magic="$(od -An -t x1 -N 2 "$asset" | tr -d ' \n')"
-            if [[ "$magic" != "4d5a" ]]; then
-              echo "$asset is not a Windows PE executable" >&2
-              exit 1
-            fi
-            go version -m "$asset"
-          done
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: go.sum
 
-          version_check="$RUNNER_TEMP/sessionmgr-version-check"
-          CGO_ENABLED=0 go build -trimpath -ldflags "$linker_flags" -o "$version_check" ./cmd/sessionmgr
-          [[ "$("$version_check" version)" == "sessionmgr $RELEASE_VERSION" ]]
-
-          for architecture in amd64 arm64; do
-            resource_check="$RUNNER_TEMP/sessionmgr-winres-$architecture"
-            go run github.com/tc-hib/go-winres@v0.3.3 extract \
-              --dir "$resource_check" \
-              "dist/sessionmgr-v$RELEASE_VERSION-windows-$architecture.exe"
-            test -s "$resource_check/#1_0000.ico"
-            grep -Fq "\"ProductVersion\": \"$RELEASE_VERSION\"" "$resource_check/winres.json"
-          done
-
-          cd dist
-          sha256sum *.exe > SHA256SUMS.txt
+      - name: Build and verify Windows release assets
+        shell: pwsh
+        run: .\scripts\build-windows-release.ps1 -Version '${{ needs.validate.outputs.release_version }}'
 
       - name: Stage validated release assets
         uses: actions/upload-artifact@v7
@@ -146,7 +111,7 @@ jobs:
 
   publish:
     name: Publish the tag release
-    needs: validate-and-build
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

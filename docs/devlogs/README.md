@@ -12,6 +12,7 @@ The repository-level requirements are defined in
 
 | Version | Status | Date | Summary |
 | --- | --- | --- | --- |
+| [`v0.7.0-dev`](./v0.7.0-dev.md) | Development | 2026-08-15 | Simpler contributor toolchain and one Windows release-build authority |
 | [`v0.6.0`](./v0.6.0.md) | Released | 2026-08-15 | DeepSeek Harness export and portable icon-bearing Windows releases |
 | [`v0.5.0-dev`](./v0.5.0-dev.md) | Superseded | 2026-08-05 | Explicit full export for non-Git and local-only session directories |
 | [`v0.4.0-dev`](./v0.4.0-dev.md) | Superseded | 2026-08-05 | Archived-session opt-in, append-only retention, and reliable first-time portable builds |

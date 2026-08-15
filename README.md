@@ -14,8 +14,7 @@ Double-click the executable to start the local UI and open your default browser.
 
 ## Build
 
-Git and GNU Make are required. The build wrapper uses Go 1.24+ from `PATH`, or
-downloads the repository-pinned portable Go toolchain after verifying its checksum.
+Git, GNU Make, and Go 1.24+ on `PATH` are required.
 
 ```bash
 make build
