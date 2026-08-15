@@ -9,3 +9,4 @@ coverage.out
 /gui/frontend/node_modules/
 /gui/frontend/package.json.md5
 /gui/frontend/wailsjs/
+/cmd/sessionmgr/rsrc_windows_*.syso

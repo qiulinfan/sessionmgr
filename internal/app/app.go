@@ -17,8 +17,8 @@ import (
 )
 
 // version is a variable so release builds can stamp the reviewed tag version
-// with -ldflags -X. Local and development builds retain this explicit default.
-var version = "0.6.0-dev"
+// with -ldflags -X. The default matches the current released source version.
+var version = "0.6.0"
 
 type commandError struct {
 	exitCode int

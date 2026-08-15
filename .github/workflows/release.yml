@@ -46,7 +46,7 @@ jobs:
             exit 1
           fi
 
-          devlog="docs/devlogs/v$release_version-dev.md"
+          devlog="docs/devlogs/v$release_version.md"
           if [[ ! -f "$devlog" ]] || ! grep -Fxq "> Status: Released" "$devlog"; then
             echo "$devlog must exist and be marked Released before tagging" >&2
             exit 1
@@ -78,6 +78,33 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
+          resource_prefix="cmd/sessionmgr/rsrc"
+          resource_files=(
+            "${resource_prefix}_windows_amd64.syso"
+            "${resource_prefix}_windows_arm64.syso"
+          )
+          for resource_file in "${resource_files[@]}"; do
+            if [[ -e "$resource_file" ]]; then
+              echo "Refusing to overwrite $resource_file" >&2
+              exit 1
+            fi
+          done
+          trap 'rm -f -- "${resource_files[@]}"' EXIT
+
+          go run github.com/tc-hib/go-winres@v0.3.3 simply \
+            --arch amd64,arm64 \
+            --out "$resource_prefix" \
+            --manifest cli \
+            --product-version "$RELEASE_VERSION" \
+            --file-version "$RELEASE_VERSION" \
+            --file-description "Session Manager" \
+            --product-name "Session Manager" \
+            --original-filename "sessionmgr.exe" \
+            --icon assets/sessionmgr.png
+          for resource_file in "${resource_files[@]}"; do
+            test -s "$resource_file"
+          done
+
           linker_flags="-s -w -X github.com/sessionmgr/sessionmgr/internal/app.version=$RELEASE_VERSION"
           for architecture in amd64 arm64; do
             asset="dist/sessionmgr-v$RELEASE_VERSION-windows-$architecture.exe"
@@ -94,6 +121,15 @@ jobs:
           version_check="$RUNNER_TEMP/sessionmgr-version-check"
           CGO_ENABLED=0 go build -trimpath -ldflags "$linker_flags" -o "$version_check" ./cmd/sessionmgr
           [[ "$("$version_check" version)" == "sessionmgr $RELEASE_VERSION" ]]
+
+          for architecture in amd64 arm64; do
+            resource_check="$RUNNER_TEMP/sessionmgr-winres-$architecture"
+            go run github.com/tc-hib/go-winres@v0.3.3 extract \
+              --dir "$resource_check" \
+              "dist/sessionmgr-v$RELEASE_VERSION-windows-$architecture.exe"
+            test -s "$resource_check/#1_0000.ico"
+            grep -Fq "\"ProductVersion\": \"$RELEASE_VERSION\"" "$resource_check/winres.json"
+          done
 
           cd dist
           sha256sum *.exe > SHA256SUMS.txt
@@ -140,4 +176,4 @@ jobs:
             --verify-tag \
             --generate-notes \
             --title "Session Manager $release_version" \
-            --notes "Portable Windows executables are attached for AMD64 and ARM64, together with SHA256SUMS.txt. These binaries are not Authenticode-signed, so Windows SmartScreen may show a warning."
+            --notes "Portable icon-bearing Windows executables are attached for AMD64 and ARM64, together with SHA256SUMS.txt. These binaries are not Authenticode-signed, so Windows SmartScreen may show a warning."

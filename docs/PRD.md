@@ -211,6 +211,8 @@ hosted Git remote key | device-local directory key
   Windows AMD64/ARM64 单文件 `.exe` 与 `SHA256SUMS.txt`；
 - release binary 的 `sessionmgr version` 必须等于 tag 去掉 `v` 后的版本，开发构建继续明确
   显示 `-dev`；
+- Windows release executable 必须包含已审阅的应用图标以及与 tag 一致的 file/product version
+  resource；架构相关的中间 resource object 不进入 Git；
 - release job 必须先执行 dependency verification、vet、普通测试与 race 测试，任一步失败时
   不得创建 Release；
 - tag version 必须匹配 source version，且同版本 devlog 必须已审阅并标记为 `Released`；
@@ -300,3 +302,5 @@ hosted Git remote key | device-local directory key
     binary 实际执行 `version` 后必须精确报告所请求的版本。
 47. 非 semver tag、source version/devlog 不匹配、依赖校验失败、vet/test/race 失败、非 PE 输出
     或 version stamp 不一致均阻止发布；发布说明明确当前 exe 未做 Authenticode 签名。
+48. Windows AMD64/ARM64 release 均从同一透明 PNG 生成应用图标；构建后反向提取 executable
+    resources，图标或 tag 对应 product version 缺失时阻止发布。

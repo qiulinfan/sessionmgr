@@ -491,7 +491,7 @@ Git。`make cross-check` 编译 darwin/arm64、linux/amd64、windows/amd64；`ma
 
 ### 11.1 Windows release pipeline
 
-开发 binary 的默认版本是 `0.6.0-dev`。`internal/app.version` 必须是可由 Go linker `-X`
+v0.6.0 release source 的默认版本是 `0.6.0`。`internal/app.version` 必须是可由 Go linker `-X`
 覆盖的 string variable；正式构建使用：
 
 ```text
@@ -502,12 +502,14 @@ Git。`make cross-check` 编译 darwin/arm64、linux/amd64、windows/amd64；`ma
 `^v[0-9]+\.[0-9]+\.[0-9]+$`。发布顺序固定为：
 
 1. checkout tag，使用仓库固定的 Go 1.26.5；验证 tag 与 `internal/app.version` 的 base version
-   一致，并要求 `docs/devlogs/v<version>-dev.md` 已存在且 status 为 `Released`；
+   一致，并要求 `docs/devlogs/v<version>.md` 已存在且 status 为 `Released`；
 2. `go mod tidy` 后要求 `go.mod`/`go.sum` 无 diff，再执行 `go mod verify`；
 3. no-CGO `go vet ./...` 与 `go test ./...`；
 4. `go test -race ./...`；
-5. 以 `CGO_ENABLED=0` 分别构建 Windows `amd64` 与 `arm64`；
-6. 验证两个文件以 `MZ` PE magic 开头，并用同一 linker flags 构建可执行的本机 version-check
+5. 以固定的 `go-winres v0.3.3` 从 `assets/sessionmgr.png` 生成 architecture-qualified `.syso`
+   resource，再以 `CGO_ENABLED=0` 分别构建 Windows `amd64` 与 `arm64`；中间 `.syso` 不进入 Git；
+6. 验证两个文件以 `MZ` PE magic 开头，反向提取 AMD64 resource 并要求应用图标与 tag 对应
+   `ProductVersion` 均存在，再用同一 linker flags 构建可执行的本机 version-check
    binary，要求输出 `sessionmgr <version>`；
 7. 对两个 exe 生成 `SHA256SUMS.txt`，将三项作为保留 1 天的 workflow artifact 交给独立
    publish job；build job 只有 `contents: read`；
@@ -524,10 +526,11 @@ sessionmgr-v<version>-windows-arm64.exe
 SHA256SUMS.txt
 ```
 
-`scripts/build-windows-release.ps1 -Version <version>` 在本地复用同一 linker target、资产命名、
-PE magic、当前架构 version execution 与 SHA-256 契约。它只写 Git-ignored `dist/`，不修改源码、
-配置、session source 或 export archive。release exe 是便携单文件：无参数启动现有 loopback
-GUI，关闭承载它的控制台进程即停止 server。
+`scripts/build-windows-release.ps1 -Version <version>` 在本地复用同一 linker target、图标/version
+resource、资产命名、PE magic、resource extraction、当前架构 version execution 与 SHA-256 契约。
+它只保留 Git-ignored `dist/` 中的最终资产；architecture-specific `.syso` 与提取检查目录均在
+构建后清除，不修改配置、session source 或 export archive。release exe 是便携单文件：无参数
+启动现有 loopback GUI，关闭承载它的控制台进程即停止 server。
 
 v0.6 不包含 Authenticode certificate 或签名 secret。Release notes 与 README 必须明确当前
 binary 未签名及可能出现 SmartScreen warning；checksum 证明下载完整性，不得表述为发布者
