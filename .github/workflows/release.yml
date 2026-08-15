@@ -103,9 +103,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: windows-release-assets
-          path: |
-            dist/*.exe
-            dist/SHA256SUMS.txt
+          path: dist/*.exe
           if-no-files-found: error
           retention-days: 1
 
@@ -125,10 +123,6 @@ jobs:
           name: windows-release-assets
           path: dist
 
-      - name: Reverify downloaded checksums
-        working-directory: dist
-        run: sha256sum --check SHA256SUMS.txt
-
       - name: Publish the tag release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -136,9 +130,9 @@ jobs:
         shell: bash
         run: |
           release_version="${RELEASE_VERSION#v}"
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          gh release create "$GITHUB_REF_NAME" dist/*.exe \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --generate-notes \
             --title "Session Manager $release_version" \
-            --notes "Portable icon-bearing Windows executables are attached for AMD64 and ARM64, together with SHA256SUMS.txt. These binaries are not Authenticode-signed, so Windows SmartScreen may show a warning."
+            --notes "Portable icon-bearing Windows executables are attached for AMD64 and ARM64. These binaries are not Authenticode-signed, so Windows SmartScreen may show a warning."

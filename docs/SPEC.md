@@ -521,10 +521,9 @@ string variable；正式构建使用：
 7. builder 验证两个文件以 `MZ` PE magic 开头，反向提取两个 architecture 的 resource 并要求
    应用图标与 tag 对应 `ProductVersion` 均存在，再执行当前 Windows architecture 的 binary，
    要求输出 `sessionmgr <version>`；
-8. builder 对两个 exe 生成 `SHA256SUMS.txt`，将三项作为保留 1 天的 workflow artifact 交给独立
-   publish job；build job 只有 `contents: read`；
-9. publish job 以 `actions: read` 下载资产并再次执行 `sha256sum --check`；
-10. 只有 publish job 获得 `contents: write`，使用当前 workflow-scoped `GITHUB_TOKEN` 和
+8. builder 将两个 exe 作为保留 1 天的 workflow artifact 交给独立 publish job；build job
+   只有 `contents: read`；
+9. 只有 publish job 获得 `contents: write`，使用当前 workflow-scoped `GITHUB_TOKEN` 和
    `gh release create --verify-tag` 一次创建 Release 并上传全部资产。任何前置步骤失败都不得
    调用 release creation。
 
@@ -533,19 +532,17 @@ string variable；正式构建使用：
 ```text
 sessionmgr-v<version>-windows-amd64.exe
 sessionmgr-v<version>-windows-arm64.exe
-SHA256SUMS.txt
 ```
 
 `scripts/build-windows-release.ps1 -Version <version>` 是本地与 CI 共用的唯一 Windows release
 builder，复用同一 linker target、图标/version resource、资产命名、PE magic、resource
-extraction、当前架构 version execution 与 SHA-256 契约。调用环境必须在 `PATH` 中提供 Go。
+extraction 与当前架构 version execution 契约。调用环境必须在 `PATH` 中提供 Go。
 它只保留 Git-ignored `dist/` 中的最终资产；architecture-specific `.syso` 与提取检查目录均在
 构建后清除，不修改配置、session source 或 export archive。release exe 是便携单文件：无参数
 启动现有 loopback GUI，关闭承载它的控制台进程即停止 server。
 
-v0.6 不包含 Authenticode certificate 或签名 secret。Release notes 与 README 必须明确当前
-binary 未签名及可能出现 SmartScreen warning；checksum 证明下载完整性，不得表述为发布者
-身份认证。
+当前 release 不包含 Authenticode certificate 或签名 secret。Release notes 与 README 必须明确
+binary 未签名及可能出现 SmartScreen warning，不得暗示已验证发布者身份。
 
 ## 12. 兼容性
 

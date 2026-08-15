@@ -211,15 +211,15 @@ hosted Git remote key | device-local directory key
 - 必须能交叉构建 macOS、Linux、Windows；
 - 目录打开/浏览使用各平台最接近的可用方式，并提供手工路径 fallback；
 - 严格的 `vMAJOR.MINOR.PATCH` tag 必须在测试通过后自动创建 GitHub Release，至少附带
-  Windows AMD64/ARM64 单文件 `.exe` 与 `SHA256SUMS.txt`；
+  Windows AMD64/ARM64 两个单文件 `.exe`；
 - release binary 的 `sessionmgr version` 必须等于 tag 去掉 `v` 后的版本，开发构建继续明确
   显示 `-dev`；
 - Windows release executable 必须包含已审阅的应用图标以及与 tag 一致的 file/product version
   resource；架构相关的中间 resource object 不进入 Git；
 - release job 必须先执行 dependency verification、vet、普通测试与 race 测试，任一步失败时
   不得创建 Release；
-- Windows release 的本地与 CI 构建必须复用同一个 PowerShell 实现，避免图标、版本、PE 与
-  checksum 契约在两套脚本中漂移；
+- Windows release 的本地与 CI 构建必须复用同一个 PowerShell 实现，避免图标、版本与 PE
+  契约在两套脚本中漂移；
 - tag version 必须匹配 source version，且同版本 devlog 必须已审阅并标记为 `Released`；
 - Windows release 当前未签名时，下载说明必须明确 SmartScreen 风险，不得暗示已完成
   Authenticode 验证。
@@ -301,8 +301,8 @@ hosted Git remote key | device-local directory key
     可见语义目录仍不同且不得覆盖。
 44. DeepSeek image object 只有在 path、声明 hash、声明大小和稳定读取全部一致时才可归档；重复
     导出是 no-op，原生 session 与 object bytes 均保持不变。
-45. `v0.6.0` 形式的 tag 在所有发布门禁通过后生成 version-stamped Windows AMD64/ARM64 PE
-    executables 和 `SHA256SUMS.txt`，并把三者附加到同一个 GitHub Release。
+45. semver tag 在所有发布门禁通过后生成 version-stamped Windows AMD64/ARM64 PE
+    executables，并把两个 exe 附加到同一个 GitHub Release。
 46. 本地 Windows release 脚本生成与 CI 相同命名和版本输出的两个 exe；当前机器架构对应的
     binary 实际执行 `version` 后必须精确报告所请求的版本。
 47. 非 semver tag、source version/devlog 不匹配、依赖校验失败、vet/test/race 失败、非 PE 输出

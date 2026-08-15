@@ -135,15 +135,7 @@ foreach ($asset in $assets) {
     }
 }
 
-$checksumLines = foreach ($asset in $assets) {
-    $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
-    "$hash  $([IO.Path]::GetFileName($asset))"
-}
-$checksumPath = Join-Path $distributionRoot 'SHA256SUMS.txt'
-[IO.File]::WriteAllLines($checksumPath, $checksumLines, [Text.UTF8Encoding]::new($false))
-
 Write-Host "Built Session Manager $Version Windows release assets:"
 foreach ($asset in $assets) {
     Write-Host "  $asset"
 }
-Write-Host "  $checksumPath"
