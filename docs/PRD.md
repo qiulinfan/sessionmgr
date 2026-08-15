@@ -206,7 +206,16 @@ hosted Git remote key | device-local directory key
 - 核心与 GUI 必须保持纯 Go、`CGO_ENABLED=0` 可构建；Zstandard 依赖必须是可固定版本且支持
   checksum 验证的纯 Go 实现；
 - 必须能交叉构建 macOS、Linux、Windows；
-- 目录打开/浏览使用各平台最接近的可用方式，并提供手工路径 fallback。
+- 目录打开/浏览使用各平台最接近的可用方式，并提供手工路径 fallback；
+- 严格的 `vMAJOR.MINOR.PATCH` tag 必须在测试通过后自动创建 GitHub Release，至少附带
+  Windows AMD64/ARM64 单文件 `.exe` 与 `SHA256SUMS.txt`；
+- release binary 的 `sessionmgr version` 必须等于 tag 去掉 `v` 后的版本，开发构建继续明确
+  显示 `-dev`；
+- release job 必须先执行 dependency verification、vet、普通测试与 race 测试，任一步失败时
+  不得创建 Release；
+- tag version 必须匹配 source version，且同版本 devlog 必须已审阅并标记为 `Released`；
+- Windows release 当前未签名时，下载说明必须明确 SmartScreen 风险，不得暗示已完成
+  Authenticode 验证。
 
 ## 5. 非目标
 
@@ -285,3 +294,9 @@ hosted Git remote key | device-local directory key
     可见语义目录仍不同且不得覆盖。
 44. DeepSeek image object 只有在 path、声明 hash、声明大小和稳定读取全部一致时才可归档；重复
     导出是 no-op，原生 session 与 object bytes 均保持不变。
+45. `v0.6.0` 形式的 tag 在所有发布门禁通过后生成 version-stamped Windows AMD64/ARM64 PE
+    executables 和 `SHA256SUMS.txt`，并把三者附加到同一个 GitHub Release。
+46. 本地 Windows release 脚本生成与 CI 相同命名和版本输出的两个 exe；当前机器架构对应的
+    binary 实际执行 `version` 后必须精确报告所请求的版本。
+47. 非 semver tag、source version/devlog 不匹配、依赖校验失败、vet/test/race 失败、非 PE 输出
+    或 version stamp 不一致均阻止发布；发布说明明确当前 exe 未做 Authenticode 签名。

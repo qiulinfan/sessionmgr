@@ -46,6 +46,36 @@ sessionmgr gui
 GUI 只监听 `127.0.0.1`/`::1`，API 使用每次启动随机生成的 token。页面和 API 都
 内嵌在同一个 Go 二进制中，不需要 Node、WebView 或单独的服务。
 
+## Windows 便携版
+
+Windows 用户不需要安装 Go、Node 或单独的 Web server。正式 tag 会通过 GitHub Actions
+发布两个单文件程序到 [GitHub Releases](https://github.com/qiulinfan/sessionmgr/releases)：
+
+- `sessionmgr-v<version>-windows-amd64.exe`：普通 Intel/AMD 64-bit Windows；
+- `sessionmgr-v<version>-windows-arm64.exe`：Windows on ARM。
+
+下载对应 exe 后双击即可启动本地 GUI 并打开默认浏览器；保持控制台窗口运行，关闭该窗口即
+停止本地服务。release 同时提供 `SHA256SUMS.txt`，可以在 PowerShell 中验证：
+
+```powershell
+Get-FileHash .\sessionmgr-v0.6.0-windows-amd64.exe -Algorithm SHA256
+Get-Content .\SHA256SUMS.txt
+```
+
+当前便携版没有 Authenticode 代码签名，因此 Windows SmartScreen 可能显示“未知发布者”警告；
+校验 SHA-256 并确认文件来自上面的官方 Release 页面后再运行。程序不安装系统服务，也不写入
+Codex/DeepSeek Harness 的原始 session 目录。
+
+维护者也可以在 Windows 本地生成与 release 同名的 AMD64/ARM64 资产和 checksum：
+
+```powershell
+.\scripts\build-windows-release.ps1 -Version 0.6.0
+```
+
+只有推送严格的 `vMAJOR.MINOR.PATCH` tag 才会运行发布工作流；tag 前必须把对应 devlog 审阅
+完整并标记为 `Released`。工作流会检查 source version/devlog，再验证依赖、vet、普通测试与
+race 测试，最后注入 tag 版本、构建两个 Windows PE 文件、生成 SHA-256 并创建 Release。
+
 ## CLI
 
 配置一次导出目录：
@@ -296,7 +326,9 @@ make dist
 支持的 C 编译器。其他 build/test/vet/cross-check/dist 目标保持
 `CGO_ENABLED=0`。
 
-`make dist` 生成 macOS、Linux、Windows 的 AMD64/ARM64 单文件程序。仓库内也保留
+`make dist` 生成 macOS、Linux、Windows 的 AMD64/ARM64 开发版单文件程序。Windows 正式
+release 使用上面的 tag workflow 或 `build-windows-release.ps1` 注入不带 `-dev` 的版本号。
+仓库内也保留
 一个把导出目录设为本仓库 `sessions/` 的便捷脚本：
 
 ```bash

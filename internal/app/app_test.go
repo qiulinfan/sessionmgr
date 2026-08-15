@@ -13,6 +13,18 @@ import (
 	"github.com/sessionmgr/sessionmgr/internal/archive"
 )
 
+func TestVersionCommandUsesBuildVersion(t *testing.T) {
+	previous := version
+	version = "1.2.3"
+	t.Cleanup(func() { version = previous })
+
+	var stdout, stderr bytes.Buffer
+	code, err := Run(context.Background(), []string{"version"}, &stdout, &stderr)
+	if err != nil || code != 0 || stdout.String() != "sessionmgr 1.2.3\n" || stderr.Len() != 0 {
+		t.Fatalf("version command did not use the build version: code=%d err=%v stdout=%q stderr=%q", code, err, stdout.String(), stderr.String())
+	}
+}
+
 func TestConfiguredExportShowsOnlyCurrentChanges(t *testing.T) {
 	root := t.TempDir()
 	codexHome := filepath.Join(root, "codex")

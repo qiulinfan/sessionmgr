@@ -16,7 +16,9 @@ import (
 	"github.com/sessionmgr/sessionmgr/internal/ui"
 )
 
-const version = "0.6.0-dev"
+// version is a variable so release builds can stamp the reviewed tag version
+// with -ldflags -X. Local and development builds retain this explicit default.
+var version = "0.6.0-dev"
 
 type commandError struct {
 	exitCode int
