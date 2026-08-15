@@ -14,6 +14,14 @@ const languageSelect = document.querySelector("#language");
 const includeArchived = document.querySelector("#include-archived");
 const includeDeepSeek = document.querySelector("#include-deepseek");
 const includeNonGit = document.querySelector("#include-non-git");
+const setupGitStatus = document.querySelector("#setup-git-status");
+const setupGitDetail = document.querySelector("#setup-git-detail");
+const setupGitCommand = document.querySelector("#setup-git-command");
+const setupGitDownload = document.querySelector("#setup-git-download");
+const setupCodexStatus = document.querySelector("#setup-codex-status");
+const setupCodexDetail = document.querySelector("#setup-codex-detail");
+const setupDeepSeekStatus = document.querySelector("#setup-deepseek-status");
+const setupDeepSeekDetail = document.querySelector("#setup-deepseek-detail");
 
 const translations = {
   en: {
@@ -23,6 +31,22 @@ const translations = {
     connectionFailed: "Connection failed",
     heroTitle: "Keep only what changed.",
     heroLede: "Choose a persistent directory and export Codex or DeepSeek Harness sessions as Markdown, grouped by Git remote or local directory.",
+    environment: "Environment",
+    portableRuntime: "Portable EXE · no Go or Make needed",
+    environmentHint: "Session Manager checks the local tools and session folders it uses. Nothing is installed automatically.",
+    checking: "Checking…",
+    ready: "Ready",
+    missing: "Not found",
+    gitReady: "Git is available for repository detection.",
+    gitMissingWindows: "Git was not found. Install Git for Windows, then close and reopen Session Manager.",
+    gitMissingOther: "Git was not found on PATH. Install Git, then restart Session Manager.",
+    downloadGit: "Download Git for Windows instead",
+    codexReady: "Session folder found: {path}",
+    codexMissing: "No Codex session folder found at {path}. Run Codex once to create one.",
+    deepSeekOptional: "DeepSeek Harness (optional)",
+    deepSeekReady: "Session folder found: {path}",
+    deepSeekMissing: "No DeepSeek session folder found at {path}. This is fine if you only use Codex.",
+    sourceUnavailable: "The session location could not be resolved.",
     exportDirectory: "Export directory",
     directoryPlaceholder: "For example, /Users/me/Documents/session-archive",
     browse: "Browse",
@@ -64,6 +88,22 @@ const translations = {
     connectionFailed: "连接失败",
     heroTitle: "只保存这次发生的变化。",
     heroLede: "选择一个持久目录，将本机 Codex 或 DeepSeek Harness sessions 按 Git 远程仓库或本地目录导出为 Markdown。",
+    environment: "运行环境",
+    portableRuntime: "便携 EXE · 不需要 Go 或 Make",
+    environmentHint: "Session Manager 会检查所需的本地工具和 session 目录，不会自动安装或提权。",
+    checking: "检查中…",
+    ready: "可用",
+    missing: "未找到",
+    gitReady: "Git 已可用于识别仓库。",
+    gitMissingWindows: "未找到 Git。请安装 Git for Windows，然后关闭并重新打开 Session Manager。",
+    gitMissingOther: "在 PATH 中未找到 Git。请安装 Git，然后重新启动 Session Manager。",
+    downloadGit: "改用 Git for Windows 安装程序",
+    codexReady: "已找到 session 目录：{path}",
+    codexMissing: "在 {path} 未找到 Codex session 目录。请先运行一次 Codex。",
+    deepSeekOptional: "DeepSeek Harness（可选）",
+    deepSeekReady: "已找到 session 目录：{path}",
+    deepSeekMissing: "在 {path} 未找到 DeepSeek session 目录。如果只使用 Codex，可以忽略。",
+    sourceUnavailable: "无法确定 session 目录。",
     exportDirectory: "导出目录",
     directoryPlaceholder: "例如 /Users/me/Documents/session-archive",
     browse: "浏览",
@@ -105,6 +145,7 @@ let connectionState = "connecting";
 let saveState = { kind: "none", value: "" };
 let resultState = { kind: "idle", value: null };
 let exportBusy = false;
+let environmentState = null;
 
 function loadLanguage() {
   try {
@@ -149,9 +190,42 @@ function applyLanguage() {
     element.setAttribute("aria-label", t(element.dataset.i18nAriaLabel));
   }
   renderConnection();
+  renderEnvironment();
   renderSaveStatus();
   renderBusy();
   renderResult();
+}
+
+function renderSetupStatus(element, available) {
+  const state = environmentState === null ? "pending" : available ? "ready" : "missing";
+  element.className = `setup-status ${state}`;
+  element.textContent = t(state === "pending" ? "checking" : state);
+}
+
+function renderEnvironment() {
+  if (environmentState === null) {
+    renderSetupStatus(setupGitStatus, false);
+    renderSetupStatus(setupCodexStatus, false);
+    renderSetupStatus(setupDeepSeekStatus, false);
+    return;
+  }
+  const windows = environmentState.platform === "windows";
+  renderSetupStatus(setupGitStatus, environmentState.git_available);
+  setupGitDetail.textContent = t(environmentState.git_available ? "gitReady" : windows ? "gitMissingWindows" : "gitMissingOther");
+  setupGitCommand.classList.toggle("hidden", environmentState.git_available || !windows);
+  setupGitDownload.classList.toggle("hidden", environmentState.git_available || !windows);
+
+  const codex = environmentState.codex || {};
+  renderSetupStatus(setupCodexStatus, codex.available);
+  setupCodexDetail.textContent = codex.path
+    ? t(codex.available ? "codexReady" : "codexMissing", { path: codex.path })
+    : t("sourceUnavailable");
+
+  const deepSeek = environmentState.deepseek || {};
+  renderSetupStatus(setupDeepSeekStatus, deepSeek.available);
+  setupDeepSeekDetail.textContent = deepSeek.path
+    ? t(deepSeek.available ? "deepSeekReady" : "deepSeekMissing", { path: deepSeek.path })
+    : t("sourceUnavailable");
 }
 
 function renderConnection() {
@@ -420,8 +494,9 @@ applyLanguage();
 api("/api/state")
   .then((state) => {
     directory.value = state.directory || "";
+    environmentState = state.environment || null;
     connectionState = "connected";
-    renderConnection();
+    applyLanguage();
   })
   .catch((error) => {
     connectionState = "failed";

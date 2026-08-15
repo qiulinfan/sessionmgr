@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -222,6 +224,11 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	if !bytes.Contains(page, []byte(`id="include-non-git"`)) || !bytes.Contains(page, []byte("Include non-Git directories")) {
 		t.Fatal("GUI non-Git full-export option is missing")
 	}
+	if !bytes.Contains(page, []byte(`id="setup-git-status"`)) ||
+		!bytes.Contains(page, []byte("winget install --id Git.Git -e --source winget")) ||
+		!bytes.Contains(page, []byte("Portable EXE · no Go or Make needed")) {
+		t.Fatal("GUI environment setup guidance is missing")
+	}
 
 	scriptRequest := httptest.NewRequest(http.MethodGet, "/app.js", nil)
 	scriptResult := httptest.NewRecorder()
@@ -235,7 +242,8 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 		!bytes.Contains(script, []byte("sessionmgr-language")) || !bytes.Contains(script, []byte("filtered_internal")) ||
 		!bytes.Contains(script, []byte("include_archived")) || !bytes.Contains(script, []byte("include_deepseek")) ||
 		!bytes.Contains(script, []byte("include_non_git")) ||
-		!bytes.Contains(script, []byte("filtered_non_git")) || !bytes.Contains(script, []byte("badgeFull")) {
+		!bytes.Contains(script, []byte("filtered_non_git")) || !bytes.Contains(script, []byte("badgeFull")) ||
+		!bytes.Contains(script, []byte("renderEnvironment")) || !bytes.Contains(script, []byte("git_available")) {
 		t.Fatal("GUI script is missing grouped directory changes or persistent language selection")
 	}
 
@@ -249,8 +257,52 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	if !bytes.Contains(style, []byte("color-scheme: dark")) ||
 		!bytes.Contains(style, []byte("--paper: #0d1117")) ||
 		!bytes.Contains(style, []byte("--surface: #161b22")) ||
+		!bytes.Contains(style, []byte(".setup-command")) ||
 		bytes.Contains(style, []byte("color-scheme: light")) {
 		t.Fatal("GUI stylesheet is not using the GitHub Dark palette")
+	}
+}
+
+func TestGUIStateReportsRuntimeAndSessionSources(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	deepSeekHome := filepath.Join(root, "dsh")
+	if err := os.MkdirAll(filepath.Join(codexHome, "sessions"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandlerWithSources("test-token", config.Store{Path: filepath.Join(root, "config.json")}, codexHome, deepSeekHome, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := authenticatedRequest(http.MethodGet, "/api/state", nil)
+	result := httptest.NewRecorder()
+	handler.ServeHTTP(result, request)
+	if result.Code != http.StatusOK {
+		t.Fatalf("state returned %d: %s", result.Code, result.Body.String())
+	}
+	var state struct {
+		Environment environmentState `json:"environment"`
+	}
+	if err := json.Unmarshal(result.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	_, gitErr := exec.LookPath("git")
+	if state.Environment.Platform != runtime.GOOS || state.Environment.Git != (gitErr == nil) {
+		t.Fatalf("unexpected runtime state: %+v", state.Environment)
+	}
+	if !state.Environment.Codex.Available || state.Environment.Codex.Path != codexHome {
+		t.Fatalf("Codex source was not detected: %+v", state.Environment.Codex)
+	}
+	if state.Environment.DeepSeek.Available || state.Environment.DeepSeek.Path != deepSeekHome {
+		t.Fatalf("missing DeepSeek source was not reported: %+v", state.Environment.DeepSeek)
+	}
+}
+
+func TestInspectEnvironmentReportsMissingGit(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	state := inspectEnvironment(filepath.Join(t.TempDir(), "codex"), filepath.Join(t.TempDir(), "dsh"))
+	if state.Git {
+		t.Fatal("Git was reported available with an empty tool path")
 	}
 }
 

@@ -26,6 +26,42 @@
         </div>
       </header>
 
+      <section class="panel setup-panel">
+        <div class="section-heading">
+          <div>
+            <p class="step">00</p>
+            <h2 data-i18n="environment">Environment</h2>
+          </div>
+          <span class="muted" data-i18n="portableRuntime">Portable EXE · no Go or Make needed</span>
+        </div>
+        <p class="hint" data-i18n="environmentHint">Session Manager checks the local tools and session folders it uses. Nothing is installed automatically.</p>
+        <div class="setup-list">
+          <div class="setup-item">
+            <div class="setup-line">
+              <strong>Git</strong>
+              <span id="setup-git-status" class="setup-status pending" data-i18n="checking">Checking…</span>
+            </div>
+            <p id="setup-git-detail" class="setup-detail"></p>
+            <code id="setup-git-command" class="setup-command hidden">winget install --id Git.Git -e --source winget</code>
+            <a id="setup-git-download" class="setup-link hidden" href="https://git-scm.com/install/windows" target="_blank" rel="noopener noreferrer" data-i18n="downloadGit">Download Git for Windows instead</a>
+          </div>
+          <div class="setup-item">
+            <div class="setup-line">
+              <strong>Codex</strong>
+              <span id="setup-codex-status" class="setup-status pending" data-i18n="checking">Checking…</span>
+            </div>
+            <p id="setup-codex-detail" class="setup-detail"></p>
+          </div>
+          <div class="setup-item">
+            <div class="setup-line">
+              <strong data-i18n="deepSeekOptional">DeepSeek Harness (optional)</strong>
+              <span id="setup-deepseek-status" class="setup-status pending" data-i18n="checking">Checking…</span>
+            </div>
+            <p id="setup-deepseek-detail" class="setup-detail"></p>
+          </div>
+        </div>
+      </section>
+
       <section class="panel settings">
         <div class="section-heading">
           <div>

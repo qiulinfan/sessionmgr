@@ -12,6 +12,19 @@ Windows users can download the portable executable from
 
 Double-click the executable to start the local UI and open your default browser. Keep its console window open while using the app.
 
+## Windows Setup
+
+The downloaded EXE does not need Go, GNU Make, or an installer. Install Git for
+repository detection:
+
+```powershell
+winget install --id Git.Git -e --source winget
+```
+
+If WinGet is unavailable, use the official [Git for Windows installer](https://git-scm.com/install/windows).
+Run Codex or DeepSeek Harness at least once to create local sessions, then reopen
+Session Manager. Its Environment panel checks Git and both session directories.
+
 ## Build
 
 Git, GNU Make, and Go 1.24+ on `PATH` are required.

@@ -185,6 +185,9 @@ hosted Git remote key | device-local directory key
   误作第二级 device folder；
 - GUI 默认使用接近 GitHub Dark 的黑灰背景、surface、边框和状态色，不得回退为白底；
 - GUI 必须提供 English/中文切换，首次加载默认 English，并在浏览器可用时记住用户选择；
+- GUI 首次加载必须检查 Git 是否可执行以及 Codex/DeepSeek Harness session 目录是否存在；
+  Windows 缺少 Git 时必须给出经官方文档确认的 WinGet 命令与安装页，同时明确 release EXE
+  不需要 Go/Make；检查只读，不得自动安装、提权或修改 PATH；
 - 桌面与窄屏布局必须可用；
 - UI 不得执行 `git add`、commit 或 push。
 

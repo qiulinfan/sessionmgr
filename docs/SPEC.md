@@ -455,7 +455,8 @@ server，前端把它放入 `X-Sessionmgr-Token` header。所有 `/api/*` 请求
 
 API：
 
-- `GET /api/state`：当前持久目录；
+- `GET /api/state`：当前持久目录，以及只读的 `environment`：运行平台、Git 可用性、Codex
+  与 DeepSeek Harness home path 和各自 `sessions/` 目录是否存在；
 - `PUT /api/config`：验证并保存目录；
 - `POST /api/pick-directory`：调用平台目录对话框；
 - `POST /api/export`：接受 `directory`、all/current `scope`、布尔值 `include_archived` 与
@@ -464,7 +465,12 @@ API：
 
 前端首次加载使用 English；用户可切换 English/中文，选择只保存在浏览器本地，不改变
 跨机器 config schema。静态文案以及连接、保存、导出、busy/no-change、计数、change badge
-与附件摘要等动态状态共享同一语言字典。hosted Git changeset 在客户端按 `repository_key`
+与附件摘要等动态状态共享同一语言字典。页面顶部的 Environment panel 把 release EXE 与
+源码构建依赖分开：EXE 不需要 Go 或 Make；Git 用于 repository detection。panel 在 Windows
+缺少 Git 时显示 `winget install --id Git.Git -e --source winget` 和 Git 官方安装页，但不自动
+执行命令、提权或修改 PATH；安装后用户关闭并重新打开 Session Manager 触发重新检测。
+Codex 与 DeepSeek 行分别显示当前解析后的 home path 及 `sessions/` 是否存在，DeepSeek 明确
+标注为可选。hosted Git changeset 在客户端按 `repository_key`
 和 `device_name` 分成两级原生 `<details>` 目录树；repository/device summary 可独立展开，
 session 变化作为对应 device 的叶节点显示。local-directory change 仍按 `repository_key`
 聚合，但 `(non-git)<device>/<directory>` repository 根已经表达 device scope，因此 session

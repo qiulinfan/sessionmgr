@@ -12,7 +12,9 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -46,6 +48,18 @@ type exportRequest struct {
 type exportResponse struct {
 	Result archive.Result `json:"result"`
 	Error  string         `json:"error,omitempty"`
+}
+
+type sourceEnvironment struct {
+	Path      string `json:"path"`
+	Available bool   `json:"available"`
+}
+
+type environmentState struct {
+	Platform string            `json:"platform"`
+	Git      bool              `json:"git_available"`
+	Codex    sourceEnvironment `json:"codex"`
+	DeepSeek sourceEnvironment `json:"deepseek"`
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -137,6 +151,7 @@ func NewHandlerWithSources(token string, store config.Store, codexHome, deepSeek
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"schema_version": config.SchemaVersion,
 			"directory":      value.ExportDirectory,
+			"environment":    inspectEnvironment(codexHome, deepSeekHome),
 		})
 	}))
 	mux.HandleFunc("PUT /api/config", requireToken(token, func(w http.ResponseWriter, request *http.Request) {
@@ -197,6 +212,34 @@ func NewHandlerWithSources(token string, store config.Store, codexHome, deepSeek
 		writeJSON(w, http.StatusOK, response)
 	}))
 	return mux, nil
+}
+
+func inspectEnvironment(codexHome, deepSeekHome string) environmentState {
+	if strings.TrimSpace(codexHome) == "" {
+		codexHome, _ = archive.DefaultCodexHome()
+	}
+	if strings.TrimSpace(deepSeekHome) == "" {
+		deepSeekHome, _ = archive.DefaultDeepSeekHome()
+	}
+	_, gitErr := exec.LookPath("git")
+	return environmentState{
+		Platform: runtime.GOOS,
+		Git:      gitErr == nil,
+		Codex:    inspectSourceEnvironment(codexHome),
+		DeepSeek: inspectSourceEnvironment(deepSeekHome),
+	}
+}
+
+func inspectSourceEnvironment(home string) sourceEnvironment {
+	home = strings.TrimSpace(home)
+	if home == "" {
+		return sourceEnvironment{}
+	}
+	if absolute, err := filepath.Abs(home); err == nil {
+		home = absolute
+	}
+	info, err := os.Stat(filepath.Join(home, "sessions"))
+	return sourceEnvironment{Path: home, Available: err == nil && info.IsDir()}
 }
 
 func requireToken(token string, next http.HandlerFunc) http.HandlerFunc {
