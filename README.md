@@ -2,6 +2,12 @@
 
 Session Manager is a small tool I vibe coded to export Codex and DsH sessions, thus communicating them between multiple agents and machines. It is simply a Go binary with a local browser UI and a CLI. 
 
+Example: You had a long codex session and 
+- therefore the context has become messy
+- or you are running low on Codex credits and want to continue the same work with another agent (such as Claude Code)
+- or you want to move from one machine to another without losing the session history;
+- or you want another agent as a judge to discuss the reasoning, attempts, and decisions the previous agent already made;
+
 ## Download
 
 Windows users can download the portable executable from
