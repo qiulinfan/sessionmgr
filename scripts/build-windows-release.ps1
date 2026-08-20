@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $distributionRoot = Join-Path $repositoryRoot 'dist'
-$goExecutable = (Get-Command go -CommandType Application -ErrorAction Stop).Source
+$goExecutable = (Get-Command go -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $iconPath = Join-Path $repositoryRoot 'assets\sessionmgr.png'
 $resourceTool = 'github.com/tc-hib/go-winres@v0.3.3'
 $resourcePrefix = 'cmd/sessionmgr/rsrc'

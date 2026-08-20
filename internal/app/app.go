@@ -18,7 +18,7 @@ import (
 
 // version is a variable so release builds can stamp the reviewed tag version
 // with -ldflags -X. Development builds keep an explicit prerelease suffix.
-var version = "1.0.0"
+var version = "1.0.1"
 
 type commandError struct {
 	exitCode int

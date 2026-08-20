@@ -570,7 +570,7 @@ Git。`make cross-check` 编译 darwin/arm64、linux/amd64、windows/amd64；`ma
 
 ### 11.1 Windows release pipeline
 
-开发源码的当前版本是 `1.0.0`。`internal/app.version` 必须是可由 Go linker `-X` 覆盖的
+开发源码的当前版本是 `1.0.1`。`internal/app.version` 必须是可由 Go linker `-X` 覆盖的
 string variable；正式构建使用：
 
 ```text
@@ -676,3 +676,7 @@ Claude sidecar 使用 schema v2 + harness-qualified key；v0.7 reader 遇到 req
 会 fail closed。Claude fork 目录增加短 deterministic variant；Codex/DeepSeek 路径不迁移。
 Claude native resume、cloud/Desktop history、subagents、tool trace、checkpoint export 与
 `cleanup-internal` 删除均不在 v1.0 范围内。
+
+v1.0.1 修复 Windows release builder 在 `PATH` 同时包含多个 Go application 时把多个
+`Get-Command go` 结果拼成一个无效路径的问题。builder 明确选择 PATH precedence 的第一项；
+版本 stamping、resource validation、资产命名和 product behavior 不变。
