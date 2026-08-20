@@ -12,7 +12,7 @@ The repository-level requirements are defined in
 
 | Version | Status | Date | Summary |
 | --- | --- | --- | --- |
-| [`v1.0.0`](./v1.0.0.md) | Ready for release | 2026-08-20 | Claude Code export and detected peer source switches |
+| [`v1.0.0`](./v1.0.0.md) | Released | 2026-08-20 | Claude Code export and detected peer source switches |
 | [`v0.7.0-dev`](./v0.7.0-dev.md) | Development | 2026-08-15 | Simpler contributor toolchain and one Windows release-build authority |
 | [`v0.6.0`](./v0.6.0.md) | Released | 2026-08-15 | DeepSeek Harness export and portable icon-bearing Windows releases |
 | [`v0.5.0-dev`](./v0.5.0-dev.md) | Superseded | 2026-08-05 | Explicit full export for non-Git and local-only session directories |
