@@ -36,7 +36,7 @@ func makeSnapshot(repo Repository, session Session, deviceID, deviceName string)
 	}
 	redactions := 0
 	session.Title, redactions = redact(session.Title)
-	for _, value := range []*string{&session.CodexVersion, &session.Commit, &session.Branch} {
+	for _, value := range []*string{&session.CodexVersion, &session.ClaudeVersion, &session.Commit, &session.Branch} {
 		var count int
 		*value, count = redact(*value)
 		redactions += count
@@ -87,6 +87,9 @@ func renderSnapshot(snapshot Snapshot) []byte {
 	if session.CodexVersion != "" {
 		fmt.Fprintf(&output, "codex_version: %s\n", quote(session.CodexVersion))
 	}
+	if session.ClaudeVersion != "" {
+		fmt.Fprintf(&output, "claude_code_version: %s\n", quote(session.ClaudeVersion))
+	}
 	if session.Commit != "" {
 		fmt.Fprintf(&output, "git_commit: %s\n", quote(session.Commit))
 	}
@@ -96,6 +99,9 @@ func renderSnapshot(snapshot Snapshot) []byte {
 	fmt.Fprintf(&output, "source_records: %d\n", session.RecordCount)
 	fmt.Fprintf(&output, "malformed_records: %d\n", session.MalformedCount)
 	fmt.Fprintf(&output, "omitted_records: %d\n", session.OmittedCount)
+	if session.AlternateBranches > 0 {
+		fmt.Fprintf(&output, "alternate_branch_records: %d\n", session.AlternateBranches)
+	}
 	fmt.Fprintf(&output, "tool_calls: %d\n", session.ToolCallCount)
 	fmt.Fprintf(&output, "messages: %d\n", len(session.Messages))
 	fmt.Fprintf(&output, "user_messages: %d\n", session.UserMessages)
@@ -109,6 +115,8 @@ func renderSnapshot(snapshot Snapshot) []byte {
 	harnessName := "Codex"
 	if session.Harness == harnessDeepSeek {
 		harnessName = "DeepSeek Harness"
+	} else if session.Harness == harnessClaudeCode {
+		harnessName = "Claude Code"
 	}
 	fmt.Fprintf(&output, "> Exported from %s on %s for `%s`.\n\n", harnessName, snapshot.DeviceName, snapshot.Repository.Name)
 	fmt.Fprintln(&output, "## Conversation")

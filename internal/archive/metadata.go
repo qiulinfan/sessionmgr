@@ -193,7 +193,7 @@ func validateSessionMetadata(value sessionMetadata) error {
 			return fmt.Errorf("legacy session metadata declares a harness")
 		}
 		harness = harnessCodex
-	} else if harness != harnessCodex && harness != harnessDeepSeek {
+	} else if harness != harnessCodex && harness != harnessDeepSeek && harness != harnessClaudeCode {
 		return fmt.Errorf("unsupported session harness %q", harness)
 	}
 	want := sessionKey(value.DeviceID, harness, value.SessionID)
@@ -349,7 +349,7 @@ func replaceOwnedFile(path string, data []byte) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tempPath, path)
+	return renameOwnedFile(tempPath, path)
 }
 
 func semanticRepositoryDirectory(repo Repository) string {
@@ -386,13 +386,23 @@ func semanticRepositoryDirectoryV3(repo Repository) string {
 }
 
 func semanticSessionDirectory(snapshot Snapshot) string {
-	title := semanticComponent(snapshot.Session.Title, "codex-session")
+	fallback := "codex-session"
 	prefix := ""
+	suffix := ""
 	if snapshot.Session.Harness == harnessDeepSeek {
 		prefix = "deepseek--"
+		fallback = "deepseek-session"
+	} else if snapshot.Session.Harness == harnessClaudeCode {
+		prefix = "claude-code--"
+		fallback = "claude-code-session"
+		variant := strings.TrimPrefix(snapshot.SessionKey, "sha256:")
+		if len(variant) >= 8 {
+			suffix = "--" + variant[:8]
+		}
 	}
+	title := semanticComponent(snapshot.Session.Title, fallback)
 	if snapshot.Session.CreatedAt.IsZero() {
-		return prefix + title
+		return prefix + title + suffix
 	}
-	return prefix + snapshot.Session.CreatedAt.UTC().Format("2006-01-02T15-04-05Z") + "--" + title
+	return prefix + snapshot.Session.CreatedAt.UTC().Format("2006-01-02T15-04-05Z") + "--" + title + suffix
 }

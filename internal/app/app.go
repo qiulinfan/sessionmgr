@@ -18,7 +18,7 @@ import (
 
 // version is a variable so release builds can stamp the reviewed tag version
 // with -ldflags -X. Development builds keep an explicit prerelease suffix.
-var version = "0.7.0-dev"
+var version = "1.0.0"
 
 type commandError struct {
 	exitCode int
@@ -119,9 +119,9 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	all := flags.Bool("all", false, "export sessions for every eligible directory (hosted Git by default)")
 	sessionID := flags.String("session", "", "export one native session ID")
 	includeArchived := flags.Bool("include-archived", false, "also export Codex archived sessions")
-	includeDeepSeek := flags.Bool("include-deepseek", false, "also export DeepSeek Harness sessions")
 	includeNonGit := flags.Bool("include-non-git", false, "also fully export sessions from directories without a hosted Git remote")
 	source := flags.String("codex-home", "", "Codex state directory (default: CODEX_HOME or ~/.codex)")
+	claudeSource := flags.String("claude-home", "", "Claude Code state directory (default: CLAUDE_CONFIG_DIR or ~/.claude)")
 	deepSeekSource := flags.String("deepseek-home", "", "DeepSeek Harness state directory (default: DSH_HOME or ~/.dsh)")
 	directory := flags.String("directory", "", "export directory to use and remember")
 	output := flags.String("output", "", "one-time export directory (compatibility alias)")
@@ -160,13 +160,15 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return err
 	}
 	result, exportErr := archive.Export(ctx, archive.Options{
-		CodexHome: *source, DeepSeekHome: *deepSeekSource,
+		CodexHome: *source, ClaudeHome: *claudeSource, DeepSeekHome: *deepSeekSource,
 		Output: resolvedDirectory, Repo: *repo,
 		AllRepos: !repoWasSet || *all, SessionID: *sessionID,
 		IncludeArchived: *includeArchived,
-		IncludeDeepSeek: *includeDeepSeek,
 		IncludeNonGit:   *includeNonGit,
-		DeviceID:        device.DeviceID, DeviceName: device.DeviceName,
+		Sources: &archive.SourceSelection{
+			Codex: true, ClaudeCode: true, DeepSeek: true,
+		},
+		DeviceID: device.DeviceID, DeviceName: device.DeviceName,
 	})
 	if *jsonOutput {
 		if err := writeJSON(stdout, result); err != nil {
@@ -305,6 +307,7 @@ func commandGUI(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	listen := flags.String("listen", "127.0.0.1:0", "loopback address for the local GUI")
 	noOpen := flags.Bool("no-open", false, "do not open the default browser")
 	source := flags.String("codex-home", "", "Codex state directory")
+	claudeSource := flags.String("claude-home", "", "Claude Code state directory")
 	deepSeekSource := flags.String("deepseek-home", "", "DeepSeek Harness state directory")
 	repo := flags.String("repo", ".", "current Git repository for the GUI scope")
 	if err := flags.Parse(args); err != nil {
@@ -318,7 +321,7 @@ func commandGUI(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		return err
 	}
 	return ui.Run(ctx, ui.Options{
-		Listen: *listen, CodexHome: *source, DeepSeekHome: *deepSeekSource, Repo: *repo,
+		Listen: *listen, CodexHome: *source, ClaudeHome: *claudeSource, DeepSeekHome: *deepSeekSource, Repo: *repo,
 		OpenBrowser: !*noOpen, ConfigStore: store, Log: stderr,
 		Ready: func(url string) {
 			fmt.Fprintf(stdout, "Session Manager GUI: %s\n", url)
@@ -409,19 +412,20 @@ func short(value string) string {
 }
 
 func printHelp(output io.Writer) {
-	fmt.Fprintln(output, `sessionmgr exports Codex and DeepSeek Harness conversations as readable Markdown files.
+	fmt.Fprintln(output, `sessionmgr exports Codex, Claude Code, and DeepSeek Harness conversations as readable Markdown files.
 
 Usage:
   sessionmgr                         Open the GUI
-  sessionmgr gui [--no-open] [--deepseek-home PATH]
+  sessionmgr gui [--no-open] [--claude-home PATH] [--deepseek-home PATH]
   sessionmgr config set-directory PATH
   sessionmgr config show
-  sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived] [--include-deepseek] [--include-non-git] [--directory PATH]
+  sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived] [--include-non-git] [--directory PATH]
   sessionmgr list [--history]
   sessionmgr cleanup-internal [--directory PATH] [--apply]
   sessionmgr version
 
-The configured export directory persists across launches. Export output lists
+Available Codex, Claude Code, and DeepSeek Harness state directories are scanned
+automatically. The configured export directory persists across launches. Output lists
 only files changed by the current operation. "archive" remains an alias for
 "export". cleanup-internal is a dry run unless --apply is provided.`)
 }

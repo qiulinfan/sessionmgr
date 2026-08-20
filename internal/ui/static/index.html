@@ -12,7 +12,7 @@
         <div>
           <p class="eyebrow">AGENT SESSION ARCHIVE</p>
           <h1 data-i18n="heroTitle">Keep only what changed.</h1>
-          <p class="lede" data-i18n="heroLede">Choose a persistent directory and export Codex or DeepSeek Harness sessions as Markdown, grouped by Git remote or local directory.</p>
+          <p class="lede" data-i18n="heroLede">Choose a persistent directory and export Codex, Claude Code, or DeepSeek Harness sessions as Markdown.</p>
         </div>
         <div class="hero-tools">
           <label class="language-picker">
@@ -25,6 +25,33 @@
           <div id="connection" class="status-dot" data-i18n="connecting">Connecting</div>
         </div>
       </header>
+
+      <section class="panel source-panel">
+        <div class="section-heading">
+          <div>
+            <p class="step" data-i18n="sourcesStep">SOURCES</p>
+            <h2 data-i18n="sessionSources">Session sources</h2>
+          </div>
+          <span class="muted" data-i18n="sourceToggleHint">Detected on first open · you stay in control</span>
+        </div>
+        <div class="source-switches">
+          <label class="source-switch">
+            <span><strong>Codex</strong><small data-i18n="codexSourceHint">Local Codex conversations</small></span>
+            <input id="source-codex" type="checkbox" role="switch" aria-label="Codex" />
+            <span class="switch-track" aria-hidden="true"><span></span></span>
+          </label>
+          <label class="source-switch">
+            <span><strong>Claude Code</strong><small data-i18n="claudeSourceHint">Local Claude Code conversations</small></span>
+            <input id="source-claude" type="checkbox" role="switch" aria-label="Claude Code" />
+            <span class="switch-track" aria-hidden="true"><span></span></span>
+          </label>
+          <label class="source-switch">
+            <span><strong>DeepSeek Harness</strong><small data-i18n="deepSeekSourceHint">Local DsH conversations</small></span>
+            <input id="source-deepseek" type="checkbox" role="switch" aria-label="DeepSeek Harness" />
+            <span class="switch-track" aria-hidden="true"><span></span></span>
+          </label>
+        </div>
+      </section>
 
       <section class="panel setup-panel">
         <div class="section-heading">
@@ -54,7 +81,14 @@
           </div>
           <div class="setup-item">
             <div class="setup-line">
-              <strong data-i18n="deepSeekOptional">DeepSeek Harness (optional)</strong>
+              <strong>Claude Code</strong>
+              <span id="setup-claude-status" class="setup-status pending" data-i18n="checking">Checking…</span>
+            </div>
+            <p id="setup-claude-detail" class="setup-detail"></p>
+          </div>
+          <div class="setup-item">
+            <div class="setup-line">
+              <strong>DeepSeek Harness</strong>
               <span id="setup-deepseek-status" class="setup-status pending" data-i18n="checking">Checking…</span>
             </div>
             <p id="setup-deepseek-detail" class="setup-detail"></p>
@@ -92,10 +126,6 @@
         <label class="archive-option">
           <input id="include-archived" type="checkbox" />
           <span data-i18n="includeArchived">Include archived Codex sessions</span>
-        </label>
-        <label class="archive-option">
-          <input id="include-deepseek" type="checkbox" />
-          <span data-i18n="includeDeepSeek">Include DeepSeek Harness sessions</span>
         </label>
         <label class="archive-option">
           <input id="include-non-git" type="checkbox" />

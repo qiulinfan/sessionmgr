@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -19,12 +21,44 @@ func TestStorePersistsExportDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded != written || loaded.ExportDirectory != directory {
+	if !reflect.DeepEqual(loaded, written) || loaded.ExportDirectory != directory {
 		t.Fatalf("loaded config differs: %+v vs %+v", loaded, written)
 	}
 	info, err := os.Stat(directory)
 	if err != nil || !info.IsDir() {
 		t.Fatalf("export directory was not created: %v", err)
+	}
+}
+
+func TestStoreMigratesLegacyConfigAndPersistsSourcePreferences(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "config.json")
+	legacy := []byte("{\"schema_version\":1,\"export_directory\":\"C:/archive\",\"device_id\":\"device:test\",\"device_name\":\"test\"}\n")
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := Store{Path: path}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.SchemaVersion != SchemaVersion || loaded.SourcePreferences != nil {
+		t.Fatalf("legacy config was not normalized in memory: %+v", loaded)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, legacy) {
+		t.Fatalf("read-only legacy load changed config bytes: %q, %v", before, err)
+	}
+	written, err := store.SetSourcePreferences(SourcePreferences{Codex: true, ClaudeCode: false, DeepSeek: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if written.SourcePreferences == nil || !written.SourcePreferences.Codex || written.SourcePreferences.ClaudeCode || !written.SourcePreferences.DeepSeek {
+		t.Fatalf("source preferences were not stored: %+v", written)
+	}
+	reloaded, err := store.Load()
+	if err != nil || !reflect.DeepEqual(reloaded, written) {
+		t.Fatalf("source preferences did not round trip: %+v / %+v / %v", written, reloaded, err)
 	}
 }
 

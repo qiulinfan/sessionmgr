@@ -13,6 +13,19 @@ import (
 	"github.com/sessionmgr/sessionmgr/internal/archive"
 )
 
+func TestMain(m *testing.M) {
+	root, err := os.MkdirTemp("", "sessionmgr-app-test-sources-")
+	if err != nil {
+		panic(err)
+	}
+	_ = os.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
+	_ = os.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	_ = os.Setenv("DSH_HOME", filepath.Join(root, "dsh"))
+	code := m.Run()
+	_ = os.RemoveAll(root)
+	os.Exit(code)
+}
+
 func TestVersionCommandUsesBuildVersion(t *testing.T) {
 	previous := version
 	version = "1.2.3"
@@ -299,7 +312,7 @@ func TestCLIReportsBusySessionWithoutFailing(t *testing.T) {
 	}
 }
 
-func TestCLIIncludesDeepSeekOnlyWhenRequested(t *testing.T) {
+func TestCLIAutoDetectsDeepSeekWithoutIncludeFlag(t *testing.T) {
 	root := t.TempDir()
 	deepSeekHome := filepath.Join(root, "dsh")
 	localDirectory := filepath.Join(root, "workspace")
@@ -331,18 +344,8 @@ func TestCLIIncludesDeepSeekOnlyWhenRequested(t *testing.T) {
 		Sources int `json:"sources"`
 		Created int `json:"created"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &defaultResult); err != nil || defaultResult.Sources != 0 || defaultResult.Created != 0 {
-		t.Fatalf("CLI included DeepSeek without opt-in: %s (%v)", stdout.String(), err)
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code, err = Run(context.Background(), []string{
-		"export", "--all", "--directory", output, "--codex-home", filepath.Join(root, "codex"),
-		"--deepseek-home", deepSeekHome, "--include-deepseek", "--include-non-git", "--json",
-	}, &stdout, &stderr)
-	if err != nil || code != 0 {
-		t.Fatalf("DeepSeek export failed: code=%d err=%v stderr=%s", code, err, stderr.String())
+	if err := json.Unmarshal(stdout.Bytes(), &defaultResult); err != nil || defaultResult.Sources != 1 || defaultResult.Created != 1 {
+		t.Fatalf("CLI did not auto-detect DeepSeek: %s (%v)", stdout.String(), err)
 	}
 	var included struct {
 		Created int `json:"created"`
@@ -351,6 +354,45 @@ func TestCLIIncludesDeepSeekOnlyWhenRequested(t *testing.T) {
 		} `json:"changes"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &included); err != nil || included.Created != 1 || len(included.Changes) != 1 || included.Changes[0].Harness != "deepseek" {
-		t.Fatalf("--include-deepseek did not export the session: %s (%v)", stdout.String(), err)
+		t.Fatalf("auto-detected DeepSeek change is invalid: %s (%v)", stdout.String(), err)
+	}
+}
+
+func TestCLIAutoDetectsClaudeWithoutIncludeFlag(t *testing.T) {
+	root := t.TempDir()
+	claudeHome := filepath.Join(root, "claude")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const id = "66666666-6666-6666-6666-666666666666"
+	source := filepath.Join(claudeHome, "projects", "project", id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf(`{"type":"user","uuid":"user","parentUuid":null,"sessionId":%q,"timestamp":"2026-08-20T01:00:00Z","cwd":%q,"version":"2.1.235","userType":"external","origin":{"kind":"human"},"promptSource":"typed","message":{"role":"user","content":"CLI Claude export"}}
+`, id, workspace)
+	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SESSIONMGR_CONFIG", filepath.Join(root, "config.json"))
+	var stdout, stderr bytes.Buffer
+	code, err := Run(context.Background(), []string{
+		"export", "--all", "--directory", filepath.Join(root, "exports"),
+		"--codex-home", filepath.Join(root, "codex"), "--claude-home", claudeHome,
+		"--deepseek-home", filepath.Join(root, "dsh"), "--include-non-git", "--json",
+	}, &stdout, &stderr)
+	if err != nil || code != 0 {
+		t.Fatalf("Claude export failed: code=%d err=%v stderr=%s", code, err, stderr.String())
+	}
+	var result struct {
+		Sources int `json:"sources"`
+		Created int `json:"created"`
+		Changes []struct {
+			Harness string `json:"harness"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || result.Sources != 1 || result.Created != 1 || len(result.Changes) != 1 || result.Changes[0].Harness != "claude-code" {
+		t.Fatalf("CLI did not auto-detect Claude: %s (%v)", stdout.String(), err)
 	}
 }

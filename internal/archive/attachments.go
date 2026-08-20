@@ -64,6 +64,12 @@ func resolveAttachment(ctx context.Context, session Session, repo Repository, at
 	switch attachment.SourceKind {
 	case "embedded_data":
 		data, mediaType, attachment.Size, err = decodeDataURL(attachment.SourceValue)
+	case "embedded_bytes":
+		data = attachment.Data
+		attachment.Size = int64(len(data))
+		if attachment.Size > MaxAttachmentBytes {
+			err = errAttachmentTooLarge
+		}
 	case "local_path":
 		data, attachment.Size, err = readStableAttachment(ctx, attachment.SourceValue)
 	case "remote_reference":

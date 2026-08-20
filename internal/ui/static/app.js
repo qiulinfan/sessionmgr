@@ -12,14 +12,18 @@ const resultCount = document.querySelector("#result-count");
 const exportButton = document.querySelector("#export");
 const languageSelect = document.querySelector("#language");
 const includeArchived = document.querySelector("#include-archived");
-const includeDeepSeek = document.querySelector("#include-deepseek");
 const includeNonGit = document.querySelector("#include-non-git");
+const sourceCodex = document.querySelector("#source-codex");
+const sourceClaude = document.querySelector("#source-claude");
+const sourceDeepSeek = document.querySelector("#source-deepseek");
 const setupGitStatus = document.querySelector("#setup-git-status");
 const setupGitDetail = document.querySelector("#setup-git-detail");
 const setupGitCommand = document.querySelector("#setup-git-command");
 const setupGitDownload = document.querySelector("#setup-git-download");
 const setupCodexStatus = document.querySelector("#setup-codex-status");
 const setupCodexDetail = document.querySelector("#setup-codex-detail");
+const setupClaudeStatus = document.querySelector("#setup-claude-status");
+const setupClaudeDetail = document.querySelector("#setup-claude-detail");
 const setupDeepSeekStatus = document.querySelector("#setup-deepseek-status");
 const setupDeepSeekDetail = document.querySelector("#setup-deepseek-detail");
 
@@ -30,7 +34,13 @@ const translations = {
     connected: "Local connection",
     connectionFailed: "Connection failed",
     heroTitle: "Keep only what changed.",
-    heroLede: "Choose a persistent directory and export Codex or DeepSeek Harness sessions as Markdown, grouped by Git remote or local directory.",
+    heroLede: "Choose a persistent directory and export Codex, Claude Code, or DeepSeek Harness sessions as Markdown.",
+    sourcesStep: "SOURCES",
+    sessionSources: "Session sources",
+    sourceToggleHint: "Detected on first open · you stay in control",
+    codexSourceHint: "Local Codex conversations",
+    claudeSourceHint: "Local Claude Code conversations",
+    deepSeekSourceHint: "Local DsH conversations",
     environment: "Environment",
     portableRuntime: "Portable EXE · no Go or Make needed",
     environmentHint: "Session Manager checks the local tools and session folders it uses. Nothing is installed automatically.",
@@ -43,9 +53,10 @@ const translations = {
     downloadGit: "Download Git for Windows instead",
     codexReady: "Session folder found: {path}",
     codexMissing: "No Codex session folder found at {path}. Run Codex once to create one.",
-    deepSeekOptional: "DeepSeek Harness (optional)",
+    claudeReady: "Session folder found: {path}",
+    claudeMissing: "No Claude Code session folder found at {path}.",
     deepSeekReady: "Session folder found: {path}",
-    deepSeekMissing: "No DeepSeek session folder found at {path}. This is fine if you only use Codex.",
+    deepSeekMissing: "No DeepSeek session folder found at {path}.",
     sourceUnavailable: "The session location could not be resolved.",
     exportDirectory: "Export directory",
     directoryPlaceholder: "For example, /Users/me/Documents/session-archive",
@@ -57,7 +68,6 @@ const translations = {
     allRepositories: "All eligible directories",
     currentRepository: "Current directory",
     includeArchived: "Include archived Codex sessions",
-    includeDeepSeek: "Include DeepSeek Harness sessions",
     includeNonGit: "Include non-Git directories (full export)",
     exportChanges: "Export changes",
     exporting: "Exporting…",
@@ -87,7 +97,13 @@ const translations = {
     connected: "本地连接",
     connectionFailed: "连接失败",
     heroTitle: "只保存这次发生的变化。",
-    heroLede: "选择一个持久目录，将本机 Codex 或 DeepSeek Harness sessions 按 Git 远程仓库或本地目录导出为 Markdown。",
+    heroLede: "选择一个持久目录，将本机 Codex、Claude Code 或 DeepSeek Harness sessions 导出为 Markdown。",
+    sourcesStep: "来源",
+    sessionSources: "Session 来源",
+    sourceToggleHint: "首次打开自动探测 · 随时可以关闭",
+    codexSourceHint: "本机 Codex 对话",
+    claudeSourceHint: "本机 Claude Code 对话",
+    deepSeekSourceHint: "本机 DsH 对话",
     environment: "运行环境",
     portableRuntime: "便携 EXE · 不需要 Go 或 Make",
     environmentHint: "Session Manager 会检查所需的本地工具和 session 目录，不会自动安装或提权。",
@@ -100,9 +116,10 @@ const translations = {
     downloadGit: "改用 Git for Windows 安装程序",
     codexReady: "已找到 session 目录：{path}",
     codexMissing: "在 {path} 未找到 Codex session 目录。请先运行一次 Codex。",
-    deepSeekOptional: "DeepSeek Harness（可选）",
+    claudeReady: "已找到 session 目录：{path}",
+    claudeMissing: "在 {path} 未找到 Claude Code session 目录。",
     deepSeekReady: "已找到 session 目录：{path}",
-    deepSeekMissing: "在 {path} 未找到 DeepSeek session 目录。如果只使用 Codex，可以忽略。",
+    deepSeekMissing: "在 {path} 未找到 DeepSeek session 目录。",
     sourceUnavailable: "无法确定 session 目录。",
     exportDirectory: "导出目录",
     directoryPlaceholder: "例如 /Users/me/Documents/session-archive",
@@ -114,7 +131,6 @@ const translations = {
     allRepositories: "全部可用目录",
     currentRepository: "当前目录",
     includeArchived: "包括已归档的 Codex sessions",
-    includeDeepSeek: "包括 DeepSeek Harness sessions",
     includeNonGit: "包括非 Git 目录（全量导出）",
     exportChanges: "导出变化",
     exporting: "正在导出…",
@@ -146,6 +162,8 @@ let saveState = { kind: "none", value: "" };
 let resultState = { kind: "idle", value: null };
 let exportBusy = false;
 let environmentState = null;
+let sourcePreferencesState = null;
+let sourceSaveChain = Promise.resolve();
 
 function loadLanguage() {
   try {
@@ -206,6 +224,7 @@ function renderEnvironment() {
   if (environmentState === null) {
     renderSetupStatus(setupGitStatus, false);
     renderSetupStatus(setupCodexStatus, false);
+    renderSetupStatus(setupClaudeStatus, false);
     renderSetupStatus(setupDeepSeekStatus, false);
     return;
   }
@@ -221,11 +240,50 @@ function renderEnvironment() {
     ? t(codex.available ? "codexReady" : "codexMissing", { path: codex.path })
     : t("sourceUnavailable");
 
+  const claude = environmentState.claude || {};
+  renderSetupStatus(setupClaudeStatus, claude.available);
+  setupClaudeDetail.textContent = claude.path
+    ? t(claude.available ? "claudeReady" : "claudeMissing", { path: claude.path })
+    : t("sourceUnavailable");
+
   const deepSeek = environmentState.deepseek || {};
   renderSetupStatus(setupDeepSeekStatus, deepSeek.available);
   setupDeepSeekDetail.textContent = deepSeek.path
     ? t(deepSeek.available ? "deepSeekReady" : "deepSeekMissing", { path: deepSeek.path })
     : t("sourceUnavailable");
+}
+
+function currentSources() {
+  return {
+    codex: sourceCodex.checked,
+    claude_code: sourceClaude.checked,
+    deepseek: sourceDeepSeek.checked,
+  };
+}
+
+function saveSourcePreferences() {
+  const selection = currentSources();
+  sourceSaveChain = sourceSaveChain
+    .then(() => api("/api/sources", { method: "PUT", body: JSON.stringify(selection) }))
+    .then((state) => { sourcePreferencesState = state.sources || selection; })
+    .catch((error) => setSaveState("error", error.message || String(error)));
+}
+
+function initializeSourcePreferences() {
+  const saved = sourcePreferencesState;
+  const detected = environmentState || {};
+  sourceCodex.checked = typeof saved?.codex === "boolean" ? saved.codex : Boolean(detected.codex?.available);
+  sourceClaude.checked = typeof saved?.claude_code === "boolean" ? saved.claude_code : Boolean(detected.claude?.available);
+  sourceDeepSeek.checked = typeof saved?.deepseek === "boolean" ? saved.deepseek : Boolean(detected.deepseek?.available);
+  includeArchived.disabled = !sourceCodex.checked;
+  if (saved === null) saveSourcePreferences();
+}
+
+for (const control of [sourceCodex, sourceClaude, sourceDeepSeek]) {
+  control.addEventListener("change", () => {
+    includeArchived.disabled = !sourceCodex.checked;
+    saveSourcePreferences();
+  });
 }
 
 function renderConnection() {
@@ -476,8 +534,8 @@ exportButton.addEventListener("click", async () => {
         directory: directory.value,
         scope: document.querySelector("#scope").value,
         include_archived: includeArchived.checked,
-        include_deepseek: includeDeepSeek.checked,
         include_non_git: includeNonGit.checked,
+        sources: currentSources(),
       }),
     });
     resultState = { kind: "payload", value: payload };
@@ -495,6 +553,8 @@ api("/api/state")
   .then((state) => {
     directory.value = state.directory || "";
     environmentState = state.environment || null;
+    sourcePreferencesState = state.source_preferences || null;
+    initializeSourcePreferences();
     connectionState = "connected";
     applyLanguage();
   })

@@ -20,14 +20,22 @@ type nativeSessionSource struct {
 
 func Export(ctx context.Context, opts Options) (Result, error) {
 	result := Result{SchemaVersion: ExportResultSchemaVersion, Changes: []Change{}}
-	if opts.CodexHome == "" {
+	selected := selectedSources(opts)
+	if selected.Codex && opts.CodexHome == "" {
 		var err error
 		opts.CodexHome, err = DefaultCodexHome()
 		if err != nil {
 			return result, err
 		}
 	}
-	if opts.IncludeDeepSeek {
+	if selected.ClaudeCode {
+		var err error
+		opts.ClaudeHome, err = resolveClaudeHome(opts.ClaudeHome)
+		if err != nil {
+			return result, err
+		}
+	}
+	if selected.DeepSeek {
 		var err error
 		opts.DeepSeekHome, err = resolveDeepSeekHome(opts.DeepSeekHome)
 		if err != nil {
@@ -57,17 +65,29 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		key := entryIdentity(entry)
 		history[key] = append(history[key], entry)
 	}
-	codexFiles, err := discoverSessionFiles(opts.CodexHome, opts.IncludeArchived)
-	if err != nil {
-		return result, err
+	sources := make([]nativeSessionSource, 0)
+	paths := make([]string, 0)
+	if selected.Codex {
+		codexFiles, discoverErr := discoverSessionFiles(opts.CodexHome, opts.IncludeArchived)
+		if discoverErr != nil {
+			return result, discoverErr
+		}
+		for _, path := range codexFiles {
+			sources = append(sources, nativeSessionSource{path: path, harness: harnessCodex})
+			paths = append(paths, path)
+		}
 	}
-	sources := make([]nativeSessionSource, 0, len(codexFiles))
-	paths := make([]string, 0, len(codexFiles))
-	for _, path := range codexFiles {
-		sources = append(sources, nativeSessionSource{path: path, harness: harnessCodex})
-		paths = append(paths, path)
+	if selected.ClaudeCode {
+		claudeFiles, discoverErr := discoverClaudeSessionFiles(opts.ClaudeHome)
+		if discoverErr != nil {
+			return result, discoverErr
+		}
+		for _, path := range claudeFiles {
+			sources = append(sources, nativeSessionSource{path: path, harness: harnessClaudeCode})
+			paths = append(paths, path)
+		}
 	}
-	if opts.IncludeDeepSeek {
+	if selected.DeepSeek {
 		deepSeekFiles, err := discoverDeepSeekSessionFiles(opts.DeepSeekHome)
 		if err != nil {
 			return result, err
@@ -81,9 +101,12 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		}
 	}
 	result.Sources = len(sources)
-	titles, err := loadTitles(opts.CodexHome)
-	if err != nil {
-		return result, fmt.Errorf("read Codex session titles: %w", err)
+	titles := make(map[string]titleRecord)
+	if selected.Codex {
+		titles, err = loadTitles(opts.CodexHome)
+		if err != nil {
+			return result, fmt.Errorf("read Codex session titles: %w", err)
+		}
 	}
 	var target Repository
 	if !opts.AllRepos {
@@ -143,12 +166,15 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		}
 		var session Session
 		var parseErr error
-		if source.harness == harnessDeepSeek {
+		switch source.harness {
+		case harnessDeepSeek:
 			session, parseErr = parseDeepSeekSession(raw, source.compressed, opts.DeepSeekHome)
 			if parseErr == nil && filepath.Base(filepath.Dir(path)) != session.ID {
 				parseErr = fmt.Errorf("DeepSeek session directory ID %q does not match header ID %q", filepath.Base(filepath.Dir(path)), session.ID)
 			}
-		} else {
+		case harnessClaudeCode:
+			session, parseErr = parseClaudeSession(raw, strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+		default:
 			fallbackID := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 			session, parseErr = parseSession(raw, fallbackID, titles)
 		}
@@ -247,6 +273,15 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	}
 	sortChanges(result.Changes)
 	return result, nil
+}
+
+func selectedSources(opts Options) SourceSelection {
+	if opts.Sources != nil {
+		return *opts.Sources
+	}
+	// Preserve the package-level behavior used by existing callers and fixtures.
+	// Product entrypoints always pass Sources explicitly.
+	return SourceSelection{Codex: true, DeepSeek: opts.IncludeDeepSeek}
 }
 
 func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, string, string, error) {

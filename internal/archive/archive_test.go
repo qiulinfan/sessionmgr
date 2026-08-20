@@ -1111,11 +1111,11 @@ func TestVerifiedReexportRepairsInjectedContextDocument(t *testing.T) {
 	if err := os.MkdirAll(oldDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	oldDocument := bytes.Replace(renderSnapshot(snapshot), []byte("renderer_version: 7"), []byte("renderer_version: 6"), 1)
+	oldDocument := bytes.Replace(renderSnapshot(snapshot), []byte("renderer_version: 8"), []byte("renderer_version: 7"), 1)
 	oldDocument = bytes.Replace(oldDocument, []byte("harness: \"codex\"\n"), nil, 1)
 	oldRecord := sessionRecord(snapshot, digestBytes(oldDocument))
 	oldRecord.SchemaVersion = SchemaVersion
-	oldRecord.RendererVersion = 6
+	oldRecord.RendererVersion = 7
 	oldRecord.Harness = ""
 	metadata, err := marshalMetadata(oldRecord)
 	if err != nil {

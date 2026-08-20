@@ -29,6 +29,7 @@ var staticFiles embed.FS
 type Options struct {
 	Listen       string
 	CodexHome    string
+	ClaudeHome   string
 	DeepSeekHome string
 	Repo         string
 	OpenBrowser  bool
@@ -41,8 +42,12 @@ type exportRequest struct {
 	Directory       string `json:"directory"`
 	Scope           string `json:"scope"`
 	IncludeArchived bool   `json:"include_archived"`
-	IncludeDeepSeek bool   `json:"include_deepseek"`
 	IncludeNonGit   bool   `json:"include_non_git"`
+	Sources         *struct {
+		Codex      bool `json:"codex"`
+		ClaudeCode bool `json:"claude_code"`
+		DeepSeek   bool `json:"deepseek"`
+	} `json:"sources"`
 }
 
 type exportResponse struct {
@@ -59,6 +64,7 @@ type environmentState struct {
 	Platform string            `json:"platform"`
 	Git      bool              `json:"git_available"`
 	Codex    sourceEnvironment `json:"codex"`
+	Claude   sourceEnvironment `json:"claude"`
 	DeepSeek sourceEnvironment `json:"deepseek"`
 }
 
@@ -90,7 +96,7 @@ func Run(ctx context.Context, opts Options) error {
 		address = "[::1]:" + port
 	}
 	url := "http://" + address + "/#" + token
-	handler, err := NewHandlerWithSources(token, opts.ConfigStore, opts.CodexHome, opts.DeepSeekHome, opts.Repo)
+	handler, err := NewHandlerWithSources(token, opts.ConfigStore, opts.CodexHome, opts.ClaudeHome, opts.DeepSeekHome, opts.Repo)
 	if err != nil {
 		return err
 	}
@@ -126,10 +132,10 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 func NewHandler(token string, store config.Store, codexHome, repo string) (http.Handler, error) {
-	return NewHandlerWithSources(token, store, codexHome, "", repo)
+	return NewHandlerWithSources(token, store, codexHome, "", "", repo)
 }
 
-func NewHandlerWithSources(token string, store config.Store, codexHome, deepSeekHome, repo string) (http.Handler, error) {
+func NewHandlerWithSources(token string, store config.Store, codexHome, claudeHome, deepSeekHome, repo string) (http.Handler, error) {
 	if token == "" {
 		return nil, fmt.Errorf("GUI API token is required")
 	}
@@ -149,9 +155,26 @@ func NewHandlerWithSources(token string, store config.Store, codexHome, deepSeek
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"schema_version":     config.SchemaVersion,
+			"directory":          value.ExportDirectory,
+			"source_preferences": value.SourcePreferences,
+			"environment":        inspectEnvironment(codexHome, claudeHome, deepSeekHome),
+		})
+	}))
+	mux.HandleFunc("PUT /api/sources", requireToken(token, func(w http.ResponseWriter, request *http.Request) {
+		var body config.SourcePreferences
+		if err := decodeJSON(w, request, &body); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		value, err := store.SetSourcePreferences(body)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"schema_version": config.SchemaVersion,
-			"directory":      value.ExportDirectory,
-			"environment":    inspectEnvironment(codexHome, deepSeekHome),
+			"sources":        value.SourcePreferences,
 		})
 	}))
 	mux.HandleFunc("PUT /api/config", requireToken(token, func(w http.ResponseWriter, request *http.Request) {
@@ -197,12 +220,23 @@ func NewHandlerWithSources(token string, store config.Store, codexHome, deepSeek
 			return
 		}
 		allRepos := body.Scope != "current"
+		selection := archive.SourceSelection{}
+		if body.Sources == nil {
+			environment := inspectEnvironment(codexHome, claudeHome, deepSeekHome)
+			selection = archive.SourceSelection{
+				Codex: environment.Codex.Available, ClaudeCode: environment.Claude.Available, DeepSeek: environment.DeepSeek.Available,
+			}
+		} else {
+			selection = archive.SourceSelection{
+				Codex: body.Sources.Codex, ClaudeCode: body.Sources.ClaudeCode, DeepSeek: body.Sources.DeepSeek,
+			}
+		}
 		result, exportErr := archive.Export(request.Context(), archive.Options{
-			CodexHome: codexHome, DeepSeekHome: deepSeekHome,
+			CodexHome: codexHome, ClaudeHome: claudeHome, DeepSeekHome: deepSeekHome,
 			Output: directory, Repo: repo, AllRepos: allRepos,
 			IncludeArchived: body.IncludeArchived,
-			IncludeDeepSeek: body.IncludeDeepSeek,
 			IncludeNonGit:   body.IncludeNonGit,
+			Sources:         &selection,
 			DeviceID:        device.DeviceID, DeviceName: device.DeviceName,
 		})
 		response := exportResponse{Result: result}
@@ -214,9 +248,12 @@ func NewHandlerWithSources(token string, store config.Store, codexHome, deepSeek
 	return mux, nil
 }
 
-func inspectEnvironment(codexHome, deepSeekHome string) environmentState {
+func inspectEnvironment(codexHome, claudeHome, deepSeekHome string) environmentState {
 	if strings.TrimSpace(codexHome) == "" {
 		codexHome, _ = archive.DefaultCodexHome()
+	}
+	if strings.TrimSpace(claudeHome) == "" {
+		claudeHome, _ = archive.DefaultClaudeHome()
 	}
 	if strings.TrimSpace(deepSeekHome) == "" {
 		deepSeekHome, _ = archive.DefaultDeepSeekHome()
@@ -225,12 +262,13 @@ func inspectEnvironment(codexHome, deepSeekHome string) environmentState {
 	return environmentState{
 		Platform: runtime.GOOS,
 		Git:      gitErr == nil,
-		Codex:    inspectSourceEnvironment(codexHome),
-		DeepSeek: inspectSourceEnvironment(deepSeekHome),
+		Codex:    inspectSourceEnvironment(codexHome, "sessions"),
+		Claude:   inspectSourceEnvironment(claudeHome, "projects"),
+		DeepSeek: inspectSourceEnvironment(deepSeekHome, "sessions"),
 	}
 }
 
-func inspectSourceEnvironment(home string) sourceEnvironment {
+func inspectSourceEnvironment(home, dataDirectory string) sourceEnvironment {
 	home = strings.TrimSpace(home)
 	if home == "" {
 		return sourceEnvironment{}
@@ -238,7 +276,7 @@ func inspectSourceEnvironment(home string) sourceEnvironment {
 	if absolute, err := filepath.Abs(home); err == nil {
 		home = absolute
 	}
-	info, err := os.Stat(filepath.Join(home, "sessions"))
+	info, err := os.Stat(filepath.Join(home, dataDirectory))
 	return sourceEnvironment{Path: home, Available: err == nil && info.IsDir()}
 }
 

@@ -57,7 +57,7 @@ func TestRenderSnapshotIncludesConversationTimeline(t *testing.T) {
 	}, "device:a", "workstation")
 	markdown := string(renderSnapshot(snapshot))
 	for _, expected := range []string{
-		"renderer_version: 7",
+		"renderer_version: 8",
 		`harness: "codex"`,
 		`created_at: "2026-08-05T01:00:00Z"`,
 		`first_message_at: "2026-08-05T01:01:00Z"`,

@@ -1,6 +1,6 @@
 <h1 align="center">Session Manager<img src="assets/sessionmgr.png" alt="Session Manager icon" width="64"></h1>
 
-Session Manager is a small tool I vibe coded to export Codex and DsH sessions, thus communicating them between multiple agents and machines. It is simply a Go binary with a local browser UI and a CLI. 
+Session Manager is a small tool I vibe coded to export Codex, Claude Code, and DsH sessions, thus communicating them between multiple agents and machines. It is simply a Go binary with a local browser UI and a CLI.
 
 Example: You had a long codex session and 
 - therefore the context has become messy
@@ -28,8 +28,10 @@ winget install --id Git.Git -e --source winget
 ```
 
 If WinGet is unavailable, use the official [Git for Windows installer](https://git-scm.com/install/windows).
-Run Codex or DeepSeek Harness at least once to create local sessions, then reopen
-Session Manager. Its Environment panel checks Git and both session directories.
+Run any supported harness at least once to create local sessions, then reopen
+Session Manager. Its Environment panel checks Git and all three session directories.
+The source switches at the top are enabled from this first detection and remain
+under your control afterward.
 
 ## Build
 
@@ -62,14 +64,17 @@ sessionmgr config set-directory /path/to/session-archive
 sessionmgr export
 ```
 
-By default, Session Manager exports active Codex sessions associated with a hosted
-Git remote. Extra sources are explicit:
+Session Manager automatically scans available Codex, Claude Code, and DeepSeek
+Harness state directories. The local GUI exposes three peer source switches at
+the top; on first open, each detected source starts enabled and can be turned off.
+Codex archived sessions and non-Git directories remain explicit policy choices:
 
 ```bash
 sessionmgr export --include-archived
-sessionmgr export --include-deepseek
 sessionmgr export --include-non-git
 ```
 
+Use `--claude-home /path/to/claude-home` to override `CLAUDE_CONFIG_DIR` or
+`~/.claude`.
 Use `--deepseek-home /path/to/dsh-home` to override `DSH_HOME` or `~/.dsh`.
 Use `sessionmgr help` for all CLI options.

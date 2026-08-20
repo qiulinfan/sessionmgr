@@ -8,25 +8,37 @@ const (
 	LocalRepositorySchema     = 2
 	SessionMetadataSchema     = 2
 	LayoutVersion             = 5
-	RendererVersion           = 7
+	RendererVersion           = 8
 	MaxAttachmentBytes        = int64(50 * 1024 * 1024)
 )
 
+// SourceSelection identifies the native harnesses selected for one export.
+// A nil *SourceSelection in Options retains the historical library default of
+// Codex plus the deprecated IncludeDeepSeek field. Product entrypoints always
+// pass an explicit selection so a missing native state directory is optional.
+type SourceSelection struct {
+	Codex      bool
+	ClaudeCode bool
+	DeepSeek   bool
+}
+
 type Options struct {
 	CodexHome    string
+	ClaudeHome   string
 	DeepSeekHome string
 	Output       string
 	Repo         string
 	AllRepos     bool
 	SessionID    string
+	Sources      *SourceSelection
 
 	// IncludeArchived adds Codex archived_sessions/ to discovery. Ordinary
 	// exports inspect only active sessions/ so users can archive a conversation
 	// before its first export to leave it out of the archive.
 	IncludeArchived bool
 
-	// IncludeDeepSeek adds top-level DeepSeek Harness sessions from
-	// DSH_HOME/sessions. Codex remains the only source unless this is selected.
+	// IncludeDeepSeek is retained for callers compiled against the v0.6/v0.7
+	// library surface. CLI and GUI entrypoints use Sources instead.
 	IncludeDeepSeek bool
 
 	// IncludeNonGit adds sessions whose CWD cannot be assigned to a hosted Git
@@ -169,6 +181,7 @@ type Session struct {
 	Commit            string
 	Branch            string
 	CodexVersion      string
+	ClaudeVersion     string
 	CreatedAt         time.Time
 	FirstMessageAt    time.Time
 	LastMessageAt     time.Time
@@ -178,6 +191,7 @@ type Session struct {
 	MalformedCount    int
 	OmittedCount      int
 	ToolCallCount     int
+	AlternateBranches int
 	UserMessages      int
 	AssistantMessages int
 	Messages          []Message

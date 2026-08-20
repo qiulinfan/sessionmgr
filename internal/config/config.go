@@ -13,13 +13,23 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 1
+const (
+	SchemaVersion       = 2
+	legacySchemaVersion = 1
+)
+
+type SourcePreferences struct {
+	Codex      bool `json:"codex"`
+	ClaudeCode bool `json:"claude_code"`
+	DeepSeek   bool `json:"deepseek"`
+}
 
 type Config struct {
-	SchemaVersion   int    `json:"schema_version"`
-	ExportDirectory string `json:"export_directory"`
-	DeviceID        string `json:"device_id,omitempty"`
-	DeviceName      string `json:"device_name,omitempty"`
+	SchemaVersion     int                `json:"schema_version"`
+	ExportDirectory   string             `json:"export_directory"`
+	DeviceID          string             `json:"device_id,omitempty"`
+	DeviceName        string             `json:"device_name,omitempty"`
+	SourcePreferences *SourcePreferences `json:"sources,omitempty"`
 }
 
 type Store struct {
@@ -55,8 +65,14 @@ func (store Store) Load() (Config, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Config{}, fmt.Errorf("parse config %s: unexpected trailing data", store.Path)
 	}
-	if result.SchemaVersion != SchemaVersion {
+	if result.SchemaVersion != SchemaVersion && result.SchemaVersion != legacySchemaVersion {
 		return Config{}, fmt.Errorf("unsupported config schema %d", result.SchemaVersion)
+	}
+	if result.SchemaVersion == legacySchemaVersion {
+		if result.SourcePreferences != nil {
+			return Config{}, fmt.Errorf("legacy config declares source preferences")
+		}
+		result.SchemaVersion = SchemaVersion
 	}
 	return result, nil
 }
@@ -86,12 +102,27 @@ func (store Store) SetExportDirectory(directory string) (Config, error) {
 	}
 	result := Config{
 		SchemaVersion: SchemaVersion, ExportDirectory: filepath.Clean(abs),
-		DeviceID: current.DeviceID, DeviceName: current.DeviceName,
+		DeviceID: current.DeviceID, DeviceName: current.DeviceName, SourcePreferences: current.SourcePreferences,
 	}
 	if err := store.save(result); err != nil {
 		return Config{}, err
 	}
 	return result, nil
+}
+
+func (store Store) SetSourcePreferences(preferences SourcePreferences) (Config, error) {
+	current, err := store.Load()
+	if err != nil {
+		return Config{}, err
+	}
+	current.SchemaVersion = SchemaVersion
+	current.SourcePreferences = &SourcePreferences{
+		Codex: preferences.Codex, ClaudeCode: preferences.ClaudeCode, DeepSeek: preferences.DeepSeek,
+	}
+	if err := store.save(current); err != nil {
+		return Config{}, err
+	}
+	return current, nil
 }
 
 // EnsureDevice returns a stable, machine-local identity. It is intentionally

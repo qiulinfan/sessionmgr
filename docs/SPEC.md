@@ -1,15 +1,15 @@
-# Session Manager v0.6 技术规格
+# Session Manager v1.0 技术规格
 
 ## 1. 进程与命令面
 
 ```text
 sessionmgr                                      # GUI
-sessionmgr gui [--listen 127.0.0.1:0] [--no-open] [--deepseek-home PATH]
+sessionmgr gui [--listen 127.0.0.1:0] [--no-open] [--claude-home PATH] [--deepseek-home PATH]
 sessionmgr config set-directory [--json] PATH
 sessionmgr config show [--json]
 sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived]
-                  [--include-deepseek] [--include-non-git]
-                  [--directory PATH] [--codex-home PATH] [--deepseek-home PATH] [--json]
+                  [--include-non-git] [--directory PATH] [--codex-home PATH]
+                  [--claude-home PATH] [--deepseek-home PATH] [--json]
 sessionmgr list [--directory PATH] [--history] [--json]
 sessionmgr cleanup-internal [--directory PATH] [--codex-home PATH]
                             [--apply] [--json]
@@ -19,13 +19,16 @@ sessionmgr version
 `archive` 是 `export` 的兼容别名。`--output` 是不更新持久配置的一次性兼容 flag；
 新调用应使用会保存目录的 `--directory`。
 
-默认 source 为 `$CODEX_HOME`，未设置时是 `~/.codex`。`export` 默认处理全部 hosted
-Git repositories；显式 `--repo` 时只处理该仓库。`--include-non-git` 开启后，all scope
+CLI 每次自动扫描 Codex、Claude Code 与 DeepSeek Harness 三个 source；任何目录不存在都视为
+零候选而不失败。Codex home 取 `--codex-home`、`CODEX_HOME`、`~/.codex`；Claude home 取
+`--claude-home`、`CLAUDE_CONFIG_DIR`、`~/.claude`；DeepSeek home 取 `--deepseek-home`、
+`DSH_HOME`、`~/.dsh`。`export` 默认处理全部 hosted Git repositories；显式 `--repo` 时只处理
+该仓库。`--include-non-git` 开启后，all scope
 也包括无法映射到 hosted remote 的可访问 CWD，显式 `--repo PATH` 也可直接指向这种目录。
 
-DeepSeek Harness source 只有在 `--include-deepseek` 或 GUI request 的
-`include_deepseek: true` 时加入。home 依次取 `--deepseek-home`、`DSH_HOME`、`~/.dsh`；选项
-不持久化，也不隐含 Codex archived 或 non-Git inclusion。
+GUI 不使用 harness include 选项。顶部三个 peer switches 明确发送本次 `sources` selection；
+第一次打开按 home 数据目录是否存在初始化，之后保存在本机 config schema v2。三个 source 可
+任意关闭或全部关闭；source selection 不隐含 Codex archived 或 non-Git inclusion。
 
 普通 discovery 只扫描 `sessions/`。`--include-archived` 或 GUI request 的
 `include_archived: true` 才把 `archived_sessions/` 加入同一次并集扫描。active/archived 是
@@ -37,14 +40,19 @@ entry 不会生成 tombstone，也不会进入任何删除队列，因此已导�
 非 Git目录默认通过 `filtered_non_git` 计数排除。`--include-non-git` 或 GUI request 的
 `include_non_git: true` 才进入本机目录匹配。该选项不持久化，且不隐含 archived inclusion。
 
-## 2. 持久配置 v1
+## 2. 持久配置 v2
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "export_directory": "/absolute/path",
   "device_id": "device:0123456789abcdef0123456789abcdef",
-  "device_name": "workstation"
+  "device_name": "workstation",
+  "sources": {
+    "codex": true,
+    "claude_code": true,
+    "deepseek": false
+  }
 }
 ```
 
@@ -59,8 +67,13 @@ entry 不会生成 tombstone，也不会进入任何删除队列，因此已导�
 4. 拒绝通过 config symlink 写入；
 5. 以用户可读写权限写入并 `fsync`。
 
-未知 config schema 或字段必须阻止写回，原文件保持可检查；未来新增 required
-semantics 时增加 schema version。
+`sources` 是 GUI preference；字段省略表示从未选择，前端按环境 availability 初始化并立即
+通过 token-protected local API 保存。CLI 自动扫描三源，不读取该 GUI preference。
+
+reader 接受 legacy schema v1，并只在内存中规范化为 v2；read-only load 不改变原 bytes。下一次
+保存目录、生成缺失 device identity 或保存 source preference 时才原子写成 v2。v1 若包含
+`sources` 必须 fail closed。未知 config schema 或字段必须阻止写回，原文件保持可检查；未来新增
+required semantics 时增加 schema version。
 
 `device_id` 在第一次导出时由 128-bit cryptographic random value 生成，之后由本机配置
 稳定保存。`device_name` 默认来自 hostname。改变导出目录不得改变这两个字段；它们不能
@@ -110,7 +123,7 @@ hash 输入，绝不写入 Markdown、repository sidecar、session sidecar 或 C
 表达 device scope，因此 session 直接位于 directory identity 下，不再重复 device 目录。
 目录名或设备名规范化碰撞由 hidden identity 检测并拒绝，不增加可见 hash 后缀。
 
-## 4. Identity and change hashes / layout v5 / renderer v7
+## 4. Identity and change hashes / layout v5 / renderer v8
 
 ```text
 source_hash = sha256(raw_source_bytes)
@@ -119,6 +132,9 @@ Codex session_key = sha256("device-session-v1\0" + device_id + "\0" + native_ses
 
 DeepSeek session_key = sha256("device-harness-session-v1\0" + device_id + "\0"
                               + "deepseek" + "\0" + native_session_id)
+
+Claude session_key = sha256("device-harness-session-v1\0" + device_id + "\0"
+                            + "claude-code" + "\0" + native_session_id)
 
 document_hash = sha256(rendered_conversation_md_bytes)
 ```
@@ -151,14 +167,20 @@ DeepSeek session 在相同 hosted/local repository 结构中使用
 `deepseek--<created-time>--<session-title>` 语义目录。Codex 目录名保持原样；该前缀与不同的
 session key 共同防止跨 harness identity/path collision。
 
+Claude session 使用
+`claude-code--<created-time>--<session-title>--<variant>`。Claude fork 会复制相同历史、时间和
+标题，因此 `<variant>` 固定取 harness-qualified session key digest 的前 8 hex。它是 Claude
+特有的 deterministic collision discriminator；真实短 digest collision 仍由 hidden identity
+校验拒绝，不允许覆盖。Codex/DeepSeek 路径不增加该后缀。
+
 可见路径只承担语义：导出根目录下不存在 `repositories/` wrapper，hosted repository 与
 device 之间也不存在 `sessions/` wrapper；local-directory repository 的 device 已在
 `(non-git)<device-name>` 根中表达，不创建第二个 device component。canonical remote 的
 最后一段是 repository 名，其余 host + owner/多级 namespace 以 `-` 合并为第一层；
 例如 `github.com/qiulinfan/sessionmgr` 得到 `github.com-qiulinfan/sessionmgr`。repository
 namespace、设备名、UTC 创建时间和最新标题经过跨平台安全的 component 规范化，
-每段最多 80 UTF-8 bytes。它不通过附加 hash 解决碰撞；若两个身份
-规范化到同一路径，hidden metadata 必须发现 collision 并拒绝第二次写入。
+每段最多 80 UTF-8 bytes。除上述 Claude fork variant 外不通过附加 hash 解决碰撞；若两个身份
+仍规范化到同一路径，hidden metadata 必须发现 collision 并拒绝第二次写入。
 
 hosted `.sessionmgr-repository.json` 包含 `schema_version`、`layout_version`、
 `repository_key`、`repository_name` 与 `canonical_remote`。
@@ -178,20 +200,21 @@ message/attachment 序号、可读原名、MIME、来源类型、状态、相对
 content hash；不保存绝对本机路径、data URL 或带 credential/query 的远程 URL。它是可检查
 的身份/所有权 sidecar，不是 secret store。
 
-`conversation.md` 的 frontmatter 不包含 identity/hash。它保存 repository/device/session
-显示名、`harness`、可用的 Codex/Git hints，以及以下 renderer-v7 字段：
+`conversation.md` 的 frontmatter 不包含完整 identity/hash。它保存 repository/device/session
+显示名、`harness`、可用的 Codex/Claude/Git hints，以及以下 renderer-v8 字段：
 
 - `created_at`、`first_message_at`、`last_message_at`、`last_event_at`、
   `title_updated_at` 与用于排序的总体 `updated_at`；
 - `source_records`、`malformed_records`、`omitted_records`、`tool_calls`、`messages`、
   `user_messages`、`assistant_messages`、`attachments`、`archived_attachments` 与
   `redactions` 计数。
+- Claude source 存在 off-ancestry UUID nodes 时增加 `alternate_branch_records`。
 
 时间字段没有可信源 timestamp 时省略。renderer v1 的 `started_at` 仍可由读取器检查；
 renderer v2 不修改或删除任何既有 v1 文件。
 
 session metadata schema v1 只允许省略 `harness`，并严格解释为 `codex`，按既有 key 算法
-验证。schema v2 必须声明 `codex` 或 `deepseek`，并按对应算法验证。读取旧 v1 sidecar 不会
+验证。schema v2 必须声明 `codex`、`claude-code` 或 `deepseek`，并按对应算法验证。读取旧 v1 sidecar 不会
 立即写回；只有该 source 再次安全发布时才以 sidecar-last 顺序升级为 v2。
 
 ## 6. Codex parsing
@@ -283,7 +306,42 @@ human transcript 是 append source events 的安全投影：
 source hash 始终对压缩/原始文件 bytes 计算，而不是对解压结果计算。raw session bytes 不被
 重写、移动、删除或替代为 normalized event。
 
-### 6.2 Structured chat attachments
+### 6.2 Claude Code parsing
+
+home 的 transcript discovery 只枚举 `<CLAUDE_HOME>/projects/*/*.jsonl` regular files，不递归
+进入 project 子目录。`<session>/subagents/`、`tool-results/`、project `memory/`、全局
+`sessions/`、`history.jsonl`、file-history、cache、settings、auth 与 session-env 都不读取。
+官方声明 transcript entry schema 是可随任何 Claude Code release 改变的内部格式，因此该
+adapter 是 shape-validated、fail-closed 的只读兼容层，而不是稳定 native schema 声明。
+
+每个 source 必须满足：
+
+1. filename stem 与所有 UUID-bearing record 的 `sessionId` 相同；
+2. UUID 唯一，恰好一个 parentless root，所有非空 parent 都存在，完整 graph 无环；
+3. source order 中最后 UUID node 没有 child；从它沿 `parentUuid` 到 root 得到 current ancestry；
+4. ancestry 反转为根到叶的渲染顺序，不按 timestamp 排序；其他 UUID nodes 计入
+   `alternate_branch_records`/omitted；
+5. top-level source 中 `isSidechain=true` 或非空 `agentId` 计入 `filtered_internal`。
+
+conversation projection：
+
+- `user` 必须 `message.role=user`；`origin.kind=human` 是 canonical direct input。兼容 legacy
+  external user 之前必须精确排除 command/local-output/interrupt/system envelopes；未知非空 origin
+  fail closed；
+- `toolUseResult`、`sourceToolAssistantUUID`、`tool_result` block、`isMeta`、task-notification、
+  system prompt source、完整 IDE/system context block 不进入正文；同一 human record 中其余 text 与
+  structured attachment 仍保留；
+- `assistant` 必须 `message.role=assistant` 且有 message ID。同一 ID 在新的 assistant ID 或 direct
+  human turn 出现前合并；filtered tool/runtime nodes 不切断 group；ID 在另一个 assistant ID 后再次
+  出现视为 unsupported graph；
+- assistant 只合并可见 `text`；`thinking`、`redacted_thinking`、`tool_use` input、tool result、
+  synthetic 与 API/error diagnostics 不进入正文；tool-use 只增加计数；
+- 最新 `agent-name` 优先于最新 `ai-title`，再回退第一条净化 human text 与
+  `Claude Code session <ID>`。标题 record 没有可信 timestamp 时不使用 mtime 补造；
+- CWD/branch/version 取 source order 中最新非空 native facts；project 目录名不可反解为 CWD，
+  当前 worktree commit 不可冒充 transcript commit。
+
+### 6.3 Structured chat attachments
 
 附件只能来自 user message 的结构化字段。已确认的 Codex 形式是
 `response_item.message.content` 中的 `input_image` / `input_audio`，以及 legacy
@@ -297,6 +355,11 @@ DeepSeek `user/message` 的 `image` content block 必须包含 `attachmentId=sha
 `<DSH_HOME>/attachments/v1/objects/<digest-prefix>/<digest>` 读取；使用现有 no-symlink、
 identity/size/mtime 稳定读取后，实际 SHA-256 和大小还必须等于 event 声明值。缺失、忙碌、
 超限或不一致都按附件级状态处理，不得猜测替代路径或修改原生 object。
+
+Claude direct human 的 `image` block 只接受带 image MIME 的 base64 source；`document` 只接受
+非空 text source、media type 与 embedded data。image 解码原始 bytes；document 保存 Claude
+内嵌 text bytes，并保持 declared title/MIME，但不得声明为原始文件。两者进入同一 50 MiB、
+sensitive-content、owned-file pipeline；不得查找 image/paste cache 或 tool-results 作为替代。
 
 单文件上限 `MaxAttachmentBytes = 50 * 1024 * 1024`；`size <= MaxAttachmentBytes`
 允许，`size > MaxAttachmentBytes` 记为 `too_large`。data URL 在解码前先做编码长度
@@ -319,7 +382,8 @@ warning：对话文档仍
 user message 下用相对路径链接 `archived` 附件，其他状态只显示不含本机绝对路径
 的说明。
 
-Codex `created_at` 来自 `session_meta`，DeepSeek 来自 header `createdAt`；
+Codex `created_at` 来自 `session_meta`，DeepSeek 来自 header `createdAt`，Claude 来自 selected
+ancestry 第一个可信 node timestamp；
 `first_message_at`/`last_message_at` 是所选可读消息中
 最早/最晚的原始 timestamp；`last_event_at` 是所有可解析源记录中的最大 timestamp。
 消息正文保持 JSONL 文件顺序，标题格式为 `序号 · Role · timestamp`；无 timestamp
@@ -427,6 +491,11 @@ raw Codex JSONL、repository sidecar、其他 device/session 和 legacy v1/v2 hi
 任何人工编辑、symlink、unknown required metadata、identity mismatch 或 semantic collision
 均阻止该 session 更新，不静默覆盖用户文件。
 
+Windows 上同目录 temp-to-owned-file 的最后 `os.Rename` 可因 antivirus/indexer 短暂 handle 返回
+sharing/lock/access-denied。仅该已完成上述 ownership/hash/symlink 校验的最后一步允许最多六次
+10–60 ms bounded retry；持续权限错误原样返回。Unix 不重试。该机制不扩大可替换 target，也不
+重试 identity/collision 错误。
+
 ## 10. Local GUI
 
 GUI 使用标准库 `net/http` 和 `embed`：
@@ -455,22 +524,25 @@ server，前端把它放入 `X-Sessionmgr-Token` header。所有 `/api/*` 请求
 
 API：
 
-- `GET /api/state`：当前持久目录，以及只读的 `environment`：运行平台、Git 可用性、Codex
-  与 DeepSeek Harness home path 和各自 `sessions/` 目录是否存在；
+- `GET /api/state`：当前持久目录，以及只读的 `environment`：运行平台、Git 可用性、Codex、
+  Claude Code、DeepSeek Harness home path 与各自 `sessions/`/`projects/` 目录是否存在；
 - `PUT /api/config`：验证并保存目录；
 - `POST /api/pick-directory`：调用平台目录对话框；
 - `POST /api/export`：接受 `directory`、all/current `scope`、布尔值 `include_archived` 与
-  `include_non_git`、`include_deepseek`，执行对应范围并返回当前 changeset。三个 include 选项
-  彼此独立且默认 false。
+  `include_non_git`，以及 `sources.codex`、`sources.claude_code`、`sources.deepseek`。source
+  selection 可全部 false；省略 `sources` 的旧客户端按当前环境自动探测，bundled GUI 总是显式发送。
 
-前端首次加载使用 English；用户可切换 English/中文，选择只保存在浏览器本地，不改变
+前端最上方在 Environment 之前显示三个同级 switch。`/api/state.source_preferences` 为空时，
+各 switch 以 environment availability 初始化并立即 `PUT /api/sources`；之后 reload 或随机端口
+重启使用 config 中的用户值，即使 source 后来缺失也不悄悄改回。写请求串行，避免快速拨动乱序。
+Codex switch 关闭时 archived checkbox disabled；请求中的 archived
+值不启用已关闭 source。前端首次加载使用 English；用户可切换 English/中文，选择只保存在浏览器本地，不改变
 跨机器 config schema。静态文案以及连接、保存、导出、busy/no-change、计数、change badge
 与附件摘要等动态状态共享同一语言字典。页面顶部的 Environment panel 把 release EXE 与
 源码构建依赖分开：EXE 不需要 Go 或 Make；Git 用于 repository detection。panel 在 Windows
 缺少 Git 时显示 `winget install --id Git.Git -e --source winget` 和 Git 官方安装页，但不自动
 执行命令、提权或修改 PATH；安装后用户关闭并重新打开 Session Manager 触发重新检测。
-Codex 与 DeepSeek 行分别显示当前解析后的 home path 及 `sessions/` 是否存在，DeepSeek 明确
-标注为可选。hosted Git changeset 在客户端按 `repository_key`
+Codex、Claude 与 DeepSeek 行分别显示当前解析后的 home path 及数据目录是否存在。hosted Git changeset 在客户端按 `repository_key`
 和 `device_name` 分成两级原生 `<details>` 目录树；repository/device summary 可独立展开，
 session 变化作为对应 device 的叶节点显示。local-directory change 仍按 `repository_key`
 聚合，但 `(non-git)<device>/<directory>` repository 根已经表达 device scope，因此 session
@@ -498,7 +570,7 @@ Git。`make cross-check` 编译 darwin/arm64、linux/amd64、windows/amd64；`ma
 
 ### 11.1 Windows release pipeline
 
-开发源码的默认版本是 `0.7.0-dev`。`internal/app.version` 必须是可由 Go linker `-X` 覆盖的
+开发源码的当前版本是 `1.0.0`。`internal/app.version` 必须是可由 Go linker `-X` 覆盖的
 string variable；正式构建使用：
 
 ```text
@@ -592,3 +664,15 @@ DeepSeek sidecar 必须是 schema v2，旧 v0.5 binary 遇到它会因 unknown s
 DeepSeek adapter 当前只承诺 DSH session format v0；未知 header version、未知 required surface
 semantics 或同目录双 encoding 均 fail closed。DeepSeek native resume/replay、subagent 导出与
 `cleanup-internal` 删除不在 v0.6 范围内。
+
+v1.0 把 product entrypoints 从 Codex-only + DeepSeek include 改为三个可用 source 自动扫描；GUI
+显式 `sources` object 和浏览器本地三个 peer switches 允许关闭。缺少 source 不再是前置条件。
+config schema v2、repository schema v1/v2、session metadata schema v2、attachment schema v1、
+layout v5 与 export-result schema v3 不变；schema-v2 harness enum 增加 required `claude-code`。
+renderer 升为 v8，existing owned documents 在再次选中时经过 hash/identity 验证后更新。
+
+Claude adapter 只承诺上述结构化 shape，不承诺 Anthropic internal JSONL entry 的稳定版本。
+Claude sidecar 使用 schema v2 + harness-qualified key；v0.7 reader 遇到 required unknown harness
+会 fail closed。Claude fork 目录增加短 deterministic variant；Codex/DeepSeek 路径不迁移。
+Claude native resume、cloud/Desktop history、subagents、tool trace、checkpoint export 与
+`cleanup-internal` 删除均不在 v1.0 范围内。

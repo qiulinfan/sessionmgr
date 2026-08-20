@@ -95,6 +95,19 @@ h2 { margin: 0; font-size: 24px; letter-spacing: -.02em; }
 .muted, .hint { color: var(--muted); font-size: 13px; }
 .hint { margin: 12px 0 0; }
 
+.source-switches { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+.source-switch { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 15px; background: var(--paper); cursor: pointer; }
+.source-switch:hover { border-color: #484f58; background: var(--surface); }
+.source-switch > span:first-child { min-width: 0; display: grid; gap: 5px; }
+.source-switch strong { font-size: 14px; }
+.source-switch small { color: var(--muted); font-size: 11px; line-height: 1.35; }
+.source-switch input { position: absolute; width: 1px; height: 1px; padding: 0; opacity: 0; pointer-events: none; }
+.switch-track { position: relative; flex: none; width: 44px; height: 24px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-raised); transition: border-color .15s ease, background .15s ease; }
+.switch-track span { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: transform .15s ease, background .15s ease; }
+.source-switch input:checked + .switch-track { border-color: rgba(63, 185, 80, .65); background: var(--green-strong); }
+.source-switch input:checked + .switch-track span { transform: translateX(20px); background: #fff; }
+.source-switch input:focus-visible + .switch-track { box-shadow: 0 0 0 3px rgba(88, 166, 255, .28); }
+
 .setup-list { display: grid; gap: 10px; margin-top: 20px; }
 .setup-item { padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper); }
 .setup-line { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
@@ -178,6 +191,7 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
   .shell { width: min(calc(100% - 24px), 960px); padding-top: 38px; }
   .hero { display: block; }
   .hero-tools { margin-top: 24px; justify-content: space-between; }
+  .source-switches { grid-template-columns: 1fr; }
   .status-dot { margin-top: 0; }
   .directory-row { grid-template-columns: 1fr 1fr; }
   .directory-row input { grid-column: 1 / -1; }

@@ -55,7 +55,7 @@ func TestGUIConfigAndIncrementalExport(t *testing.T) {
 		t.Fatalf("GUI config was not persisted: %+v, %v", loaded, err)
 	}
 
-	first := authenticatedRequest(http.MethodPost, "/api/export", map[string]string{"scope": "all"})
+	first := authenticatedRequest(http.MethodPost, "/api/export", map[string]any{"scope": "all", "sources": sourceRequest(true, false, false)})
 	firstResult := httptest.NewRecorder()
 	handler.ServeHTTP(firstResult, first)
 	firstResponse := decodeExportResponse(t, firstResult)
@@ -86,7 +86,7 @@ func TestGUIConfigAndIncrementalExport(t *testing.T) {
 		t.Fatalf("GUI did not persist device identity: %+v, %v", withDevice, err)
 	}
 
-	second := authenticatedRequest(http.MethodPost, "/api/export", map[string]string{"scope": "all"})
+	second := authenticatedRequest(http.MethodPost, "/api/export", map[string]any{"scope": "all", "sources": sourceRequest(true, false, false)})
 	secondResult := httptest.NewRecorder()
 	handler.ServeHTTP(secondResult, second)
 	secondResponse := decodeExportResponse(t, secondResult)
@@ -117,7 +117,7 @@ func TestGUIArchivedSessionsRequireExplicitInclusion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defaultRequest := authenticatedRequest(http.MethodPost, "/api/export", map[string]interface{}{"scope": "all"})
+	defaultRequest := authenticatedRequest(http.MethodPost, "/api/export", map[string]interface{}{"scope": "all", "sources": sourceRequest(true, false, false)})
 	defaultResult := httptest.NewRecorder()
 	handler.ServeHTTP(defaultResult, defaultRequest)
 	defaultResponse := decodeExportResponse(t, defaultResult)
@@ -126,7 +126,7 @@ func TestGUIArchivedSessionsRequireExplicitInclusion(t *testing.T) {
 	}
 
 	includedRequest := authenticatedRequest(http.MethodPost, "/api/export", map[string]interface{}{
-		"scope": "all", "include_archived": true,
+		"scope": "all", "include_archived": true, "sources": sourceRequest(true, false, false),
 	})
 	includedResult := httptest.NewRecorder()
 	handler.ServeHTTP(includedResult, includedRequest)
@@ -163,7 +163,7 @@ func TestGUINonGitDirectoriesRequireExplicitFullExport(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defaultRequest := authenticatedRequest(http.MethodPost, "/api/export", map[string]interface{}{"scope": "all"})
+	defaultRequest := authenticatedRequest(http.MethodPost, "/api/export", map[string]interface{}{"scope": "all", "sources": sourceRequest(true, false, false)})
 	defaultResult := httptest.NewRecorder()
 	handler.ServeHTTP(defaultResult, defaultRequest)
 	defaultResponse := decodeExportResponse(t, defaultResult)
@@ -172,7 +172,7 @@ func TestGUINonGitDirectoriesRequireExplicitFullExport(t *testing.T) {
 	}
 
 	includedRequest := authenticatedRequest(http.MethodPost, "/api/export", map[string]interface{}{
-		"scope": "current", "include_non_git": true,
+		"scope": "current", "include_non_git": true, "sources": sourceRequest(true, false, false),
 	})
 	includedResult := httptest.NewRecorder()
 	handler.ServeHTTP(includedResult, includedRequest)
@@ -183,7 +183,7 @@ func TestGUINonGitDirectoriesRequireExplicitFullExport(t *testing.T) {
 	}
 
 	repeatRequest := authenticatedRequest(http.MethodPost, "/api/export", map[string]interface{}{
-		"scope": "current", "include_non_git": true,
+		"scope": "current", "include_non_git": true, "sources": sourceRequest(true, false, false),
 	})
 	repeatResult := httptest.NewRecorder()
 	handler.ServeHTTP(repeatResult, repeatRequest)
@@ -218,8 +218,13 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	if !bytes.Contains(page, []byte(`id="include-archived"`)) || !bytes.Contains(page, []byte("Include archived Codex sessions")) {
 		t.Fatal("GUI archived-session option is missing")
 	}
-	if !bytes.Contains(page, []byte(`id="include-deepseek"`)) || !bytes.Contains(page, []byte("Include DeepSeek Harness sessions")) {
-		t.Fatal("GUI DeepSeek Harness option is missing")
+	for _, sourceID := range []string{`id="source-codex"`, `id="source-claude"`, `id="source-deepseek"`} {
+		if !bytes.Contains(page, []byte(sourceID)) {
+			t.Fatalf("GUI source switch %s is missing", sourceID)
+		}
+	}
+	if bytes.Contains(page, []byte(`id="include-deepseek"`)) {
+		t.Fatal("GUI still presents DeepSeek as an include option")
 	}
 	if !bytes.Contains(page, []byte(`id="include-non-git"`)) || !bytes.Contains(page, []byte("Include non-Git directories")) {
 		t.Fatal("GUI non-Git full-export option is missing")
@@ -239,8 +244,10 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	script := scriptResult.Body.Bytes()
 	if !bytes.Contains(script, []byte("function groupChanges")) || !bytes.Contains(script, []byte("repository-tree")) ||
 		!bytes.Contains(script, []byte("repository.localDirectory")) || !bytes.Contains(script, []byte("repository-session-list")) ||
-		!bytes.Contains(script, []byte("sessionmgr-language")) || !bytes.Contains(script, []byte("filtered_internal")) ||
-		!bytes.Contains(script, []byte("include_archived")) || !bytes.Contains(script, []byte("include_deepseek")) ||
+		!bytes.Contains(script, []byte("sessionmgr-language")) || !bytes.Contains(script, []byte("/api/sources")) ||
+		!bytes.Contains(script, []byte("source_preferences")) ||
+		!bytes.Contains(script, []byte("filtered_internal")) || !bytes.Contains(script, []byte("include_archived")) ||
+		!bytes.Contains(script, []byte("claude_code")) || !bytes.Contains(script, []byte("sourceDeepSeek")) ||
 		!bytes.Contains(script, []byte("include_non_git")) ||
 		!bytes.Contains(script, []byte("filtered_non_git")) || !bytes.Contains(script, []byte("badgeFull")) ||
 		!bytes.Contains(script, []byte("renderEnvironment")) || !bytes.Contains(script, []byte("git_available")) {
@@ -257,7 +264,7 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	if !bytes.Contains(style, []byte("color-scheme: dark")) ||
 		!bytes.Contains(style, []byte("--paper: #0d1117")) ||
 		!bytes.Contains(style, []byte("--surface: #161b22")) ||
-		!bytes.Contains(style, []byte(".setup-command")) ||
+		!bytes.Contains(style, []byte(".setup-command")) || !bytes.Contains(style, []byte(".switch-track")) ||
 		bytes.Contains(style, []byte("color-scheme: light")) {
 		t.Fatal("GUI stylesheet is not using the GitHub Dark palette")
 	}
@@ -266,11 +273,15 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 func TestGUIStateReportsRuntimeAndSessionSources(t *testing.T) {
 	root := t.TempDir()
 	codexHome := filepath.Join(root, "codex")
+	claudeHome := filepath.Join(root, "claude")
 	deepSeekHome := filepath.Join(root, "dsh")
 	if err := os.MkdirAll(filepath.Join(codexHome, "sessions"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandlerWithSources("test-token", config.Store{Path: filepath.Join(root, "config.json")}, codexHome, deepSeekHome, ".")
+	if err := os.MkdirAll(filepath.Join(claudeHome, "projects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandlerWithSources("test-token", config.Store{Path: filepath.Join(root, "config.json")}, codexHome, claudeHome, deepSeekHome, ".")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,14 +304,51 @@ func TestGUIStateReportsRuntimeAndSessionSources(t *testing.T) {
 	if !state.Environment.Codex.Available || state.Environment.Codex.Path != codexHome {
 		t.Fatalf("Codex source was not detected: %+v", state.Environment.Codex)
 	}
+	if !state.Environment.Claude.Available || state.Environment.Claude.Path != claudeHome {
+		t.Fatalf("Claude source was not detected: %+v", state.Environment.Claude)
+	}
 	if state.Environment.DeepSeek.Available || state.Environment.DeepSeek.Path != deepSeekHome {
 		t.Fatalf("missing DeepSeek source was not reported: %+v", state.Environment.DeepSeek)
 	}
 }
 
+func TestGUISourcePreferencesPersistAcrossHandlerState(t *testing.T) {
+	root := t.TempDir()
+	store := config.Store{Path: filepath.Join(root, "config.json")}
+	handler, err := NewHandlerWithSources("test-token", store, filepath.Join(root, "codex"), filepath.Join(root, "claude"), filepath.Join(root, "dsh"), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	put := authenticatedRequest(http.MethodPut, "/api/sources", sourceRequest(true, false, true))
+	putResult := httptest.NewRecorder()
+	handler.ServeHTTP(putResult, put)
+	if putResult.Code != http.StatusOK {
+		t.Fatalf("source preferences returned %d: %s", putResult.Code, putResult.Body.String())
+	}
+
+	reloadedHandler, err := NewHandlerWithSources("test-token", store, filepath.Join(root, "codex"), filepath.Join(root, "claude"), filepath.Join(root, "dsh"), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateRequest := authenticatedRequest(http.MethodGet, "/api/state", nil)
+	stateResult := httptest.NewRecorder()
+	reloadedHandler.ServeHTTP(stateResult, stateRequest)
+	var state struct {
+		SchemaVersion     int                       `json:"schema_version"`
+		SourcePreferences *config.SourcePreferences `json:"source_preferences"`
+	}
+	if err := json.Unmarshal(stateResult.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.SchemaVersion != config.SchemaVersion || state.SourcePreferences == nil ||
+		!state.SourcePreferences.Codex || state.SourcePreferences.ClaudeCode || !state.SourcePreferences.DeepSeek {
+		t.Fatalf("source preferences did not survive handler recreation: %+v", state)
+	}
+}
+
 func TestInspectEnvironmentReportsMissingGit(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	state := inspectEnvironment(filepath.Join(t.TempDir(), "codex"), filepath.Join(t.TempDir(), "dsh"))
+	state := inspectEnvironment(filepath.Join(t.TempDir(), "codex"), filepath.Join(t.TempDir(), "claude"), filepath.Join(t.TempDir(), "dsh"))
 	if state.Git {
 		t.Fatal("Git was reported available with an empty tool path")
 	}
@@ -327,12 +375,12 @@ func TestGUIDeepSeekOptInExportsConfiguredSource(t *testing.T) {
 	if _, err := store.SetExportDirectory(filepath.Join(root, "exports")); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandlerWithSources("test-token", store, filepath.Join(root, "codex"), deepSeekHome, workspace)
+	handler, err := NewHandlerWithSources("test-token", store, filepath.Join(root, "codex"), filepath.Join(root, "claude"), deepSeekHome, workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
 	request := authenticatedRequest(http.MethodPost, "/api/export", map[string]any{
-		"scope": "all", "include_deepseek": true, "include_non_git": true,
+		"scope": "all", "sources": sourceRequest(false, false, true), "include_non_git": true,
 	})
 	result := httptest.NewRecorder()
 	handler.ServeHTTP(result, request)
@@ -360,7 +408,7 @@ func TestGUIBusySourceIsNotAnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := authenticatedRequest(http.MethodPost, "/api/export", map[string]string{"scope": "all"})
+	request := authenticatedRequest(http.MethodPost, "/api/export", map[string]any{"scope": "all", "sources": sourceRequest(true, false, false)})
 	result := httptest.NewRecorder()
 	handler.ServeHTTP(result, request)
 	response := decodeExportResponse(t, result)
@@ -390,7 +438,7 @@ func TestGUIReportsFilteredInternalSessionsWithoutExportingThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := authenticatedRequest(http.MethodPost, "/api/export", map[string]string{"scope": "all"})
+	request := authenticatedRequest(http.MethodPost, "/api/export", map[string]any{"scope": "all", "sources": sourceRequest(true, false, false)})
 	result := httptest.NewRecorder()
 	handler.ServeHTTP(result, request)
 	response := decodeExportResponse(t, result)
@@ -428,6 +476,46 @@ func authenticatedRequest(method, target string, body interface{}) *http.Request
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Sessionmgr-Token", "test-token")
 	return request
+}
+
+func TestGUIClaudeSourceSwitchExportsConfiguredSource(t *testing.T) {
+	root := t.TempDir()
+	claudeHome := filepath.Join(root, "claude")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const id = "55555555-5555-5555-5555-555555555555"
+	source := filepath.Join(claudeHome, "projects", "project", id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf(`{"type":"user","uuid":"user","parentUuid":null,"sessionId":%q,"timestamp":"2026-08-20T01:00:00Z","cwd":%q,"version":"2.1.235","userType":"external","origin":{"kind":"human"},"promptSource":"typed","message":{"role":"user","content":"GUI Claude export"}}
+`, id, workspace)
+	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := config.Store{Path: filepath.Join(root, "config.json")}
+	if _, err := store.SetExportDirectory(filepath.Join(root, "exports")); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandlerWithSources("test-token", store, filepath.Join(root, "codex"), claudeHome, filepath.Join(root, "dsh"), workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := authenticatedRequest(http.MethodPost, "/api/export", map[string]any{
+		"scope": "all", "sources": sourceRequest(false, true, false), "include_non_git": true,
+	})
+	result := httptest.NewRecorder()
+	handler.ServeHTTP(result, request)
+	response := decodeExportResponse(t, result)
+	if response.Error != "" || response.Result.Created != 1 || len(response.Result.Changes) != 1 || response.Result.Changes[0].Harness != "claude-code" {
+		t.Fatalf("GUI did not export the Claude session: %+v", response)
+	}
+}
+
+func sourceRequest(codex, claude, deepSeek bool) map[string]bool {
+	return map[string]bool{"codex": codex, "claude_code": claude, "deepseek": deepSeek}
 }
 
 func decodeExportResponse(t *testing.T, result *httptest.ResponseRecorder) exportResponse {
