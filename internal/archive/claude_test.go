@@ -126,7 +126,7 @@ func TestParseClaudeSessionSelectsLatestLeafAndVisibleConversation(t *testing.T)
 	}
 }
 
-func TestParseClaudeSessionRejectsInvalidGraphsAndBusyTail(t *testing.T) {
+func TestParseClaudeSessionRejectsInvalidSelectedPathAndBusyTail(t *testing.T) {
 	const id = "22222222-2222-2222-2222-222222222222"
 	cwd := t.TempDir()
 	validRoot := claudeUserRecord(id, "root", "", "2026-08-20T01:00:00Z", cwd, []any{map[string]any{"type": "text", "text": "hello"}})
@@ -134,10 +134,17 @@ func TestParseClaudeSessionRejectsInvalidGraphsAndBusyTail(t *testing.T) {
 		name    string
 		records []map[string]any
 	}{
-		{"mismatched ID", []map[string]any{{"type": "user", "uuid": "root", "sessionId": "other", "timestamp": "2026-08-20T01:00:00Z", "message": map[string]any{"role": "user", "content": "hello"}}}},
-		{"duplicate UUID", []map[string]any{validRoot, validRoot}},
 		{"missing parent", []map[string]any{validRoot, claudeAssistantRecord(id, "a", "missing", "m", "2026-08-20T01:00:01Z", cwd, []any{map[string]any{"type": "text", "text": "answer"}})}},
-		{"multiple roots", []map[string]any{validRoot, claudeUserRecord(id, "root-2", "", "2026-08-20T01:00:01Z", cwd, []any{map[string]any{"type": "text", "text": "other"}})}},
+		{"cycle", []map[string]any{
+			claudeUserRecord(id, "root", "assistant", "2026-08-20T01:00:00Z", cwd, []any{map[string]any{"type": "text", "text": "hello"}}),
+			claudeAssistantRecord(id, "assistant", "root", "m", "2026-08-20T01:00:01Z", cwd, []any{map[string]any{"type": "text", "text": "answer"}}),
+		}},
+		{"semantic replay conflict", []map[string]any{
+			validRoot,
+			claudeAssistantRecord(id, "a", "root", "m", "2026-08-20T01:00:01Z", cwd, []any{map[string]any{"type": "text", "text": "first"}}),
+			claudeAssistantRecord(id, "a", "root", "m", "2026-08-20T01:00:01Z", cwd, []any{map[string]any{"type": "text", "text": "conflicting"}}),
+			claudeUserRecord(id, "last", "a", "2026-08-20T01:00:02Z", cwd, []any{map[string]any{"type": "text", "text": "continue"}}),
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -149,6 +156,54 @@ func TestParseClaudeSessionRejectsInvalidGraphsAndBusyTail(t *testing.T) {
 	complete := marshalClaudeRecords(t, []map[string]any{validRoot})
 	if _, err := parseClaudeSession(complete[:len(complete)-3], id); !errors.Is(err, errSourceBusy) {
 		t.Fatalf("incomplete Claude JSONL tail was not busy: %v", err)
+	}
+}
+
+func TestParseClaudeSessionAllowsCopiedAncestryDetachedRootsAndReplay(t *testing.T) {
+	const id = "copied-session"
+	const ancestorID = "ancestor-session"
+	cwd := t.TempDir()
+	foreignUser := claudeUserRecord(ancestorID, "foreign-user", "", "2026-08-20T01:00:00Z", cwd, []any{map[string]any{"type": "text", "text": "ancestor request"}})
+	foreignAssistant := claudeAssistantRecord(ancestorID, "foreign-assistant", "foreign-user", "foreign-message", "2026-08-20T01:00:01Z", cwd, []any{map[string]any{"type": "text", "text": "ancestor answer"}})
+	replay := claudeAssistantRecord(ancestorID, "foreign-assistant", "foreign-user", "foreign-message", "2026-08-20T01:00:01Z", cwd, []any{map[string]any{"type": "text", "text": "ancestor answer"}})
+	replay["slug"] = "replayed-metadata"
+	detachedSystem := map[string]any{"type": "system", "uuid": "detached-system", "parentUuid": nil, "sessionId": ancestorID, "timestamp": "2026-08-20T01:00:01Z"}
+	ownedUser := claudeUserRecord(id, "owned-user", "foreign-assistant", "2026-08-20T01:00:02Z", cwd, []any{map[string]any{"type": "text", "text": "fork request"}})
+	ownedAssistant := claudeAssistantRecord(id, "owned-assistant", "owned-user", "owned-message", "2026-08-20T01:00:03Z", cwd, []any{map[string]any{"type": "text", "text": "fork answer"}})
+	attachmentAfterAnchor := map[string]any{"type": "attachment", "uuid": "after-anchor", "parentUuid": "owned-assistant", "sessionId": id, "timestamp": "2026-08-20T01:00:04Z"}
+	staleLastPrompt := map[string]any{"type": "last-prompt", "sessionId": id, "leafUuid": "foreign-user"}
+
+	session, err := parseClaudeSession(marshalClaudeRecords(t, []map[string]any{
+		foreignUser, foreignAssistant, replay, detachedSystem, ownedUser, ownedAssistant, attachmentAfterAnchor, staleLastPrompt,
+	}), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.ID != id || session.UserMessages != 2 || session.AssistantMessages != 2 || len(session.Messages) != 4 {
+		t.Fatalf("copied Claude ancestry was not projected as one current conversation: %+v", session)
+	}
+	joined := ""
+	for _, message := range session.Messages {
+		joined += message.Text + "\n"
+	}
+	for _, expected := range []string{"ancestor request", "ancestor answer", "fork request", "fork answer"} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("copied ancestry omitted %q: %s", expected, joined)
+		}
+	}
+	if strings.Contains(joined, "detached") || session.AlternateBranches == 0 {
+		t.Fatalf("detached system root was rendered or not counted as alternate: %+v", session)
+	}
+}
+
+func TestParseClaudeSessionSilentlySkipsBridgeOnlyTranscript(t *testing.T) {
+	foreign := claudeUserRecord("ancestor", "foreign-user", "", "2026-08-20T01:00:00Z", t.TempDir(), []any{map[string]any{"type": "text", "text": "ancestor"}})
+	session, err := parseClaudeSession(marshalClaudeRecords(t, []map[string]any{foreign}), "current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.ID != "current" || session.UserMessages != 0 || len(session.Messages) != 0 {
+		t.Fatalf("bridge-only Claude transcript was not silently ignored: %+v", session)
 	}
 }
 
@@ -226,7 +281,7 @@ func TestExportClaudeSessionIsOptSelectableIncrementalAndImmutable(t *testing.T)
 		t.Fatalf("Claude semantic directory lacks its harness prefix: %s", first.Changes[0].Path)
 	}
 	document, err := os.ReadFile(first.Changes[0].Path)
-	if err != nil || !bytes.Contains(document, []byte("Exported from Claude Code")) || !bytes.Contains(document, []byte("renderer_version: 8")) {
+	if err != nil || !bytes.Contains(document, []byte("Exported from Claude Code")) || !bytes.Contains(document, []byte("renderer_version: 9")) {
 		t.Fatalf("Claude Markdown provenance missing: %s, %v", document, err)
 	}
 	var metadata sessionMetadata
@@ -247,6 +302,117 @@ func TestExportClaudeSessionIsOptSelectableIncrementalAndImmutable(t *testing.T)
 	entries, err := List(ListOptions{Output: output})
 	if err != nil || len(entries) != 1 || entries[0].Harness != harnessClaudeCode {
 		t.Fatalf("Claude list provenance missing: %+v, %v", entries, err)
+	}
+}
+
+func TestExportRejectsAmbiguousClaudeTranscriptCopies(t *testing.T) {
+	root := t.TempDir()
+	claudeHome := filepath.Join(root, "claude")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, workspace, "init")
+	runGit(t, workspace, "remote", "add", "origin", "https://github.com/example/claude-copy.git")
+	const id = "77777777-7777-7777-7777-777777777777"
+	for project, text := range map[string]string{"project-a": "first copy", "project-b": "second copy"} {
+		path := filepath.Join(claudeHome, "projects", project, id+".jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, marshalClaudeRecords(t, []map[string]any{
+			claudeUserRecord(id, "user", "", "2026-08-20T01:00:00Z", workspace, []any{map[string]any{"type": "text", "text": text}}),
+		}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := Export(context.Background(), Options{
+		ClaudeHome: claudeHome, Output: filepath.Join(root, "archive"), AllRepos: true,
+		Sources: &SourceSelection{ClaudeCode: true}, DeviceID: "device:test", DeviceName: "test-device", StabilityWindow: -1,
+	})
+	if err == nil || result.Sources != 2 || result.Created != 0 || result.Skipped != 2 || len(result.Changes) != 0 {
+		t.Fatalf("ambiguous Claude copies were not fail-closed: %+v, %v", result, err)
+	}
+	if len(result.Warnings) != 1 || strings.Contains(result.Warnings[0], workspace) {
+		t.Fatalf("ambiguous copy warning leaked a workspace or was missing: %+v", result.Warnings)
+	}
+}
+
+func TestExportClaudeFallsBackToAccessibleAncestryWorkspace(t *testing.T) {
+	root := t.TempDir()
+	claudeHome := filepath.Join(root, "claude")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, workspace, "init")
+	runGit(t, workspace, "remote", "add", "origin", "https://github.com/example/claude-workspace.git")
+	const id = "88888888-8888-8888-8888-888888888888"
+	missingWorkspace := filepath.Join(root, "removed-extension")
+	path := filepath.Join(claudeHome, "projects", "project", id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, marshalClaudeRecords(t, []map[string]any{
+		claudeUserRecord("ancestor", "ancestor-user", "", "2026-08-20T01:00:00Z", workspace, []any{map[string]any{"type": "text", "text": "ancestor"}}),
+		claudeUserRecord(id, "owned-user", "ancestor-user", "2026-08-20T01:00:01Z", missingWorkspace, []any{map[string]any{"type": "text", "text": "current"}}),
+	}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Export(context.Background(), Options{
+		ClaudeHome: claudeHome, Output: filepath.Join(root, "archive"), AllRepos: true,
+		Sources: &SourceSelection{ClaudeCode: true}, DeviceID: "device:test", DeviceName: "test-device", StabilityWindow: -1,
+	})
+	if err != nil || result.Created != 1 || result.Skipped != 0 || len(result.Changes) != 1 {
+		t.Fatalf("accessible Claude ancestry workspace was not used: %+v, %v", result, err)
+	}
+}
+
+func TestExportSilentlySkipsClaudeBridgeOnlySource(t *testing.T) {
+	root := t.TempDir()
+	claudeHome := filepath.Join(root, "claude")
+	const id = "99999999-9999-9999-9999-999999999999"
+	path := filepath.Join(claudeHome, "projects", "project", id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, marshalClaudeRecords(t, []map[string]any{
+		claudeUserRecord("ancestor", "foreign-user", "", "2026-08-20T01:00:00Z", t.TempDir(), []any{map[string]any{"type": "text", "text": "bridge only"}}),
+	}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Export(context.Background(), Options{
+		ClaudeHome: claudeHome, Output: filepath.Join(root, "archive"), AllRepos: true,
+		Sources: &SourceSelection{ClaudeCode: true}, DeviceID: "device:test", DeviceName: "test-device", StabilityWindow: -1,
+	})
+	if err != nil || result.Sources != 1 || result.Created != 0 || result.Skipped != 0 || result.Matched != 0 || len(result.Warnings) != 0 {
+		t.Fatalf("bridge-only Claude source was not silently skipped: %+v, %v", result, err)
+	}
+}
+
+func TestExportClaudeUnavailableWorkspaceDoesNotExposeAbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	claudeHome := filepath.Join(root, "claude")
+	missingWorkspace := filepath.Join(root, "deleted-workspace")
+	const id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	path := filepath.Join(claudeHome, "projects", "project", id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, marshalClaudeRecords(t, []map[string]any{
+		claudeUserRecord(id, "user", "", "2026-08-20T01:00:00Z", missingWorkspace, []any{map[string]any{"type": "text", "text": "cannot map workspace"}}),
+	}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Export(context.Background(), Options{
+		ClaudeHome: claudeHome, Output: filepath.Join(root, "archive"), AllRepos: true,
+		Sources: &SourceSelection{ClaudeCode: true}, DeviceID: "device:test", DeviceName: "test-device", StabilityWindow: -1,
+	})
+	if err == nil || result.Skipped != 1 || len(result.Warnings) != 1 {
+		t.Fatalf("unavailable workspace was not a safe partial export: %+v, %v", result, err)
+	}
+	if strings.Contains(result.Warnings[0], missingWorkspace) || !strings.Contains(result.Warnings[0], "workspace is unavailable") {
+		t.Fatalf("workspace warning leaked an absolute path: %q", result.Warnings[0])
 	}
 }
 

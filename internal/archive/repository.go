@@ -36,10 +36,55 @@ func repositoryForSession(ctx context.Context, session Session) (Repository, err
 	if canonical, portable := NormalizeRemote(session.Remote); portable {
 		return repositoryFromRemote(canonical), nil
 	}
-	if session.CWD == "" {
-		return Repository{}, fmt.Errorf("session %s has no hosted Git remote", session.ID)
+	paths := workspacePaths(session)
+	if len(paths) == 0 {
+		return Repository{}, fmt.Errorf("workspace is unavailable")
 	}
-	return RepositoryFromPath(ctx, session.CWD)
+	accessible := false
+	for index := len(paths) - 1; index >= 0; index-- {
+		path := paths[index]
+		info, err := os.Stat(path)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		accessible = true
+		repo, err := RepositoryFromPath(ctx, path)
+		if err == nil {
+			return repo, nil
+		}
+	}
+	if !accessible {
+		return Repository{}, fmt.Errorf("workspace is unavailable")
+	}
+	return Repository{}, fmt.Errorf("workspace has no hosted Git remote")
+}
+
+func localDirectoryRepositoryForSession(session Session, deviceID, deviceName string) (Repository, error) {
+	paths := workspacePaths(session)
+	if len(paths) == 0 {
+		return Repository{}, fmt.Errorf("workspace is unavailable")
+	}
+	for index := len(paths) - 1; index >= 0; index-- {
+		repo, err := localDirectoryRepositoryFromPath(paths[index], deviceID, deviceName)
+		if err == nil {
+			return repo, nil
+		}
+	}
+	return Repository{}, fmt.Errorf("workspace is unavailable")
+}
+
+func workspacePaths(session Session) []string {
+	values := make([]string, 0, len(session.WorkspaceCandidates)+1)
+	seen := make(map[string]bool)
+	for _, value := range append(append([]string{}, session.WorkspaceCandidates...), session.CWD) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		values = append(values, value)
+	}
+	return values
 }
 
 func repositoryFromRemote(canonical string) Repository {

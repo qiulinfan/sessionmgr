@@ -123,7 +123,7 @@ hash 输入，绝不写入 Markdown、repository sidecar、session sidecar 或 C
 表达 device scope，因此 session 直接位于 directory identity 下，不再重复 device 目录。
 目录名或设备名规范化碰撞由 hidden identity 检测并拒绝，不增加可见 hash 后缀。
 
-## 4. Identity and change hashes / layout v5 / renderer v8
+## 4. Identity and change hashes / layout v5 / renderer v9
 
 ```text
 source_hash = sha256(raw_source_bytes)
@@ -201,7 +201,7 @@ content hash；不保存绝对本机路径、data URL 或带 credential/query �
 的身份/所有权 sidecar，不是 secret store。
 
 `conversation.md` 的 frontmatter 不包含完整 identity/hash。它保存 repository/device/session
-显示名、`harness`、可用的 Codex/Claude/Git hints，以及以下 renderer-v8 字段：
+显示名、`harness`、可用的 Codex/Claude/Git hints，以及以下 renderer-v9 字段：
 
 - `created_at`、`first_message_at`、`last_message_at`、`last_event_at`、
   `title_updated_at` 与用于排序的总体 `updated_at`；
@@ -256,6 +256,20 @@ context-only source 不发布 repository/session 文档，不计为失败；raw 
 
 tool arguments/results、developer/system message 和 reasoning payload 不进入正文。raw
 bytes 保留在 Codex home；导出器只读源数据。
+
+Codex Desktop 可以把同一 native ID 的连续对话写成多个 physical JSONL fragments。读取器先按
+native ID 分组，并且只在每个 fragment 都能证明相同 hosted remote（或相同 canonical local
+workspace）、可按 first-message time 排序、且后段起点不早于前段终点时合并。合并的 logical
+session 使用最早创建时间、fragment 顺序消息、聚合 counters，以及：
+
+```text
+source_hash = sha256("codex-fragment-bundle-v1\0" + ordered(raw_fragment_hashes))
+```
+
+因此任一 physical fragment 改变都更新同一个 archive entry。identity conflict、缺失可靠时间
+边界、重叠或不安全顺序必须拒绝整组，不得任选最后一段覆盖前段。成功发布后同 identity 的
+in-memory history 只保留新的 current Entry；缺失的旧 history sidecar 只作为 stale candidate
+移除后重新安全评估，不能据此认领非空目录。
 
 ### 6.1 DeepSeek Harness parsing
 
@@ -314,14 +328,22 @@ home 的 transcript discovery 只枚举 `<CLAUDE_HOME>/projects/*/*.jsonl` regul
 官方声明 transcript entry schema 是可随任何 Claude Code release 改变的内部格式，因此该
 adapter 是 shape-validated、fail-closed 的只读兼容层，而不是稳定 native schema 声明。
 
-每个 source 必须满足：
+每个 source 的 filename stem 是 Claude archive identity。Claude fork 会把 ancestor record
+连同原 `sessionId` 复制到新文件，因此 foreign record IDs 可作为 ancestry bridge，不得替换
+filename identity。读取器：
 
-1. filename stem 与所有 UUID-bearing record 的 `sessionId` 相同；
-2. UUID 唯一，恰好一个 parentless root，所有非空 parent 都存在，完整 graph 无环；
-3. source order 中最后 UUID node 没有 child；从它沿 `parentUuid` 到 root 得到 current ancestry；
-4. ancestry 反转为根到叶的渲染顺序，不按 timestamp 排序；其他 UUID nodes 计入
-   `alternate_branch_records`/omitted；
-5. top-level source 中 `isSidechain=true` 或非空 `agentId` 计入 `filtered_internal`。
+1. 选择 source order 最后一个 `sessionId == filename stem` 的 `user`/`assistant` UUID node 为
+   current anchor；没有该 node 的 bridge-only source 静默忽略；
+2. 从 anchor 沿 `parentUuid` 回溯。对每个 child 优先选择 source order 中最后一个在 child 前的
+   parent UUID occurrence；仅在没有前项且刚好一个 forward occurrence 时允许 forward reference；
+3. 只验证 selected ancestry 的 parent 完整性、cycle、required role/message/timestamp 与 supported
+   content blocks。全图 detached roots、off-chain unknown nodes、陈旧 `last-prompt` 与 anchor 后
+   attachment 不影响选择；
+4. selected ancestry 上 replayed UUID 的 type、有效 timestamp、role、message ID 和 normalized
+   content 必须相等；仅 slug/prompt/session/tool-result/parent replay metadata 不同可接受；
+5. ancestry 反转为根到 anchor 的渲染顺序，不按 timestamp 排序；去重 UUID node 数减去 selected
+   UUID 数计入 `alternate_branch_records`；
+6. selected ancestry 的 `isSidechain=true` 或非空 `agentId` 才计入 `filtered_internal`。
 
 conversation projection：
 
@@ -338,8 +360,14 @@ conversation projection：
   synthetic 与 API/error diagnostics 不进入正文；tool-use 只增加计数；
 - 最新 `agent-name` 优先于最新 `ai-title`，再回退第一条净化 human text 与
   `Claude Code session <ID>`。标题 record 没有可信 timestamp 时不使用 mtime 补造；
-- CWD/branch/version 取 source order 中最新非空 native facts；project 目录名不可反解为 CWD，
-  当前 worktree commit 不可冒充 transcript commit。
+- CWD/branch/version 只从 selected ancestry 取得。repository mapping 从最新到最早尝试可访问的
+  `relocatedCwd`/`cwd`；project 目录名不可反解为 CWD，当前 worktree commit 不可冒充 transcript
+  commit，所有候选失效时 warning 只能说明 workspace unavailable，不能包含绝对路径。
+
+同 filename stem 出现在多个 Claude project directory 时，schema v2 无法诚实表达 project-key
+identity。raw 完全相同的 copy 可确定性去重；bridge-only + 一个可见 source 只导出可见 source；
+两个 non-identical visible source 必须作为 ambiguity 整组 skip。未来 project-key-aware schema
+migration 才能允许独立导出。
 
 ### 6.3 Structured chat attachments
 
@@ -570,7 +598,7 @@ Git。`make cross-check` 编译 darwin/arm64、linux/amd64、windows/amd64；`ma
 
 ### 11.1 Windows release pipeline
 
-开发源码的当前版本是 `1.0.1`。`internal/app.version` 必须是可由 Go linker `-X` 覆盖的
+开发源码的当前版本是 `1.0.2`。`internal/app.version` 必须是可由 Go linker `-X` 覆盖的
 string variable；正式构建使用：
 
 ```text
@@ -680,3 +708,9 @@ Claude native resume、cloud/Desktop history、subagents、tool trace、checkpoi
 v1.0.1 修复 Windows release builder 在 `PATH` 同时包含多个 Go application 时把多个
 `Get-Command go` 结果拼成一个无效路径的问题。builder 明确选择 PATH precedence 的第一项；
 版本 stamping、resource validation、资产命名和 product behavior 不变。
+
+v1.0.2 将 renderer 升为 v9，明确标记 fragment/ancestry 投影变更；已有文档在下次选中时经过
+所有权/hash 验证后更新。persisted schema 和 Claude/Codex session key 不变。它首次把同 native-ID 的
+连续 Codex source bundle hash 作为 logical session source hash；已有由单 fragment 发布的
+document 会在所有权/hash 验证后更新一次。Claude filename identity 不变；同 filename、不同
+project 的 non-identical visible transcripts 现在 fail closed，而 bridge-only copies 静默忽略。

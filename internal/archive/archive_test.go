@@ -1111,7 +1111,7 @@ func TestVerifiedReexportRepairsInjectedContextDocument(t *testing.T) {
 	if err := os.MkdirAll(oldDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	oldDocument := bytes.Replace(renderSnapshot(snapshot), []byte("renderer_version: 8"), []byte("renderer_version: 7"), 1)
+	oldDocument := bytes.Replace(renderSnapshot(snapshot), []byte("renderer_version: 9"), []byte("renderer_version: 7"), 1)
 	oldDocument = bytes.Replace(oldDocument, []byte("harness: \"codex\"\n"), nil, 1)
 	oldRecord := sessionRecord(snapshot, digestBytes(oldDocument))
 	oldRecord.SchemaVersion = SchemaVersion
@@ -1291,6 +1291,26 @@ func writeTitles(t *testing.T, home string, lines ...string) {
 	}
 	if err := os.WriteFile(filepath.Join(home, "session_index.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPublishSnapshotDropsStaleHistoryEntry(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "archive")
+	repo := repositoryFromRemote("github.com/example/stale-history")
+	session := Session{
+		ID: "stale-history", Harness: harnessCodex, Title: "Recovered history", RawHash: digest("raw"),
+		CreatedAt:    parseTimestamp("2026-08-05T01:00:00Z"),
+		Messages:     []Message{{Role: "user", Text: "recover", Timestamp: parseTimestamp("2026-08-05T01:00:01Z")}},
+		UserMessages: 1,
+	}
+	snapshot := makeSnapshot(repo, session, "device:test", "test-device")
+	stale := Entry{Path: filepath.Join(output, "missing", conversationName), UpdatedAt: "2026-08-05T01:00:00Z"}
+	created, path, _, err := publishSnapshot(output, &snapshot, []Entry{stale})
+	if err != nil || !created {
+		t.Fatalf("stale history entry blocked safe publication: created=%v err=%v", created, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("recovered publication document is missing: %v", err)
 	}
 }
 

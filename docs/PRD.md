@@ -156,9 +156,13 @@ hosted Git remote key | device-local directory key
   plugin/internal user injection、surface replacement、reasoning 与 tool payload 必须排除；
 - DeepSeek 最新 `session/title` 用作标题；image block 只允许引用 DSH content-addressed object，
   复制前必须同时验证声明 SHA-256 与 byte size。
-- Claude transcript 必须先验证单一 session ID、UUID 唯一性、单根、完整 parent 引用、无环与
-  最终追加 UUID 为叶节点；正文只沿该叶节点的 `parentUuid` ancestry 以根到叶顺序渲染，
-  不得把 rewind 后留下的 alternate branches 混入当前对话，也不得按非单调 timestamp 排序；
+- Claude transcript 使用 JSONL filename stem 作为 archive identity；允许 copied fork ancestry
+  的 foreign `record.sessionId`。正文从最后一个 filename-owned user/assistant anchor 沿
+  `parentUuid` 回溯，以根到 anchor 的 source order 渲染；detached system roots、anchor 后的
+  attachment、陈旧 `last-prompt` 与 off-ancestry replay 不得阻断或混入当前对话；
+- Claude selected ancestry 的 parent、cycle、required message shape 和 replayed UUID visible
+  semantics 必须严格验证；不等价 replay 或 parent ambiguity 必须 fail closed。跨 project 的同
+  filename、非同内容可见 transcript 必须拒绝发布，不得以同一 session key 静默覆盖；
 - Claude direct user 输入只接受结构化 human provenance 或经精确内部-envelope 排除后的兼容
   legacy 形态；tool result、task notification、`isMeta`、local command、interrupt、IDE/system
   context 必须排除；同一 assistant `message.id` 的片段合并，只保留 text，thinking、tool payload、
@@ -168,6 +172,11 @@ hosted Git remote key | device-local directory key
   原始文件 bytes；不得从相邻 cache 或自由文本路径重建附件；
 - Claude fork 可共享创建时间和标题，因此可见语义目录必须包含稳定短 variant，避免导出顺序
   决定 identity path；真正的 variant collision 仍必须拒绝覆盖。
+- 同 native ID、同 repository identity 且时间连续的 Codex physical JSONL fragments 必须在
+  publish 前合并为一个 logical session；必须绑定有序 fragment raw-hash bundle，保留全量消息，
+  并在 repository conflict、时间重叠或顺序不可证明时 fail closed；
+- Claude/Codex selected workspace 的失效绝对路径不得进入 warning、JSON response 或 GUI。只能
+  从 selected ancestry 的可访问 CWD 向前回退；全部不可访问时安全跳过，不得从项目 slug 猜路径。
 
 ### FR-5 Incremental changeset
 
@@ -287,7 +296,7 @@ hosted Git remote key | device-local directory key
 27. 同时含注入 `role=user` 上下文和真实 `user_message` event 的 Codex source 只导出真实
     对话；标题不得取自 `recommended_plugins`、`AGENTS.md` 或 `environment_context`。
 28. context-only source 不创建文档；旧 renderer 污染文档在 ownership/hash 校验后升级到
-    renderer v8、修复正文并按真实标题安全重命名。
+    renderer v9、修复正文并按真实标题安全重命名。
 29. 首次导出前已归档的 source 默认不创建文档，CLI/GUI 显式包括 archived sessions 后才
     导出；已导出的 source 从 active 移入 `archived_sessions/` 或完全消失后，既有 Markdown、
     sidecar bytes 和 list entry 均保持不变。
@@ -334,3 +343,8 @@ hosted Git remote key | device-local directory key
     tool-results 或 file-history，原始 transcript hash 在导出前后不变。
 52. 一个已不存在 CWD 的 Claude source 不通过 project 目录名反推路径，而是安全 skipped；其他
     可映射 source 的成功 changeset 仍保留并以非零退出码报告 partial export。
+53. 三个同 native ID、同 repository、连续时间边界的 Codex JSONL fragments 一次导出只创建一份
+    document，完整消息各出现一次；重复导出 no-op，任一 fragment 变化只产生一次 update。
+54. Copied Claude ancestry、detached system roots、off-chain replay 和 anchor 后 attachment 不导致
+    skip；无 filename-owned conversation anchor 的 bridge-only file 静默略过。
+55. 同 filename Claude ID 的两个非同内容可见 project transcript 不发布，且 warning 不含绝对路径。

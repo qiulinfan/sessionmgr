@@ -139,14 +139,10 @@ func parseClaudeSession(raw []byte, fallbackID string) (Session, error) {
 		return Session{}, fmt.Errorf("Claude Code transcript filename has no session ID")
 	}
 
-	nodes := make(map[string]*claudeNode)
-	lastUUID := ""
+	occurrences := make(map[string][]*claudeNode)
+	var anchor *claudeNode
 	explicitTitle := ""
 	generatedTitle := ""
-	latestCWD := ""
-	latestBranch := ""
-	latestVersion := ""
-	internal := false
 	remaining := raw
 	order := 0
 	for len(remaining) > 0 {
@@ -166,118 +162,88 @@ func parseClaudeSession(raw []byte, fallbackID string) (Session, error) {
 		if err := json.Unmarshal(line, &record); err != nil {
 			return Session{}, fmt.Errorf("parse Claude Code session %q record %d: %w", result.ID, order, err)
 		}
-		if record.SessionID != "" && record.SessionID != result.ID {
-			return Session{}, fmt.Errorf("Claude Code transcript filename ID %q does not match record session ID %q", result.ID, record.SessionID)
-		}
-		if record.CWD != "" {
-			latestCWD = record.CWD
-		}
-		if record.RelocatedCWD != "" {
-			latestCWD = record.RelocatedCWD
-		}
-		if record.GitBranch != "" {
-			latestBranch = record.GitBranch
-		}
-		if record.Version != "" {
-			latestVersion = record.Version
-		}
-		if strings.TrimSpace(record.AITitle) != "" {
-			generatedTitle = cleanTitle(record.AITitle)
-		}
-		if strings.TrimSpace(record.AgentName) != "" {
-			explicitTitle = cleanTitle(record.AgentName)
-		}
-		if record.IsSidechain || strings.TrimSpace(record.AgentID) != "" {
-			internal = true
+		// Claude Code forks copy their ancestor records into the new transcript.
+		// The filename identifies the current physical session; a different record
+		// sessionId is permitted only as ancestry, never as a replacement identity.
+		if record.SessionID == result.ID {
+			if strings.TrimSpace(record.AITitle) != "" {
+				generatedTitle = cleanTitle(record.AITitle)
+			}
+			if strings.TrimSpace(record.AgentName) != "" {
+				explicitTitle = cleanTitle(record.AgentName)
+			}
 		}
 
 		if record.UUID == "" {
-			if record.Type == "user" || record.Type == "assistant" || record.Type == "attachment" || record.Type == "system" {
-				return Session{}, fmt.Errorf("Claude Code session %q %s record %d has no UUID", result.ID, record.Type, order)
-			}
 			continue
 		}
-		if record.SessionID == "" {
-			return Session{}, fmt.Errorf("Claude Code session %q UUID record %d has no session ID", result.ID, order)
-		}
-		if _, exists := nodes[record.UUID]; exists {
-			return Session{}, fmt.Errorf("Claude Code session %q has duplicate UUID %q", result.ID, record.UUID)
-		}
 		node := &claudeNode{record: record, order: order}
-		if record.Timestamp != "" {
-			node.timestamp = parseTimestamp(record.Timestamp)
-			if node.timestamp.IsZero() && (record.Type == "user" || record.Type == "assistant") {
-				return Session{}, fmt.Errorf("Claude Code session %q %s record %d has an invalid timestamp", result.ID, record.Type, order)
-			}
-		}
+		node.timestamp = parseTimestamp(record.Timestamp)
 		if rawJSONPresent(record.Message) {
 			if err := json.Unmarshal(record.Message, &node.message); err != nil {
 				return Session{}, fmt.Errorf("parse Claude Code session %q message record %d: %w", result.ID, order, err)
 			}
 		}
-		nodes[record.UUID] = node
-		lastUUID = record.UUID
+		occurrences[record.UUID] = append(occurrences[record.UUID], node)
+		if record.SessionID == result.ID && (record.Type == "user" || record.Type == "assistant") {
+			anchor = node
+		}
 	}
-	if len(nodes) == 0 || lastUUID == "" {
-		return Session{}, fmt.Errorf("Claude Code session %q has no conversation graph", result.ID)
+	// A direct JSONL can contain only bridge/management records after a move or
+	// copy. It is not a user conversation and must not turn an otherwise useful
+	// export into a partial failure.
+	if anchor == nil {
+		return result, nil
 	}
 
-	children := make(map[string]int)
-	roots := 0
-	for id, node := range nodes {
-		if node.record.ParentUUID == "" {
-			roots++
-			continue
+	chain := make([]*claudeNode, 0, len(occurrences))
+	seen := make(map[*claudeNode]bool)
+	for current := anchor; current != nil; {
+		if seen[current] {
+			return Session{}, fmt.Errorf("Claude Code session %q contains a parent cycle on its selected conversation path", result.ID)
 		}
-		if _, exists := nodes[node.record.ParentUUID]; !exists {
-			return Session{}, fmt.Errorf("Claude Code session %q node %q references missing parent %q", result.ID, id, node.record.ParentUUID)
+		seen[current] = true
+		if err := validateClaudeReplay(current, occurrences[current.record.UUID]); err != nil {
+			return Session{}, fmt.Errorf("Claude Code session %q duplicate UUID %q: %w", result.ID, current.record.UUID, err)
 		}
-		children[node.record.ParentUUID]++
-	}
-	if roots != 1 {
-		return Session{}, fmt.Errorf("Claude Code session %q has %d graph roots, want 1", result.ID, roots)
-	}
-	states := make(map[string]uint8, len(nodes))
-	var visit func(string) error
-	visit = func(id string) error {
-		switch states[id] {
-		case 1:
-			return fmt.Errorf("Claude Code session %q contains a parent cycle at %q", result.ID, id)
-		case 2:
-			return nil
+		if current.record.Timestamp != "" && current.timestamp.IsZero() && (current.record.Type == "user" || current.record.Type == "assistant") {
+			return Session{}, fmt.Errorf("Claude Code session %q %s record %d has an invalid timestamp", result.ID, current.record.Type, current.order)
 		}
-		states[id] = 1
-		if parent := nodes[id].record.ParentUUID; parent != "" {
-			if err := visit(parent); err != nil {
-				return err
-			}
+		chain = append(chain, current)
+		if current.record.ParentUUID == "" {
+			break
 		}
-		states[id] = 2
-		return nil
-	}
-	for id := range nodes {
-		if err := visit(id); err != nil {
-			return Session{}, err
+		parent, err := claudeParentOccurrence(current, occurrences[current.record.ParentUUID])
+		if err != nil {
+			return Session{}, fmt.Errorf("Claude Code session %q current conversation parent: %w", result.ID, err)
 		}
-	}
-	if children[lastUUID] != 0 {
-		return Session{}, fmt.Errorf("Claude Code session %q final UUID record is not a graph leaf", result.ID)
-	}
-
-	chain := make([]*claudeNode, 0, len(nodes))
-	for id := lastUUID; id != ""; id = nodes[id].record.ParentUUID {
-		chain = append(chain, nodes[id])
+		current = parent
 	}
 	for left, right := 0, len(chain)-1; left < right; left, right = left+1, right-1 {
 		chain[left], chain[right] = chain[right], chain[left]
 	}
-	result.AlternateBranches = len(nodes) - len(chain)
-	result.CWD = latestCWD
-	result.Branch = latestBranch
-	result.ClaudeVersion = latestVersion
-	if internal {
-		result.ExcludeReason = "subagent"
+	selectedUUIDs := make(map[string]bool, len(chain))
+	for _, node := range chain {
+		selectedUUIDs[node.record.UUID] = true
+		if node.record.CWD != "" {
+			result.CWD = node.record.CWD
+			result.WorkspaceCandidates = append(result.WorkspaceCandidates, node.record.CWD)
+		}
+		if node.record.RelocatedCWD != "" {
+			result.CWD = node.record.RelocatedCWD
+			result.WorkspaceCandidates = append(result.WorkspaceCandidates, node.record.RelocatedCWD)
+		}
+		if node.record.GitBranch != "" {
+			result.Branch = node.record.GitBranch
+		}
+		if node.record.Version != "" {
+			result.ClaudeVersion = node.record.Version
+		}
+		if node.record.IsSidechain || strings.TrimSpace(node.record.AgentID) != "" {
+			result.ExcludeReason = "subagent"
+		}
 	}
+	result.AlternateBranches = len(occurrences) - len(selectedUUIDs)
 
 	closedAssistantIDs := make(map[string]bool)
 	var assistant *claudeAssistantGroup
@@ -534,4 +500,76 @@ func claudeStandaloneContext(value string) bool {
 func rawJSONPresent(value json.RawMessage) bool {
 	value = bytes.TrimSpace(value)
 	return len(value) > 0 && !bytes.Equal(value, []byte("null"))
+}
+
+func claudeParentOccurrence(child *claudeNode, candidates []*claudeNode) (*claudeNode, error) {
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("missing parent %q", child.record.ParentUUID)
+	}
+	var previous *claudeNode
+	forward := make([]*claudeNode, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.order < child.order {
+			if previous == nil || candidate.order > previous.order {
+				previous = candidate
+			}
+			continue
+		}
+		forward = append(forward, candidate)
+	}
+	if previous != nil {
+		return previous, nil
+	}
+	if len(forward) == 1 {
+		return forward[0], nil
+	}
+	return nil, fmt.Errorf("parent %q has %d ambiguous forward occurrences", child.record.ParentUUID, len(forward))
+}
+
+func validateClaudeReplay(selected *claudeNode, candidates []*claudeNode) error {
+	for _, candidate := range candidates {
+		if candidate == selected {
+			continue
+		}
+		if selected.record.Type != candidate.record.Type ||
+			!sameClaudeTimestamp(selected, candidate) ||
+			selected.message.Role != candidate.message.Role ||
+			selected.message.ID != candidate.message.ID {
+			return fmt.Errorf("replayed node changes its type, timestamp, role, or message ID")
+		}
+		left, err := canonicalClaudeJSON(selected.message.Content)
+		if err != nil {
+			return err
+		}
+		right, err := canonicalClaudeJSON(candidate.message.Content)
+		if err != nil {
+			return err
+		}
+		if left != right {
+			return fmt.Errorf("replayed node changes visible message content")
+		}
+	}
+	return nil
+}
+
+func sameClaudeTimestamp(left, right *claudeNode) bool {
+	if !left.timestamp.IsZero() || !right.timestamp.IsZero() {
+		return left.timestamp.Equal(right.timestamp)
+	}
+	return left.record.Timestamp == right.record.Timestamp
+}
+
+func canonicalClaudeJSON(value json.RawMessage) (string, error) {
+	if !rawJSONPresent(value) {
+		return "", nil
+	}
+	var decoded interface{}
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		return "", fmt.Errorf("parse replay message content: %w", err)
+	}
+	encoded, err := json.Marshal(decoded)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }

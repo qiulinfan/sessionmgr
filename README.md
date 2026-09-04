@@ -13,8 +13,8 @@ Example: You had a long codex session and
 Windows users can download the portable executable from
 [GitHub Releases](https://github.com/qiulinfan/sessionmgr/releases/latest):
 
-- `sessionmgr-v0.6.0-windows-amd64.exe` for most Intel/AMD PCs
-- `sessionmgr-v0.6.0-windows-arm64.exe` for Windows on ARM
+- `sessionmgr-v1.0.2-windows-amd64.exe` for most Intel/AMD PCs
+- `sessionmgr-v1.0.2-windows-arm64.exe` for Windows on ARM
 
 Double-click the executable to start the local UI and open your default browser. Keep its console window open while using the app.
 
@@ -46,7 +46,7 @@ make dist
 On Windows, a release-equivalent pair of icon-bearing executables can be built with:
 
 ```powershell
-.\scripts\build-windows-release.ps1 -Version 0.6.0
+.\scripts\build-windows-release.ps1 -Version 1.0.2
 ```
 
 ## Shell Usage

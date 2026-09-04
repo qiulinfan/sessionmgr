@@ -10,12 +10,23 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 )
 
 type nativeSessionSource struct {
 	path       string
 	harness    string
 	compressed bool
+}
+
+type parsedNativeSession struct {
+	source  nativeSessionSource
+	session Session
+}
+
+type logicalSessionIssue struct {
+	count   int
+	warning string
 }
 
 func Export(ctx context.Context, opts Options) (Result, error) {
@@ -136,6 +147,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		result.Skipped++
 		result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(issue.path), issue.err))
 	}
+	parsed := make([]parsedNativeSession, 0, len(sources))
 	for _, source := range sources {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -190,6 +202,15 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		if opts.SessionID != "" && session.ID != opts.SessionID {
 			continue
 		}
+		parsed = append(parsed, parsedNativeSession{source: source, session: session})
+	}
+
+	logicalSessions, issues := coalesceLogicalSessions(parsed)
+	for _, issue := range issues {
+		result.Skipped += issue.count
+		result.Warnings = append(result.Warnings, issue.warning)
+	}
+	for _, session := range logicalSessions {
 		if session.ExcludeReason != "" {
 			result.FilteredInternal++
 			continue
@@ -201,7 +222,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		}
 		repo, repoErr := repositoryForSession(ctx, session)
 		if repoErr != nil {
-			localRepo, localErr := localDirectoryRepositoryFromPath(session.CWD, opts.DeviceID, opts.DeviceName)
+			localRepo, localErr := localDirectoryRepositoryForSession(session, opts.DeviceID, opts.DeviceName)
 			if localErr == nil {
 				if !opts.IncludeNonGit {
 					result.FilteredNonGit++
@@ -212,7 +233,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			}
 			if repoErr != nil && (opts.AllRepos || opts.SessionID != "") {
 				result.Skipped++
-				result.Warnings = append(result.Warnings, fmt.Sprintf("session %s: %v; local-directory fallback: %v", session.ID, repoErr, localErr))
+				result.Warnings = append(result.Warnings, fmt.Sprintf("session %s: workspace is unavailable or has no hosted Git remote", session.ID))
 			}
 			if repoErr != nil {
 				continue
@@ -225,7 +246,8 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		session = prepareSessionAttachments(ctx, session, repo)
 		snapshot := makeSnapshot(repo, session, opts.DeviceID, opts.DeviceName)
 		key := repo.Key + "\x00" + snapshot.SessionKey
-		created, snapshotPath, documentHash, publishErr := publishSnapshot(output, &snapshot, history[key])
+		previousHistory := history[key]
+		created, snapshotPath, documentHash, publishErr := publishSnapshot(output, &snapshot, previousHistory)
 		if publishErr != nil {
 			result.Skipped++
 			result.Warnings = append(result.Warnings, fmt.Sprintf("session %s: %v", session.ID, publishErr))
@@ -236,13 +258,13 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		result.ArchivedAttachments += archivedFiles
 		if created {
 			result.Created++
-			if repo.Kind == repositoryKindLocalDirectory && len(history[key]) > 0 {
+			if repo.Kind == repositoryKindLocalDirectory && len(previousHistory) > 0 {
 				result.FullExported++
 			}
 			for _, warning := range attachmentWarnings(snapshot.Session) {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("session %s: %s", session.ID, warning))
 			}
-			kind := changeKind(history[key], snapshot)
+			kind := changeKind(previousHistory, snapshot)
 			change := Change{
 				Kind: kind, Harness: snapshot.Session.Harness,
 				RepositoryKey: repo.Key, RepositoryName: repo.Name,
@@ -253,13 +275,13 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 				Attachments: attachments, ArchivedFiles: archivedFiles,
 			}
 			result.Changes = append(result.Changes, change)
-			history[key] = append(history[key], Entry{
+			history[key] = []Entry{{
 				RepositoryKey: repo.Key, RepositoryName: repo.Name, SessionID: snapshot.Session.ID,
 				Harness:  snapshot.Session.Harness,
 				DeviceID: snapshot.DeviceID, DeviceName: snapshot.DeviceName, SessionKey: snapshot.SessionKey,
 				Title: snapshot.Session.Title, DocumentHash: documentHash,
 				SourceHash: snapshot.Session.RawHash, UpdatedAt: formatTime(snapshot.SourceUpdate), Path: snapshotPath,
-			})
+			}}
 		} else {
 			result.Unchanged++
 		}
@@ -284,6 +306,221 @@ func selectedSources(opts Options) SourceSelection {
 	return SourceSelection{Codex: true, DeepSeek: opts.IncludeDeepSeek}
 }
 
+func coalesceLogicalSessions(values []parsedNativeSession) ([]Session, []logicalSessionIssue) {
+	codexGroups := make(map[string][]parsedNativeSession)
+	claudeGroups := make(map[string][]parsedNativeSession)
+	result := make([]Session, 0, len(values))
+	for _, value := range values {
+		switch value.source.harness {
+		case harnessCodex:
+			codexGroups[value.session.ID] = append(codexGroups[value.session.ID], value)
+		case harnessClaudeCode:
+			claudeGroups[value.session.ID] = append(claudeGroups[value.session.ID], value)
+		default:
+			result = append(result, value.session)
+		}
+	}
+	ids := make([]string, 0, len(codexGroups))
+	for id := range codexGroups {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	issues := make([]logicalSessionIssue, 0)
+	for _, id := range ids {
+		merged, err := coalesceCodexFragments(codexGroups[id])
+		if err != nil {
+			issues = append(issues, logicalSessionIssue{
+				count: len(codexGroups[id]), warning: fmt.Sprintf("session %s: Codex fragments could not be safely coalesced", id),
+			})
+			continue
+		}
+		result = append(result, merged)
+	}
+	claudeIDs := make([]string, 0, len(claudeGroups))
+	for id := range claudeGroups {
+		claudeIDs = append(claudeIDs, id)
+	}
+	sort.Strings(claudeIDs)
+	for _, id := range claudeIDs {
+		selected, issue := chooseClaudeSource(claudeGroups[id])
+		if issue != nil {
+			issues = append(issues, *issue)
+			continue
+		}
+		if selected != nil {
+			result = append(result, selected.session)
+		}
+	}
+	return result, issues
+}
+
+func chooseClaudeSource(candidates []parsedNativeSession) (*parsedNativeSession, *logicalSessionIssue) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	visible := make([]parsedNativeSession, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.session.UserMessages > 0 {
+			visible = append(visible, candidate)
+		}
+	}
+	if len(visible) == 0 {
+		return nil, nil
+	}
+	if len(visible) == 1 {
+		return &visible[0], nil
+	}
+	firstHash := visible[0].session.RawHash
+	for _, candidate := range visible[1:] {
+		if candidate.session.RawHash != firstHash {
+			return nil, &logicalSessionIssue{
+				count: len(candidates), warning: fmt.Sprintf("session %s: Claude Code transcript identity is ambiguous", candidates[0].session.ID),
+			}
+		}
+	}
+	return &visible[0], nil
+}
+
+func coalesceCodexFragments(fragments []parsedNativeSession) (Session, error) {
+	if len(fragments) == 0 {
+		return Session{}, fmt.Errorf("no fragments")
+	}
+	if len(fragments) == 1 {
+		return fragments[0].session, nil
+	}
+	identity := ""
+	for _, fragment := range fragments {
+		current, err := codexFragmentIdentity(fragment.session)
+		if err != nil {
+			return Session{}, err
+		}
+		if identity == "" {
+			identity = current
+		} else if identity != current {
+			return Session{}, fmt.Errorf("repository identity conflict")
+		}
+	}
+	sort.Slice(fragments, func(left, right int) bool {
+		leftStart := codexFragmentStart(fragments[left].session)
+		rightStart := codexFragmentStart(fragments[right].session)
+		if !leftStart.Equal(rightStart) {
+			return leftStart.Before(rightStart)
+		}
+		return fragments[left].session.RawHash < fragments[right].session.RawHash
+	})
+	for index := 1; index < len(fragments); index++ {
+		previousEnd := codexFragmentEnd(fragments[index-1].session)
+		currentStart := codexFragmentStart(fragments[index].session)
+		if previousEnd.IsZero() || currentStart.IsZero() || currentStart.Before(previousEnd) {
+			return Session{}, fmt.Errorf("fragment ordering is ambiguous or overlaps")
+		}
+	}
+
+	merged := fragments[0].session
+	merged.RawHash = codexFragmentBundleHash(fragments)
+	merged.Messages = nil
+	merged.RecordCount = 0
+	merged.MalformedCount = 0
+	merged.OmittedCount = 0
+	merged.ToolCallCount = 0
+	merged.FilteredUserInput = 0
+	merged.UserMessages = 0
+	merged.AssistantMessages = 0
+	merged.WorkspaceCandidates = nil
+	merged.CreatedAt = time.Time{}
+	merged.FirstMessageAt = time.Time{}
+	merged.LastMessageAt = time.Time{}
+	merged.LastEventAt = time.Time{}
+	merged.TitleUpdatedAt = time.Time{}
+	for _, fragment := range fragments {
+		session := fragment.session
+		merged.Messages = append(merged.Messages, session.Messages...)
+		merged.RecordCount += session.RecordCount
+		merged.MalformedCount += session.MalformedCount
+		merged.OmittedCount += session.OmittedCount
+		merged.ToolCallCount += session.ToolCallCount
+		merged.FilteredUserInput += session.FilteredUserInput
+		merged.UserMessages += session.UserMessages
+		merged.AssistantMessages += session.AssistantMessages
+		merged.WorkspaceCandidates = append(merged.WorkspaceCandidates, session.WorkspaceCandidates...)
+		if session.CWD != "" {
+			merged.CWD = session.CWD
+		}
+		if session.Branch != "" {
+			merged.Branch = session.Branch
+		}
+		if session.Commit != "" {
+			merged.Commit = session.Commit
+		}
+		if session.CodexVersion != "" {
+			merged.CodexVersion = session.CodexVersion
+		}
+		if session.TitleUpdatedAt.After(merged.TitleUpdatedAt) || merged.Title == "" {
+			merged.Title = session.Title
+			merged.TitleUpdatedAt = session.TitleUpdatedAt
+		}
+		merged.CreatedAt = earlierTime(merged.CreatedAt, session.CreatedAt)
+		merged.FirstMessageAt = earlierTime(merged.FirstMessageAt, session.FirstMessageAt)
+		merged.LastMessageAt = laterTime(merged.LastMessageAt, session.LastMessageAt)
+		merged.LastEventAt = laterTime(merged.LastEventAt, session.LastEventAt)
+	}
+	return merged, nil
+}
+
+func codexFragmentIdentity(session Session) (string, error) {
+	if canonical, portable := NormalizeRemote(session.Remote); portable {
+		return "remote:\x00" + canonical, nil
+	}
+	paths := workspacePaths(session)
+	if len(paths) == 0 {
+		return "", fmt.Errorf("fragment has no repository identity")
+	}
+	absolute, err := filepath.Abs(paths[0])
+	if err != nil {
+		return "", err
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(absolute); resolveErr == nil {
+		absolute = resolved
+	}
+	return "workspace:\x00" + filepath.Clean(absolute), nil
+}
+
+func codexFragmentStart(session Session) time.Time {
+	if !session.FirstMessageAt.IsZero() {
+		return session.FirstMessageAt
+	}
+	return session.CreatedAt
+}
+
+func codexFragmentEnd(session Session) time.Time {
+	if !session.LastMessageAt.IsZero() {
+		return session.LastMessageAt
+	}
+	return session.LastEventAt
+}
+
+func codexFragmentBundleHash(fragments []parsedNativeSession) string {
+	parts := make([]string, 0, len(fragments))
+	for _, fragment := range fragments {
+		parts = append(parts, fragment.session.RawHash)
+	}
+	return digest("codex-fragment-bundle-v1\x00" + strings.Join(parts, "\x00"))
+}
+
+func earlierTime(current, candidate time.Time) time.Time {
+	if current.IsZero() || (!candidate.IsZero() && candidate.Before(current)) {
+		return candidate
+	}
+	return current
+}
+
+func laterTime(current, candidate time.Time) time.Time {
+	if candidate.After(current) {
+		return candidate
+	}
+	return current
+}
+
 func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, string, string, error) {
 	repositoryDir := filepath.Join(output, semanticRepositoryDirectory(snapshot.Repository))
 	if err := publishRepositoryMetadata(repositoryDir, snapshot.Repository); err != nil {
@@ -304,6 +541,13 @@ func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, 
 		}
 		var current sessionMetadata
 		if err := readMetadata(filepath.Join(filepath.Dir(latest.Path), sessionMetadataName), &current); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// A prior same-identity publication can have renamed its semantic
+				// directory after List built the in-memory history. Drop only the
+				// stale entry and re-evaluate the remaining owned candidates; the
+				// no-history path still refuses to claim nonempty user directories.
+				return publishSnapshot(output, snapshot, withoutHistoryPath(history, latest.Path))
+			}
 			return false, "", "", fmt.Errorf("read existing session metadata: %w", err)
 		}
 		if err := validateSessionMetadata(current); err != nil {
@@ -369,6 +613,16 @@ func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, 
 		return false, "", "", err
 	}
 	return true, documentPath, documentHash, nil
+}
+
+func withoutHistoryPath(history []Entry, path string) []Entry {
+	result := make([]Entry, 0, len(history))
+	for _, entry := range history {
+		if filepath.Clean(entry.Path) != filepath.Clean(path) {
+			result = append(result, entry)
+		}
+	}
+	return result
 }
 
 func removeEmptyDraftLocalRepository(output string, repo Repository, previousDocumentPath string) {

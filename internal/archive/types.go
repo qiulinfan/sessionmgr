@@ -8,7 +8,7 @@ const (
 	LocalRepositorySchema     = 2
 	SessionMetadataSchema     = 2
 	LayoutVersion             = 5
-	RendererVersion           = 8
+	RendererVersion           = 9
 	MaxAttachmentBytes        = int64(50 * 1024 * 1024)
 )
 
@@ -177,24 +177,28 @@ type Session struct {
 	ExcludeReason     string
 	FilteredUserInput int
 	CWD               string
-	Remote            string
-	Commit            string
-	Branch            string
-	CodexVersion      string
-	ClaudeVersion     string
-	CreatedAt         time.Time
-	FirstMessageAt    time.Time
-	LastMessageAt     time.Time
-	LastEventAt       time.Time
-	RawHash           string
-	RecordCount       int
-	MalformedCount    int
-	OmittedCount      int
-	ToolCallCount     int
-	AlternateBranches int
-	UserMessages      int
-	AssistantMessages int
-	Messages          []Message
+	// WorkspaceCandidates are ordered source-local paths used only while
+	// resolving a repository. They are never rendered or persisted because they
+	// can reveal machine-local absolute paths.
+	WorkspaceCandidates []string
+	Remote              string
+	Commit              string
+	Branch              string
+	CodexVersion        string
+	ClaudeVersion       string
+	CreatedAt           time.Time
+	FirstMessageAt      time.Time
+	LastMessageAt       time.Time
+	LastEventAt         time.Time
+	RawHash             string
+	RecordCount         int
+	MalformedCount      int
+	OmittedCount        int
+	ToolCallCount       int
+	AlternateBranches   int
+	UserMessages        int
+	AssistantMessages   int
+	Messages            []Message
 }
 
 type Snapshot struct {
