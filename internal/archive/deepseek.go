@@ -152,9 +152,11 @@ func parseDeepSeekSession(raw []byte, compressed bool, home string) (Session, er
 			return Session{}, fmt.Errorf("DeepSeek session exceeds the %d MiB decoded limit", maxDeepSeekDecodedBytes/(1024*1024))
 		}
 	}
-	if !completeJSONL(plaintext) {
-		return Session{}, fmt.Errorf("%w: DeepSeek source ends with an incomplete JSONL record", errSourceBusy)
+	completed, prefixErr := completedNativePrefix(harnessDeepSeek, plaintext)
+	if prefixErr != nil {
+		return Session{}, prefixErr
 	}
+	plaintext = completed
 
 	first, remaining, found := bytes.Cut(plaintext, []byte{'\n'})
 	if !found {
@@ -181,7 +183,7 @@ func parseDeepSeekSession(raw []byte, compressed bool, home string) (Session, er
 	result := Session{
 		ID: header.ID, Harness: harnessDeepSeek, Originator: "DeepSeek Harness",
 		SourceKind: "deepseek", CWD: header.CWD, CreatedAt: createdAt,
-		RawHash: digestBytes(raw), RecordCount: 1,
+		RawHash: digestBytes(plaintext), RecordCount: 1,
 	}
 	if header.Origin == "subagent" || *header.DelegationDepth > 0 || header.ParentSession != "" {
 		result.ExcludeReason = "subagent"

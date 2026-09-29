@@ -27,27 +27,26 @@ import (
 var staticFiles embed.FS
 
 type Options struct {
-	Listen       string
-	CodexHome    string
-	ClaudeHome   string
-	DeepSeekHome string
-	Repo         string
-	OpenBrowser  bool
-	ConfigStore  config.Store
-	Ready        func(string)
-	Log          io.Writer
+	Listen        string
+	CodexHome     string
+	ClaudeHome    string
+	DeepSeekHome  string
+	OMPHome       string
+	OMPSessionDir string
+	OpenCodeDB    string
+	Repo          string
+	OpenBrowser   bool
+	ConfigStore   config.Store
+	Ready         func(string)
+	Log           io.Writer
 }
 
 type exportRequest struct {
-	Directory       string `json:"directory"`
-	Scope           string `json:"scope"`
-	IncludeArchived bool   `json:"include_archived"`
-	IncludeNonGit   bool   `json:"include_non_git"`
-	Sources         *struct {
-		Codex      bool `json:"codex"`
-		ClaudeCode bool `json:"claude_code"`
-		DeepSeek   bool `json:"deepseek"`
-	} `json:"sources"`
+	Directory       string                    `json:"directory"`
+	Scope           string                    `json:"scope"`
+	IncludeArchived bool                      `json:"include_archived"`
+	IncludeNonGit   bool                      `json:"include_non_git"`
+	Sources         *config.SourcePreferences `json:"sources"`
 }
 
 type exportResponse struct {
@@ -66,6 +65,8 @@ type environmentState struct {
 	Codex    sourceEnvironment `json:"codex"`
 	Claude   sourceEnvironment `json:"claude"`
 	DeepSeek sourceEnvironment `json:"deepseek"`
+	OMP      sourceEnvironment `json:"omp"`
+	OpenCode sourceEnvironment `json:"opencode"`
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -82,6 +83,41 @@ func Run(ctx context.Context, opts Options) error {
 		}
 		opts.ConfigStore = store
 	}
+	var sourceErr error
+	if opts.CodexHome == "" {
+		opts.CodexHome, sourceErr = archive.DefaultCodexHome()
+		if sourceErr != nil {
+			return sourceErr
+		}
+	}
+	if opts.ClaudeHome == "" {
+		opts.ClaudeHome, sourceErr = archive.DefaultClaudeHome()
+		if sourceErr != nil {
+			return sourceErr
+		}
+	}
+	if opts.DeepSeekHome == "" {
+		opts.DeepSeekHome, sourceErr = archive.DefaultDeepSeekHome()
+		if sourceErr != nil {
+			return sourceErr
+		}
+	}
+	if opts.OMPHome == "" {
+		opts.OMPHome, sourceErr = archive.DefaultOMPHome()
+		if sourceErr != nil {
+			return sourceErr
+		}
+	}
+	opts.OMPSessionDir, sourceErr = archive.ResolveOMPSessionDir(opts.OMPSessionDir, opts.OMPHome)
+	if sourceErr != nil {
+		return sourceErr
+	}
+	if opts.OpenCodeDB == "" {
+		opts.OpenCodeDB, sourceErr = archive.DefaultOpenCodeDB()
+		if sourceErr != nil {
+			return sourceErr
+		}
+	}
 	listener, err := net.Listen("tcp", opts.Listen)
 	if err != nil {
 		return err
@@ -96,7 +132,8 @@ func Run(ctx context.Context, opts Options) error {
 		address = "[::1]:" + port
 	}
 	url := "http://" + address + "/#" + token
-	handler, err := NewHandlerWithSources(token, opts.ConfigStore, opts.CodexHome, opts.ClaudeHome, opts.DeepSeekHome, opts.Repo)
+	handler, err := NewHandlerWithAllSources(token, opts.ConfigStore, opts.CodexHome, opts.ClaudeHome,
+		opts.DeepSeekHome, opts.OMPHome, opts.OMPSessionDir, opts.OpenCodeDB, opts.Repo)
 	if err != nil {
 		return err
 	}
@@ -136,6 +173,10 @@ func NewHandler(token string, store config.Store, codexHome, repo string) (http.
 }
 
 func NewHandlerWithSources(token string, store config.Store, codexHome, claudeHome, deepSeekHome, repo string) (http.Handler, error) {
+	return NewHandlerWithAllSources(token, store, codexHome, claudeHome, deepSeekHome, "", "", "", repo)
+}
+
+func NewHandlerWithAllSources(token string, store config.Store, codexHome, claudeHome, deepSeekHome, ompHome, ompSessionDir, openCodeDB, repo string) (http.Handler, error) {
 	if token == "" {
 		return nil, fmt.Errorf("GUI API token is required")
 	}
@@ -158,7 +199,7 @@ func NewHandlerWithSources(token string, store config.Store, codexHome, claudeHo
 			"schema_version":     config.SchemaVersion,
 			"directory":          value.ExportDirectory,
 			"source_preferences": value.SourcePreferences,
-			"environment":        inspectEnvironment(codexHome, claudeHome, deepSeekHome),
+			"environment":        inspectAllEnvironment(codexHome, claudeHome, deepSeekHome, ompSessionDir, openCodeDB),
 		})
 	}))
 	mux.HandleFunc("PUT /api/sources", requireToken(token, func(w http.ResponseWriter, request *http.Request) {
@@ -222,17 +263,21 @@ func NewHandlerWithSources(token string, store config.Store, codexHome, claudeHo
 		allRepos := body.Scope != "current"
 		selection := archive.SourceSelection{}
 		if body.Sources == nil {
-			environment := inspectEnvironment(codexHome, claudeHome, deepSeekHome)
+			environment := inspectAllEnvironment(codexHome, claudeHome, deepSeekHome, ompSessionDir, openCodeDB)
 			selection = archive.SourceSelection{
-				Codex: environment.Codex.Available, ClaudeCode: environment.Claude.Available, DeepSeek: environment.DeepSeek.Available,
+				Codex: environment.Codex.Available, ClaudeCode: environment.Claude.Available,
+				DeepSeek: environment.DeepSeek.Available, OMP: environment.OMP.Available,
+				OpenCode: environment.OpenCode.Available,
 			}
 		} else {
 			selection = archive.SourceSelection{
-				Codex: body.Sources.Codex, ClaudeCode: body.Sources.ClaudeCode, DeepSeek: body.Sources.DeepSeek,
+				Codex: body.Sources.Codex, ClaudeCode: body.Sources.ClaudeCode,
+				DeepSeek: body.Sources.DeepSeek, OMP: body.Sources.OMP, OpenCode: body.Sources.OpenCode,
 			}
 		}
 		result, exportErr := archive.Export(request.Context(), archive.Options{
 			CodexHome: codexHome, ClaudeHome: claudeHome, DeepSeekHome: deepSeekHome,
+			OMPHome: ompHome, OMPSessionDir: ompSessionDir, OpenCodeDB: openCodeDB,
 			Output: directory, Repo: repo, AllRepos: allRepos,
 			IncludeArchived: body.IncludeArchived,
 			IncludeNonGit:   body.IncludeNonGit,
@@ -249,15 +294,10 @@ func NewHandlerWithSources(token string, store config.Store, codexHome, claudeHo
 }
 
 func inspectEnvironment(codexHome, claudeHome, deepSeekHome string) environmentState {
-	if strings.TrimSpace(codexHome) == "" {
-		codexHome, _ = archive.DefaultCodexHome()
-	}
-	if strings.TrimSpace(claudeHome) == "" {
-		claudeHome, _ = archive.DefaultClaudeHome()
-	}
-	if strings.TrimSpace(deepSeekHome) == "" {
-		deepSeekHome, _ = archive.DefaultDeepSeekHome()
-	}
+	return inspectAllEnvironment(codexHome, claudeHome, deepSeekHome, "", "")
+}
+
+func inspectAllEnvironment(codexHome, claudeHome, deepSeekHome, ompSessionDir, openCodeDB string) environmentState {
 	_, gitErr := exec.LookPath("git")
 	return environmentState{
 		Platform: runtime.GOOS,
@@ -265,7 +305,21 @@ func inspectEnvironment(codexHome, claudeHome, deepSeekHome string) environmentS
 		Codex:    inspectSourceEnvironment(codexHome, "sessions"),
 		Claude:   inspectSourceEnvironment(claudeHome, "projects"),
 		DeepSeek: inspectSourceEnvironment(deepSeekHome, "sessions"),
+		OMP:      inspectSourceEnvironment(ompSessionDir, ""),
+		OpenCode: inspectOpenCodeEnvironment(openCodeDB),
 	}
+}
+
+func inspectOpenCodeEnvironment(path string) sourceEnvironment {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return sourceEnvironment{}
+	}
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	info, err := os.Lstat(path)
+	return sourceEnvironment{Path: path, Available: err == nil && info.Mode().IsRegular()}
 }
 
 func inspectSourceEnvironment(home, dataDirectory string) sourceEnvironment {

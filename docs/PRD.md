@@ -1,8 +1,8 @@
-# Session Manager v1.0 产品需求
+# Session Manager v1.1 产品需求
 
 ## 1. 产品定义
 
-Session Manager 是一个跨 macOS、Linux、Windows 的 Codex、Claude Code 与 DeepSeek Harness session
+Session Manager 是一个跨 macOS、Linux、Windows 的 Codex、Claude Code、DeepSeek Harness、Oh My Pi 与 OpenCode session
 Markdown 导出器，同时提供 CLI 和本地 GUI。
 
 Git 已经负责代码历史和跨机器同步。本产品只负责把分散在本机 agent harness 状态目录中的
@@ -22,8 +22,8 @@ sessions 转成可读、可由 Git 跟踪历史的文件。
 
 1. Session Manager 自动恢复已配置目录；
 2. 用户执行导出；
-3. 系统自动探测 Codex、Claude Code 与 DeepSeek Harness；GUI 首次打开时为已探测来源开启
-   三个平级滑动开关，之后在本机配置中记住用户开关选择；CLI 自动扫描三个可用来源；
+3. 系统自动探测五个受支持的 harness；GUI 中五个平级开关默认开启，之后在本机配置中
+   记住用户的关闭选择；CLI 默认扫描全部受支持来源并允许显式选择子集；
 4. 默认只导出 hosted Git sessions；用户显式开启时也包括非 Git/本地-only 目录；
 5. hosted Git source 与已记录内容没有变化时不显示；非 Git目录每轮全量发布并显示；
 6. 只显示本次新增、内容更新、名称变化或非 Git全量发布，并标明来源 harness。
@@ -39,7 +39,7 @@ hosted Git remote key | device-local directory key
 - 不允许用本机路径猜测跨机器仓库身份；
 - 非 Git目录必须先把规范化绝对 CWD 哈希为 directory ID，再由 device ID 与 directory ID
   生成可重新验证的 key；key 只在该设备稳定，绝对路径不得进入导出文件；
-- Codex session key 保持既有 device ID + native session ID 算法；Claude Code 与 DeepSeek Harness
+- Codex session key 为历史归档保留既有 device ID + native session ID 算法；其余 harness
   session key 加入 harness discriminator，防止跨 harness 的 native ID 冲突；
 - session 名称是可变的人类语义，只用于可见目录名而不承担身份职责；
 - source hash 用于源变化检测，document hash 用于保护生成文件，二者均只进入隐藏 sidecar；
@@ -61,17 +61,22 @@ hosted Git remote key | device-local directory key
 
 ### FR-2 Session discovery
 
-- 默认只扫描 Codex `sessions/` JSONL；CLI `--include-archived` 或 GUI 对应选项开启时才把
+- Codex 来源扫描 `sessions/` JSONL；CLI `--include-archived` 或 GUI 对应选项开启时才把
   `archived_sessions/` 加入 discovery；
 - DeepSeek Harness 来源开启时，扫描 `$DSH_HOME/sessions`（默认 `~/.dsh/sessions`）下每个
   session 目录唯一的
   `session.jsonl.zstd` 或 `session.jsonl`；
 - DeepSeek compressed source 必须验证追加的 Zstandard frames、每 frame checksum、512 MiB
-  解压上限与最终 JSONL 完整性；截断写入标记 `busy`，确定损坏或不支持格式标记 skipped；
+  解压上限与 JSONL 完整记录；截断 frame 标记 `busy`，完整 frame 内的半行按已完成
+  turn 前缀处理，确定损坏或不支持格式标记 skipped；
 - Claude Code 来源开启时，扫描 `CLAUDE_CONFIG_DIR`（默认 `~/.claude`）下恰好一层
   `projects/*/*.jsonl`；不得递归扫描 subagents、tool-results、memory、file-history、history、
-  settings、auth 或 session-env；
-- 三个 harness source 都是可选的。缺少任一原生目录必须安静视为零 source；GUI 允许三个
+  settings、auth 或 session-env；有 `teleported-from` 或已知 cloud
+  entrypoint 的本地副本也必须排除，只导出本机发起的会话；
+- OMP 来源扫描默认 agent home 或显式/环境变量指定的 session 目录下的 `**/*.jsonl`，
+  只提取可验证的当前分支；
+- OpenCode 来源只读其 SQLite 会话库的 session/message/part 表，不归档数据库本体；
+- 五个 harness source 都是可选的。缺少任一原生目录必须安静视为零 source；GUI 允许五个
   滑动开关全部关闭，export 返回空 changeset 而不是配置错误；
 - CLI `--include-non-git` 或 GUI 对应选项未开启时，可识别的非 Git/本地-only目录 session
   必须安静排除并通过 `filtered_non_git` 计数保持可观察；开启后才进入匹配与发布；
@@ -84,14 +89,16 @@ hosted Git remote key | device-local directory key
 - 支持全部仓库、当前/指定仓库、指定 session 三种范围；
 - 全部候选文件必须共享一个短暂稳定窗口，而不是逐文件等待；
 - 活跃文件在观察与读取前后必须保持 identity、size 和 mtime 一致；
-- locked、变化中、被替换/移动或尾部 JSONL 不完整的文件必须标记 `busy`，本次静默忽略；
+- locked、观察期间变化或被替换/移动的文件必须标记 `busy`；稳定快照若包含正在运行的
+  新一轮，必须只发布上一个已完成 turn；没有已完成 turn 时标记 `busy`。有完整的上轮边界时，
+  末尾正在写入的半行不得进入导出；
 - `busy` 必须在 JSON 计数中可观察，但不得产生 warning 或非零退出码；
 - 必须读取 `session_meta` 的 `originator`、`source`、`thread_source` 与
   `parent_thread_id`；Guardian/approval 和 thread-spawned subagent 默认不作为独立用户
   session 导出，JSON 结果通过 `filtered_internal` 计数保持可观察；
 - DeepSeek header 必须读取 `origin`、`parentSession` 与 `delegationDepth`；任何 subagent
   provenance 都不得作为独立用户 session 导出；
-- 不得修改、移动或删除 Codex、Claude Code 或 DeepSeek Harness 源文件与原生附件对象。
+- 不得修改、移动或删除任一 harness 的原生会话、数据库或附件对象。
 
 ### FR-3 Repository identity
 
@@ -163,6 +170,9 @@ hosted Git remote key | device-local directory key
 - Claude selected ancestry 的 parent、cycle、required message shape 和 replayed UUID visible
   semantics 必须严格验证；不等价 replay 或 parent ambiguity 必须 fail closed。跨 project 的同
   filename、非同内容可见 transcript 必须拒绝发布，不得以同一 session key 静默覆盖；
+- Claude 当前分支只发布 `stop_reason=end_turn` 或 `stop_sequence` 结束的 turn；当前
+  user、tool-use 或未结束的 assistant 保留到下一次导出。云端 teleport 副本即使位于
+  本地 `projects` 目录，也不得作为本地会话发布；
 - Claude direct user 输入只接受结构化 human provenance 或经精确内部-envelope 排除后的兼容
   legacy 形态；tool result、task notification、`isMeta`、local command、interrupt、IDE/system
   context 必须排除；同一 assistant `message.id` 的片段合并，只保留 text，thinking、tool payload、
@@ -183,6 +193,9 @@ hosted Git remote key | device-local directory key
 - 第一次看到某 session 时标记 `new`；
 - source hash 变化时标记 `updated`；
 - source hash 不变但显示名称变化时标记 `renamed`；
+- 运行中新一轮追加的 user、assistant 片段、工具记录和数据库更新时间不能改变上轮已完成
+  内容的 source hash；OpenCode 的 `finish=tool-calls` 尚未完成用户轮次，真正的完成标记
+  出现后才发布更新；
 - source、标题、renderer 与生成内容均相同时必须是 no-op；
 - 上述 no-op 只适用于 hosted Git sessions。选中的非 Git session 每轮必须重新解析、过滤、
   渲染、验证并发布；第一次标记 `new`，之后标记 `full`；
@@ -204,15 +217,15 @@ hosted Git remote key | device-local directory key
 - GUI 必须由同一二进制提供，不依赖 Node 或平台 WebView SDK；
 - 服务只能监听 loopback；
 - 每次启动必须生成随机 API token；
-- GUI 最上方必须提供 Codex、Claude Code、DeepSeek Harness 三个同级滑动开关；首次打开时按
-  source 目录探测结果开启，用户修改后保存在 Session Manager 本机配置并可关闭任意或全部来源；不得再把某个
+- GUI 最上方必须提供五个受支持 harness 的同级滑动开关；首次打开时全部开启，用户修改后
+  保存在 Session Manager 本机配置并可关闭任意或全部来源；不得再把某个
   harness 表现为“include”复选项；GUI 仍提供 archived Codex 与非 Git全量导出的独立策略选项；
 - hosted Git changeset 必须按 repository/device 目录分组，并可逐层展开或收起；非 Git
   repository 根已经包含 device scope，必须直接显示 session 叶节点，不得把 session 目录
   误作第二级 device folder；
 - GUI 默认使用接近 GitHub Dark 的黑灰背景、surface、边框和状态色，不得回退为白底；
 - GUI 必须提供 English/中文切换，首次加载默认 English，并在浏览器可用时记住用户选择；
-- GUI 首次加载必须检查 Git 是否可执行以及 Codex/Claude Code/DeepSeek Harness session 目录是否存在；
+- GUI 首次加载必须检查 Git 是否可执行以及五种受支持来源的 session 目录或数据库是否存在；
   Windows 缺少 Git 时必须给出经官方文档确认的 WinGet 命令与安装页，同时明确 release EXE
   不需要 Go/Make；检查只读，不得自动安装、提权或修改 PATH；
 - 桌面与窄屏布局必须可用；
@@ -226,15 +239,16 @@ hosted Git remote key | device-local directory key
 - `archive` 作为 `export` 兼容别名；
 - `export --include-archived` 必须显式包括 Codex `archived_sessions/`，未传时只处理 active
   sessions；
-- CLI export 自动扫描三个可用 source，不要求任何 source 存在；`--claude-home` 可覆盖
-  `CLAUDE_CONFIG_DIR`/`~/.claude`，`--deepseek-home` 可覆盖 `DSH_HOME`/`~/.dsh`；
+- CLI export 默认扫描五个受支持 source，不要求任何 source 存在，并允许 `--sources` 明确
+  指定子集；`--claude-home`、`--deepseek-home`、`--omp-home`、`--omp-session-dir`、
+  `--opencode-db` 可覆盖各自默认位置；
 - `export --include-non-git` 必须显式包括没有 hosted remote 的可访问 CWD；未传时不得发布；
 - partial export 必须保留成功 changeset，同时以非零退出码和 warning 报告跳过项。
 
 ### FR-8 三系统分发
 
-- 核心与 GUI 必须保持纯 Go、`CGO_ENABLED=0` 可构建；Zstandard 依赖必须是可固定版本且支持
-  checksum 验证的纯 Go 实现；
+- 核心与 GUI 必须保持纯 Go、`CGO_ENABLED=0` 可构建；Zstandard 与 SQLite 依赖必须是
+  可固定版本的纯 Go 实现；
 - 必须能交叉构建 macOS、Linux、Windows；
 - 目录打开/浏览使用各平台最接近的可用方式，并提供手工路径 fallback；
 - 严格的 `vMAJOR.MINOR.PATCH` tag 必须在测试通过后自动创建 GitHub Release，至少附带
@@ -277,7 +291,8 @@ hosted Git remote key | device-local directory key
 10. GUI 拒绝非 loopback listen address。
 11. macOS、Linux、Windows no-CGO 构建全部通过。
 12. 原始 Codex/Claude JSONL 与 DeepSeek session/attachment objects 在导出前后字节一致。
-13. 稳定窗口内发生变化或尾部不完整的 session 只增加 `busy`，不生成文档且导出成功。
+13. 稳定窗口内发生变化的 session 只增加 `busy`，不生成文档且导出成功；稳定读取的
+    半行尾部若有可确认的上一轮完成边界，则仅导出已完成前缀。
 14. Markdown 明确区分创建、首次/最后对话与最后源事件时间，并为每条消息显示时间点。
 15. 可见路径和 Markdown 文件名不包含 repository/session/content hash。
 16. 隐藏 sidecar 中的 Codex session key 可由既有算法重新计算；Claude/DeepSeek key 可由
@@ -317,13 +332,14 @@ hosted Git remote key | device-local directory key
 38. 非 Git source 后来消失时，既有全量归档仍保留，不推导删除或 tombstone。
 39. GUI 中 hosted Git repository 保留 device folder；非 Git repository 下直接显示 session
     卡片，不为每个 session 生成 folder summary。
-40. CLI 自动扫描可用 Codex、Claude 与 DeepSeek source；缺少任一或全部 source 均不失败。
-    GUI 首次打开按探测结果开启三个顶部滑动开关，关闭后刷新仍保持选择。
+40. CLI 默认扫描五个受支持 source；缺少任一或全部 source 均不失败。
+    GUI 首次打开五个顶部滑动开关均开启，关闭后刷新仍保持选择。
 41. DeepSeek plugin user injection、subagent、surface replacement、reasoning 与 tool payload 不进入
     正文；append 的直接用户文本和 model assistant 文本保持 event 顺序。
 42. DeepSeek 多 frame Zstandard source 的 checksum、event sequence 和 packed rows 均验证；截断
-    frame/JSONL 记为 busy，checksum 损坏或 sequence discontinuity 不发布文档。
-43. 同一设备上 Codex、Claude 与 DeepSeek 使用相同 native session ID、创建时间和标题时，
+    frame 记为 busy，完整 frame 的半条 JSONL 仅在有已完成 turn 时舍弃；checksum 损坏或
+    sequence discontinuity 不发布文档。
+43. 同一设备上不同 harness 使用相同 native session ID、创建时间和标题时，
     session key 与可见语义目录仍不同且不得覆盖；两个 Claude fork 共享时间/标题时也必须稳定区分。
 44. DeepSeek image object 只有在 path、声明 hash、声明大小和稳定读取全部一致时才可归档；重复
     导出是 no-op，原生 session 与 object bytes 均保持不变。
@@ -348,3 +364,13 @@ hosted Git remote key | device-local directory key
 54. Copied Claude ancestry、detached system roots、off-chain replay 和 anchor 后 attachment 不导致
     skip；无 filename-owned conversation anchor 的 bridge-only file 静默略过。
 55. 同 filename Claude ID 的两个非同内容可见 project transcript 不发布，且 warning 不含绝对路径。
+56. OMP 当前 JSONL v3 session 导出标题与当前 parent 分支的可见对话；替代分支、thinking、
+    credential pin 和工具输出不进入正文，blob image 经过既有附件校验。
+57. OpenCode SQLite 以只读快照读取；大于 64 KiB 的会话仍能导出，不依赖其 CLI 截断的
+    `export` 输出，不复制认证、share 或整个数据库；子会话被标记为 internal。
+58. GUI 的 OMP/OpenCode 环境状态与开关可独立变化；CLI `--sources` 可只选任一来源。
+    v2 保存的三源开关迁移时保留原选择，新来源默认开启；没有 Codex-only 默认分支。
+59. Claude 云端会话的本地 teleport 副本不导出；相同 native ID 同时有本地与云端副本时，
+    只导出本地对话。
+60. 五种 harness 的当前轮仍在运行时，归档只含此前完成的 turn；运行中追加内容不产生
+    新版本，完成标记出现后才更新。无已完成 turn 时只计 `busy`。

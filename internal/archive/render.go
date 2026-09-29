@@ -24,16 +24,16 @@ var redactionPatterns = []struct {
 var secretAssignment = regexp.MustCompile(`(?im)^(\s*(?:export\s+)?[A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|PRIVATE_KEY)[A-Z0-9_]*\s*=\s*)\S+`)
 
 func sessionKey(deviceID, harness, sessionID string) string {
-	if harness == "" || harness == harnessCodex {
+	if harness == "" {
+		return ""
+	}
+	if harness == harnessCodex {
 		return digest("device-session-v1\x00" + deviceID + "\x00" + sessionID)
 	}
 	return digest("device-harness-session-v1\x00" + deviceID + "\x00" + harness + "\x00" + sessionID)
 }
 
 func makeSnapshot(repo Repository, session Session, deviceID, deviceName string) Snapshot {
-	if session.Harness == "" {
-		session.Harness = harnessCodex
-	}
 	redactions := 0
 	session.Title, redactions = redact(session.Title)
 	for _, value := range []*string{&session.CodexVersion, &session.ClaudeVersion, &session.Commit, &session.Branch} {
@@ -112,11 +112,17 @@ func renderSnapshot(snapshot Snapshot) []byte {
 	fmt.Fprintf(&output, "redactions: %d\n", snapshot.Redactions)
 	fmt.Fprintln(&output, "---")
 	fmt.Fprintf(&output, "\n# %s\n\n", session.Title)
-	harnessName := "Codex"
-	if session.Harness == harnessDeepSeek {
+	harnessName := "Agent"
+	if session.Harness == harnessCodex {
+		harnessName = "Codex"
+	} else if session.Harness == harnessDeepSeek {
 		harnessName = "DeepSeek Harness"
 	} else if session.Harness == harnessClaudeCode {
 		harnessName = "Claude Code"
+	} else if session.Harness == harnessOMP {
+		harnessName = "Oh My Pi"
+	} else if session.Harness == harnessOpenCode {
+		harnessName = "OpenCode"
 	}
 	fmt.Fprintf(&output, "> Exported from %s on %s for `%s`.\n\n", harnessName, snapshot.DeviceName, snapshot.Repository.Name)
 	fmt.Fprintln(&output, "## Conversation")

@@ -1,16 +1,37 @@
 package archive
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
+func TestMissingHarnessDoesNotDefaultToCodex(t *testing.T) {
+	if sessionKey("device:test", "", "session") != "" {
+		t.Fatal("missing harness got a Codex key")
+	}
+	root := t.TempDir()
+	snapshot := makeSnapshot(repositoryFromRemote("github.com/example/project"),
+		Session{ID: "session", Title: "Unidentified", RawHash: digest("source")}, "device:test", "test")
+	if _, _, _, err := publishSnapshot(root, &snapshot, nil); err == nil {
+		t.Fatal("published a source without a harness")
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("missing harness wrote archive files under %s", filepath.Base(root))
+	}
+}
+
 func TestSessionKeyUsesDeviceAndNativeSessionIdentity(t *testing.T) {
 	repo := repositoryFromRemote("github.com/example/project")
 	when := time.Date(2026, 8, 5, 1, 2, 3, 0, time.UTC)
 	base := Session{
-		ID: "session-1", Title: "Useful name", TitleUpdatedAt: when,
+		ID: "session-1", Harness: harnessCodex, Title: "Useful name", TitleUpdatedAt: when,
 		RawHash: digest("raw-v1"), LastEventAt: when,
 		Messages: []Message{{Role: "user", Text: "hello", Timestamp: when}},
 	}
@@ -33,10 +54,13 @@ func TestSessionKeyUsesDeviceAndNativeSessionIdentity(t *testing.T) {
 	if makeSnapshot(repo, base, "device:b", "workstation").SessionKey == first.SessionKey {
 		t.Fatal("different devices shared one session identity")
 	}
-	deepSeek := base
-	deepSeek.Harness = harnessDeepSeek
-	if makeSnapshot(repo, deepSeek, "device:a", "workstation").SessionKey == first.SessionKey {
-		t.Fatal("different harnesses shared one session identity")
+	for _, harness := range []string{harnessDeepSeek, harnessOMP, harnessOpenCode} {
+		other := base
+		other.Harness = harness
+		if makeSnapshot(repo, other, "device:a", "workstation").SessionKey == first.SessionKey ||
+			semanticSessionDirectory(makeSnapshot(repo, other, "device:a", "workstation")) == semanticSessionDirectory(first) {
+			t.Fatalf("%s shared a Codex session identity or path", harness)
+		}
 	}
 }
 
@@ -47,7 +71,7 @@ func TestRenderSnapshotIncludesConversationTimeline(t *testing.T) {
 	last := created.Add(2 * time.Minute)
 	event := created.Add(3 * time.Minute)
 	snapshot := makeSnapshot(repo, Session{
-		ID: "session-1", Title: "Timeline", RawHash: digest("raw"),
+		ID: "session-1", Harness: harnessCodex, Title: "Timeline", RawHash: digest("raw"),
 		CreatedAt: created, FirstMessageAt: first, LastMessageAt: last, LastEventAt: event,
 		UserMessages: 1, AssistantMessages: 1,
 		Messages: []Message{
@@ -97,7 +121,7 @@ func TestRenderSnapshotRedactsSecretsAndOmitsToolPayloads(t *testing.T) {
 	repo := repositoryFromRemote("github.com/example/project")
 	secret := "sk-abcdefghijklmnopqrstuvwxyz123456"
 	snapshot := makeSnapshot(repo, Session{
-		ID: "session-1", Title: "Token " + secret, RawHash: digest("raw"),
+		ID: "session-1", Harness: harnessCodex, Title: "Token " + secret, RawHash: digest("raw"),
 		Messages:      []Message{{Role: "user", Text: "OPENAI_API_KEY=" + secret + "\nDATABASE_PASSWORD=plain-secret-value"}},
 		ToolCallCount: 2,
 	}, "device:a", "workstation")

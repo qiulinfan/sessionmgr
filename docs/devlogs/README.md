@@ -12,6 +12,7 @@ The repository-level requirements are defined in
 
 | Version | Status | Date | Summary |
 | --- | --- | --- | --- |
+| [`v1.1.0`](./v1.1.0.md) | Released | 2026-09-29 | Five peer sources, completed-turn export, and Claude cloud exclusion |
 | [`v1.0.2`](./v1.0.2.md) | Released | 2026-09-04 | Recover valid Codex fragments and Claude copied ancestry safely |
 | [`v1.0.1`](./v1.0.1.md) | Released | 2026-08-20 | Fix Windows release builds when multiple Go versions are on PATH |
 | [`v1.0.0`](./v1.0.0.md) | Released | 2026-08-20 | Claude Code export and detected peer source switches |

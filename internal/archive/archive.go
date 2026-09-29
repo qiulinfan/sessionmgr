@@ -53,6 +53,24 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, err
 		}
 	}
+	if selected.OMP {
+		var err error
+		opts.OMPHome, err = resolveOMPHome(opts.OMPHome)
+		if err != nil {
+			return result, err
+		}
+		opts.OMPSessionDir, err = resolveOMPSessionDir(opts.OMPSessionDir, opts.OMPHome)
+		if err != nil {
+			return result, err
+		}
+	}
+	if selected.OpenCode {
+		var err error
+		opts.OpenCodeDB, err = resolveOpenCodeDB(opts.OpenCodeDB)
+		if err != nil {
+			return result, err
+		}
+	}
 	if opts.Output == "" {
 		return result, fmt.Errorf("export directory is required")
 	}
@@ -111,6 +129,16 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			paths = append(paths, path)
 		}
 	}
+	if selected.OMP {
+		ompFiles, discoverErr := discoverOMPSessionFiles(opts.OMPSessionDir)
+		if discoverErr != nil {
+			return result, discoverErr
+		}
+		for _, path := range ompFiles {
+			sources = append(sources, nativeSessionSource{path: path, harness: harnessOMP})
+			paths = append(paths, path)
+		}
+	}
 	result.Sources = len(sources)
 	titles := make(map[string]titleRecord)
 	if selected.Codex {
@@ -159,11 +187,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		}
 		var raw []byte
 		var readErr error
-		if source.harness == harnessDeepSeek {
-			raw, readErr = readObservedFile(ctx, path, expected)
-		} else {
-			raw, readErr = readObservedSource(ctx, path, expected)
-		}
+		raw, readErr = readObservedFile(ctx, path, expected)
 		if readErr != nil {
 			if errors.Is(readErr, context.Canceled) || errors.Is(readErr, context.DeadlineExceeded) {
 				return result, readErr
@@ -176,6 +200,18 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(path), readErr))
 			continue
 		}
+		if source.harness == harnessCodex || (source.harness == harnessDeepSeek && !source.compressed) {
+			raw, readErr = completedNativePrefix(source.harness, raw)
+			if readErr != nil {
+				if sourceErrorIsBusy(readErr) {
+					result.Busy++
+					continue
+				}
+				result.Skipped++
+				result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(path), readErr))
+				continue
+			}
+		}
 		var session Session
 		var parseErr error
 		switch source.harness {
@@ -186,6 +222,8 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			}
 		case harnessClaudeCode:
 			session, parseErr = parseClaudeSession(raw, strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+		case harnessOMP:
+			session, parseErr = parseOMPSession(raw, opts.OMPHome)
 		default:
 			fallbackID := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 			session, parseErr = parseSession(raw, fallbackID, titles)
@@ -203,6 +241,24 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			continue
 		}
 		parsed = append(parsed, parsedNativeSession{source: source, session: session})
+	}
+	if selected.OpenCode {
+		openCode, readErr := readOpenCodeSessions(ctx, opts.OpenCodeDB, window)
+		if readErr != nil {
+			return result, fmt.Errorf("read OpenCode sessions: %w", readErr)
+		}
+		result.Sources += openCode.sources
+		result.Busy += openCode.busy
+		result.Skipped += openCode.skipped
+		result.Warnings = append(result.Warnings, openCode.warnings...)
+		for _, session := range openCode.sessions {
+			if opts.SessionID != "" && session.ID != opts.SessionID {
+				continue
+			}
+			parsed = append(parsed, parsedNativeSession{
+				source: nativeSessionSource{path: opts.OpenCodeDB, harness: harnessOpenCode}, session: session,
+			})
+		}
 	}
 
 	logicalSessions, issues := coalesceLogicalSessions(parsed)
@@ -301,9 +357,14 @@ func selectedSources(opts Options) SourceSelection {
 	if opts.Sources != nil {
 		return *opts.Sources
 	}
-	// Preserve the package-level behavior used by existing callers and fixtures.
-	// Product entrypoints always pass Sources explicitly.
-	return SourceSelection{Codex: true, DeepSeek: opts.IncludeDeepSeek}
+	// Library callers select only source paths they supplied. Product entrypoints
+	// pass an explicit auto-detected selection; a fixture must never fall through
+	// to unrelated native homes on the developer's machine.
+	return SourceSelection{
+		Codex: opts.CodexHome != "", ClaudeCode: opts.ClaudeHome != "",
+		DeepSeek: opts.DeepSeekHome != "" || opts.IncludeDeepSeek,
+		OMP:      opts.OMPHome != "", OpenCode: opts.OpenCodeDB != "",
+	}
 }
 
 func coalesceLogicalSessions(values []parsedNativeSession) ([]Session, []logicalSessionIssue) {
@@ -315,7 +376,11 @@ func coalesceLogicalSessions(values []parsedNativeSession) ([]Session, []logical
 		case harnessCodex:
 			codexGroups[value.session.ID] = append(codexGroups[value.session.ID], value)
 		case harnessClaudeCode:
-			claudeGroups[value.session.ID] = append(claudeGroups[value.session.ID], value)
+			if value.session.ExcludeReason == "cloud" {
+				result = append(result, value.session)
+			} else {
+				claudeGroups[value.session.ID] = append(claudeGroups[value.session.ID], value)
+			}
 		default:
 			result = append(result, value.session)
 		}
@@ -522,6 +587,9 @@ func laterTime(current, candidate time.Time) time.Time {
 }
 
 func publishSnapshot(output string, snapshot *Snapshot, history []Entry) (bool, string, string, error) {
+	if !supportedSessionHarness(snapshot.Session.Harness) {
+		return false, "", "", fmt.Errorf("unsupported source harness %q", snapshot.Session.Harness)
+	}
 	repositoryDir := filepath.Join(output, semanticRepositoryDirectory(snapshot.Repository))
 	if err := publishRepositoryMetadata(repositoryDir, snapshot.Repository); err != nil {
 		return false, "", "", fmt.Errorf("publish repository identity: %w", err)

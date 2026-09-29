@@ -218,7 +218,7 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	if !bytes.Contains(page, []byte(`id="include-archived"`)) || !bytes.Contains(page, []byte("Include archived Codex sessions")) {
 		t.Fatal("GUI archived-session option is missing")
 	}
-	for _, sourceID := range []string{`id="source-codex"`, `id="source-claude"`, `id="source-deepseek"`} {
+	for _, sourceID := range []string{`id="source-codex"`, `id="source-claude"`, `id="source-deepseek"`, `id="source-omp"`, `id="source-opencode"`} {
 		if !bytes.Contains(page, []byte(sourceID)) {
 			t.Fatalf("GUI source switch %s is missing", sourceID)
 		}
@@ -248,6 +248,7 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 		!bytes.Contains(script, []byte("source_preferences")) ||
 		!bytes.Contains(script, []byte("filtered_internal")) || !bytes.Contains(script, []byte("include_archived")) ||
 		!bytes.Contains(script, []byte("claude_code")) || !bytes.Contains(script, []byte("sourceDeepSeek")) ||
+		!bytes.Contains(script, []byte("sourceOMP")) || !bytes.Contains(script, []byte("sourceOpenCode")) ||
 		!bytes.Contains(script, []byte("include_non_git")) ||
 		!bytes.Contains(script, []byte("filtered_non_git")) || !bytes.Contains(script, []byte("badgeFull")) ||
 		!bytes.Contains(script, []byte("renderEnvironment")) || !bytes.Contains(script, []byte("git_available")) {
@@ -312,6 +313,39 @@ func TestGUIStateReportsRuntimeAndSessionSources(t *testing.T) {
 	}
 }
 
+func TestGUIAutoDetectsOMPPeersAndOpenCodeDatabase(t *testing.T) {
+	root := t.TempDir()
+	ompHome := filepath.Join(root, "omp")
+	openCodeDB := filepath.Join(root, "data", "opencode.db")
+	if err := os.MkdirAll(filepath.Join(ompHome, "sessions"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(openCodeDB), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(openCodeDB, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandlerWithAllSources("test-token", config.Store{Path: filepath.Join(root, "config.json")},
+		filepath.Join(root, "codex"), filepath.Join(root, "claude"), filepath.Join(root, "dsh"), ompHome, filepath.Join(ompHome, "sessions"), openCodeDB, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := httptest.NewRecorder()
+	handler.ServeHTTP(result, authenticatedRequest(http.MethodGet, "/api/state", nil))
+	var state struct {
+		Environment environmentState `json:"environment"`
+	}
+	if err := json.Unmarshal(result.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.Environment.OMP.Available || state.Environment.OMP.Path != filepath.Join(ompHome, "sessions") ||
+		!state.Environment.OpenCode.Available || state.Environment.OpenCode.Path != openCodeDB ||
+		state.Environment.Codex.Available {
+		t.Fatalf("source detection preferred Codex or missed new harnesses: %+v", state.Environment)
+	}
+}
+
 func TestGUISourcePreferencesPersistAcrossHandlerState(t *testing.T) {
 	root := t.TempDir()
 	store := config.Store{Path: filepath.Join(root, "config.json")}
@@ -319,7 +353,7 @@ func TestGUISourcePreferencesPersistAcrossHandlerState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	put := authenticatedRequest(http.MethodPut, "/api/sources", sourceRequest(true, false, true))
+	put := authenticatedRequest(http.MethodPut, "/api/sources", sourceRequest(true, false, true, true, true))
 	putResult := httptest.NewRecorder()
 	handler.ServeHTTP(putResult, put)
 	if putResult.Code != http.StatusOK {
@@ -341,7 +375,8 @@ func TestGUISourcePreferencesPersistAcrossHandlerState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if state.SchemaVersion != config.SchemaVersion || state.SourcePreferences == nil ||
-		!state.SourcePreferences.Codex || state.SourcePreferences.ClaudeCode || !state.SourcePreferences.DeepSeek {
+		!state.SourcePreferences.Codex || state.SourcePreferences.ClaudeCode || !state.SourcePreferences.DeepSeek ||
+		!state.SourcePreferences.OMP || !state.SourcePreferences.OpenCode {
 		t.Fatalf("source preferences did not survive handler recreation: %+v", state)
 	}
 }
@@ -514,8 +549,15 @@ func TestGUIClaudeSourceSwitchExportsConfiguredSource(t *testing.T) {
 	}
 }
 
-func sourceRequest(codex, claude, deepSeek bool) map[string]bool {
-	return map[string]bool{"codex": codex, "claude_code": claude, "deepseek": deepSeek}
+func sourceRequest(codex, claude, deepSeek bool, extra ...bool) map[string]bool {
+	result := map[string]bool{"codex": codex, "claude_code": claude, "deepseek": deepSeek}
+	if len(extra) > 0 {
+		result["omp"] = extra[0]
+	}
+	if len(extra) > 1 {
+		result["opencode"] = extra[1]
+	}
+	return result
 }
 
 func decodeExportResponse(t *testing.T, result *httptest.ResponseRecorder) exportResponse {

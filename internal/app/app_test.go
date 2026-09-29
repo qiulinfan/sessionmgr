@@ -21,6 +21,9 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
 	_ = os.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
 	_ = os.Setenv("DSH_HOME", filepath.Join(root, "dsh"))
+	_ = os.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "omp"))
+	_ = os.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
+	_ = os.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
 	code := m.Run()
 	_ = os.RemoveAll(root)
 	os.Exit(code)
@@ -35,6 +38,57 @@ func TestVersionCommandUsesBuildVersion(t *testing.T) {
 	code, err := Run(context.Background(), []string{"version"}, &stdout, &stderr)
 	if err != nil || code != 0 || stdout.String() != "sessionmgr 1.2.3\n" || stderr.Len() != 0 {
 		t.Fatalf("version command did not use the build version: code=%d err=%v stdout=%q stderr=%q", code, err, stdout.String(), stderr.String())
+	}
+}
+
+func TestSourceNamesAreExplicitAndPeerScoped(t *testing.T) {
+	selected, err := parseSourceNames("omp,opencode")
+	if err != nil || selected.Codex || selected.ClaudeCode || !selected.OMP || !selected.OpenCode {
+		t.Fatalf("source list defaulted to Codex or missed a peer: %+v / %v", selected, err)
+	}
+	for _, invalid := range []string{"unknown", "codex,codex", "omp,", ""} {
+		if _, err := parseSourceNames(invalid); err == nil {
+			t.Fatalf("accepted source list %q", invalid)
+		}
+	}
+}
+
+func TestCLIAutoDetectsOMPWithNoCodexSession(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "omp")
+	cwd := filepath.Join(root, "work")
+	if err := os.MkdirAll(cwd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, "sessions", "-work", "fixture.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw := fmt.Sprintf(`{"type":"session","version":3,"id":"omp-cli","timestamp":"2026-09-20T12:00:00Z","cwd":%q}`+"\n"+
+		`{"type":"message","id":"u1","parentId":null,"timestamp":"2026-09-20T12:00:01Z","message":{"role":"user","content":[{"type":"text","text":"OMP CLI export"}]}}`+"\n"+
+		`{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-09-20T12:00:02Z","message":{"role":"assistant","content":[{"type":"text","text":"exported"}]}}`+"\n", cwd)
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PI_CODING_AGENT_DIR", home)
+	t.Setenv("SESSIONMGR_CONFIG", filepath.Join(root, "config.json"))
+	var stdout, stderr bytes.Buffer
+	code, err := Run(context.Background(), []string{"export", "--all", "--directory", filepath.Join(root, "archive"), "--include-non-git", "--json"}, &stdout, &stderr)
+	if err != nil || code != 0 {
+		t.Fatalf("OMP auto export failed: %v / %s", err, stderr.String())
+	}
+	var result struct {
+		Sources int `json:"sources"`
+		Created int `json:"created"`
+		Changes []struct {
+			Harness string `json:"harness"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Sources != 1 || result.Created != 1 || len(result.Changes) != 1 || result.Changes[0].Harness != "omp" {
+		t.Fatalf("OMP was not treated as an equal default source: %s", stdout.String())
 	}
 }
 

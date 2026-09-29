@@ -18,7 +18,7 @@ import (
 
 // version is a variable so release builds can stamp the reviewed tag version
 // with -ldflags -X. Development builds keep an explicit prerelease suffix.
-var version = "1.0.2"
+var version = "1.1.0"
 
 type commandError struct {
 	exitCode int
@@ -123,6 +123,10 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	source := flags.String("codex-home", "", "Codex state directory (default: CODEX_HOME or ~/.codex)")
 	claudeSource := flags.String("claude-home", "", "Claude Code state directory (default: CLAUDE_CONFIG_DIR or ~/.claude)")
 	deepSeekSource := flags.String("deepseek-home", "", "DeepSeek Harness state directory (default: DSH_HOME or ~/.dsh)")
+	ompSource := flags.String("omp-home", "", "Oh My Pi agent directory (default: PI_CODING_AGENT_DIR or ~/.omp/agent)")
+	ompSessionDir := flags.String("omp-session-dir", "", "Oh My Pi session directory (default: PI_CODING_AGENT_SESSION_DIR or <omp-home>/sessions)")
+	openCodeDB := flags.String("opencode-db", "", "OpenCode session database (default: XDG_DATA_HOME/opencode/opencode.db)")
+	sourceNames := flags.String("sources", "", "comma-separated harnesses (default: saved selection or all supported sources)")
 	directory := flags.String("directory", "", "export directory to use and remember")
 	output := flags.String("output", "", "one-time export directory (compatibility alias)")
 	jsonOutput := flags.Bool("json", false, "emit JSON")
@@ -159,16 +163,29 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return err
 	}
+	selection := archive.SourceSelection{Codex: true, ClaudeCode: true, DeepSeek: true, OMP: true, OpenCode: true}
+	if device.SourcePreferences != nil {
+		selection = archive.SourceSelection{
+			Codex: device.SourcePreferences.Codex, ClaudeCode: device.SourcePreferences.ClaudeCode,
+			DeepSeek: device.SourcePreferences.DeepSeek, OMP: device.SourcePreferences.OMP,
+			OpenCode: device.SourcePreferences.OpenCode,
+		}
+	}
+	if *sourceNames != "" {
+		selection, err = parseSourceNames(*sourceNames)
+		if err != nil {
+			return argumentError(err.Error())
+		}
+	}
 	result, exportErr := archive.Export(ctx, archive.Options{
 		CodexHome: *source, ClaudeHome: *claudeSource, DeepSeekHome: *deepSeekSource,
+		OMPHome: *ompSource, OMPSessionDir: *ompSessionDir, OpenCodeDB: *openCodeDB,
 		Output: resolvedDirectory, Repo: *repo,
 		AllRepos: !repoWasSet || *all, SessionID: *sessionID,
 		IncludeArchived: *includeArchived,
 		IncludeNonGit:   *includeNonGit,
-		Sources: &archive.SourceSelection{
-			Codex: true, ClaudeCode: true, DeepSeek: true,
-		},
-		DeviceID: device.DeviceID, DeviceName: device.DeviceName,
+		Sources:         &selection,
+		DeviceID:        device.DeviceID, DeviceName: device.DeviceName,
 	})
 	if *jsonOutput {
 		if err := writeJSON(stdout, result); err != nil {
@@ -309,6 +326,9 @@ func commandGUI(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	source := flags.String("codex-home", "", "Codex state directory")
 	claudeSource := flags.String("claude-home", "", "Claude Code state directory")
 	deepSeekSource := flags.String("deepseek-home", "", "DeepSeek Harness state directory")
+	ompSource := flags.String("omp-home", "", "Oh My Pi agent directory")
+	ompSessionDir := flags.String("omp-session-dir", "", "Oh My Pi session directory")
+	openCodeDB := flags.String("opencode-db", "", "OpenCode session database")
 	repo := flags.String("repo", ".", "current Git repository for the GUI scope")
 	if err := flags.Parse(args); err != nil {
 		return flagError(err)
@@ -321,7 +341,8 @@ func commandGUI(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		return err
 	}
 	return ui.Run(ctx, ui.Options{
-		Listen: *listen, CodexHome: *source, ClaudeHome: *claudeSource, DeepSeekHome: *deepSeekSource, Repo: *repo,
+		Listen: *listen, CodexHome: *source, ClaudeHome: *claudeSource, DeepSeekHome: *deepSeekSource,
+		OMPHome: *ompSource, OMPSessionDir: *ompSessionDir, OpenCodeDB: *openCodeDB, Repo: *repo,
 		OpenBrowser: !*noOpen, ConfigStore: store, Log: stderr,
 		Ready: func(url string) {
 			fmt.Fprintf(stdout, "Session Manager GUI: %s\n", url)
@@ -411,21 +432,51 @@ func short(value string) string {
 	return value[:12]
 }
 
+func parseSourceNames(value string) (archive.SourceSelection, error) {
+	var result archive.SourceSelection
+	seen := make(map[string]bool)
+	for _, item := range strings.Split(value, ",") {
+		name := strings.TrimSpace(item)
+		if name == "" || seen[name] {
+			return result, fmt.Errorf("invalid or repeated source %q", name)
+		}
+		seen[name] = true
+		switch name {
+		case "codex":
+			result.Codex = true
+		case "claude-code":
+			result.ClaudeCode = true
+		case "deepseek":
+			result.DeepSeek = true
+		case "omp":
+			result.OMP = true
+		case "opencode":
+			result.OpenCode = true
+		default:
+			return result, fmt.Errorf("unsupported source %q", name)
+		}
+	}
+	return result, nil
+}
+
 func printHelp(output io.Writer) {
-	fmt.Fprintln(output, `sessionmgr exports Codex, Claude Code, and DeepSeek Harness conversations as readable Markdown files.
+	fmt.Fprintln(output, `sessionmgr exports Codex, Claude Code, DeepSeek Harness, Oh My Pi, and OpenCode conversations as readable Markdown files.
 
 Usage:
   sessionmgr                         Open the GUI
   sessionmgr gui [--no-open] [--claude-home PATH] [--deepseek-home PATH]
+                 [--omp-home PATH] [--omp-session-dir PATH] [--opencode-db PATH]
   sessionmgr config set-directory PATH
   sessionmgr config show
-  sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived] [--include-non-git] [--directory PATH]
+  sessionmgr export [--all | --repo PATH] [--session ID] [--sources codex,claude-code,deepseek,omp,opencode]
+                    [--omp-home PATH] [--omp-session-dir PATH] [--opencode-db PATH]
+                    [--include-archived] [--include-non-git] [--directory PATH]
   sessionmgr list [--history]
   sessionmgr cleanup-internal [--directory PATH] [--apply]
   sessionmgr version
 
-Available Codex, Claude Code, and DeepSeek Harness state directories are scanned
-automatically. The configured export directory persists across launches. Output lists
+Available session stores for all five supported harnesses are scanned automatically.
+The configured export directory persists across launches. Output lists
 only files changed by the current operation. "archive" remains an alias for
 "export". cleanup-internal is a dry run unless --apply is provided.`)
 }

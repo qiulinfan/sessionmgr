@@ -16,6 +16,8 @@ const includeNonGit = document.querySelector("#include-non-git");
 const sourceCodex = document.querySelector("#source-codex");
 const sourceClaude = document.querySelector("#source-claude");
 const sourceDeepSeek = document.querySelector("#source-deepseek");
+const sourceOMP = document.querySelector("#source-omp");
+const sourceOpenCode = document.querySelector("#source-opencode");
 const setupGitStatus = document.querySelector("#setup-git-status");
 const setupGitDetail = document.querySelector("#setup-git-detail");
 const setupGitCommand = document.querySelector("#setup-git-command");
@@ -26,6 +28,10 @@ const setupClaudeStatus = document.querySelector("#setup-claude-status");
 const setupClaudeDetail = document.querySelector("#setup-claude-detail");
 const setupDeepSeekStatus = document.querySelector("#setup-deepseek-status");
 const setupDeepSeekDetail = document.querySelector("#setup-deepseek-detail");
+const setupOMPStatus = document.querySelector("#setup-omp-status");
+const setupOMPDetail = document.querySelector("#setup-omp-detail");
+const setupOpenCodeStatus = document.querySelector("#setup-opencode-status");
+const setupOpenCodeDetail = document.querySelector("#setup-opencode-detail");
 
 const translations = {
   en: {
@@ -34,13 +40,15 @@ const translations = {
     connected: "Local connection",
     connectionFailed: "Connection failed",
     heroTitle: "Keep only what changed.",
-    heroLede: "Choose a persistent directory and export Codex, Claude Code, or DeepSeek Harness sessions as Markdown.",
+    heroLede: "Choose a persistent directory and export detected agent sessions as Markdown.",
     sourcesStep: "SOURCES",
     sessionSources: "Session sources",
-    sourceToggleHint: "Detected on first open · you stay in control",
+    sourceToggleHint: "Supported sources start on · switch off any source",
     codexSourceHint: "Local Codex conversations",
     claudeSourceHint: "Local Claude Code conversations",
     deepSeekSourceHint: "Local DsH conversations",
+    ompSourceHint: "Local OMP conversations",
+    openCodeSourceHint: "Local OpenCode conversations",
     environment: "Environment",
     portableRuntime: "Portable EXE · no Go or Make needed",
     environmentHint: "Session Manager checks the local tools and session folders it uses. Nothing is installed automatically.",
@@ -57,6 +65,10 @@ const translations = {
     claudeMissing: "No Claude Code session folder found at {path}.",
     deepSeekReady: "Session folder found: {path}",
     deepSeekMissing: "No DeepSeek session folder found at {path}.",
+    ompReady: "Session folder found: {path}",
+    ompMissing: "No OMP session folder found at {path}.",
+    openCodeReady: "Session database found: {path}",
+    openCodeMissing: "No OpenCode session database found at {path}.",
     sourceUnavailable: "The session location could not be resolved.",
     exportDirectory: "Export directory",
     directoryPlaceholder: "For example, /Users/me/Documents/session-archive",
@@ -97,13 +109,15 @@ const translations = {
     connected: "本地连接",
     connectionFailed: "连接失败",
     heroTitle: "只保存这次发生的变化。",
-    heroLede: "选择一个持久目录，将本机 Codex、Claude Code 或 DeepSeek Harness sessions 导出为 Markdown。",
+    heroLede: "选择一个持久目录，将检测到的本机 agent sessions 导出为 Markdown。",
     sourcesStep: "来源",
     sessionSources: "Session 来源",
-    sourceToggleHint: "首次打开自动探测 · 随时可以关闭",
+    sourceToggleHint: "支持的来源默认开启 · 可随时关闭",
     codexSourceHint: "本机 Codex 对话",
     claudeSourceHint: "本机 Claude Code 对话",
     deepSeekSourceHint: "本机 DsH 对话",
+    ompSourceHint: "本机 OMP 对话",
+    openCodeSourceHint: "本机 OpenCode 对话",
     environment: "运行环境",
     portableRuntime: "便携 EXE · 不需要 Go 或 Make",
     environmentHint: "Session Manager 会检查所需的本地工具和 session 目录，不会自动安装或提权。",
@@ -120,6 +134,10 @@ const translations = {
     claudeMissing: "在 {path} 未找到 Claude Code session 目录。",
     deepSeekReady: "已找到 session 目录：{path}",
     deepSeekMissing: "在 {path} 未找到 DeepSeek session 目录。",
+    ompReady: "已找到 session 目录：{path}",
+    ompMissing: "在 {path} 未找到 OMP session 目录。",
+    openCodeReady: "已找到 session 数据库：{path}",
+    openCodeMissing: "在 {path} 未找到 OpenCode session 数据库。",
     sourceUnavailable: "无法确定 session 目录。",
     exportDirectory: "导出目录",
     directoryPlaceholder: "例如 /Users/me/Documents/session-archive",
@@ -226,6 +244,8 @@ function renderEnvironment() {
     renderSetupStatus(setupCodexStatus, false);
     renderSetupStatus(setupClaudeStatus, false);
     renderSetupStatus(setupDeepSeekStatus, false);
+    renderSetupStatus(setupOMPStatus, false);
+    renderSetupStatus(setupOpenCodeStatus, false);
     return;
   }
   const windows = environmentState.platform === "windows";
@@ -251,6 +271,18 @@ function renderEnvironment() {
   setupDeepSeekDetail.textContent = deepSeek.path
     ? t(deepSeek.available ? "deepSeekReady" : "deepSeekMissing", { path: deepSeek.path })
     : t("sourceUnavailable");
+
+  const omp = environmentState.omp || {};
+  renderSetupStatus(setupOMPStatus, omp.available);
+  setupOMPDetail.textContent = omp.path
+    ? t(omp.available ? "ompReady" : "ompMissing", { path: omp.path })
+    : t("sourceUnavailable");
+
+  const openCode = environmentState.opencode || {};
+  renderSetupStatus(setupOpenCodeStatus, openCode.available);
+  setupOpenCodeDetail.textContent = openCode.path
+    ? t(openCode.available ? "openCodeReady" : "openCodeMissing", { path: openCode.path })
+    : t("sourceUnavailable");
 }
 
 function currentSources() {
@@ -258,6 +290,8 @@ function currentSources() {
     codex: sourceCodex.checked,
     claude_code: sourceClaude.checked,
     deepseek: sourceDeepSeek.checked,
+    omp: sourceOMP.checked,
+    opencode: sourceOpenCode.checked,
   };
 }
 
@@ -271,15 +305,16 @@ function saveSourcePreferences() {
 
 function initializeSourcePreferences() {
   const saved = sourcePreferencesState;
-  const detected = environmentState || {};
-  sourceCodex.checked = typeof saved?.codex === "boolean" ? saved.codex : Boolean(detected.codex?.available);
-  sourceClaude.checked = typeof saved?.claude_code === "boolean" ? saved.claude_code : Boolean(detected.claude?.available);
-  sourceDeepSeek.checked = typeof saved?.deepseek === "boolean" ? saved.deepseek : Boolean(detected.deepseek?.available);
+  sourceCodex.checked = typeof saved?.codex === "boolean" ? saved.codex : true;
+  sourceClaude.checked = typeof saved?.claude_code === "boolean" ? saved.claude_code : true;
+  sourceDeepSeek.checked = typeof saved?.deepseek === "boolean" ? saved.deepseek : true;
+  sourceOMP.checked = typeof saved?.omp === "boolean" ? saved.omp : true;
+  sourceOpenCode.checked = typeof saved?.opencode === "boolean" ? saved.opencode : true;
   includeArchived.disabled = !sourceCodex.checked;
   if (saved === null) saveSourcePreferences();
 }
 
-for (const control of [sourceCodex, sourceClaude, sourceDeepSeek]) {
+for (const control of [sourceCodex, sourceClaude, sourceDeepSeek, sourceOMP, sourceOpenCode]) {
   control.addEventListener("change", () => {
     includeArchived.disabled = !sourceCodex.checked;
     saveSourcePreferences();
@@ -412,7 +447,7 @@ function sessionChange(item) {
 
   const path = document.createElement("p");
   path.className = "path";
-  path.textContent = `${item.harness || "codex"} · ${item.sessionFolder}/conversation.md`;
+  path.textContent = `${item.harness || "unknown"} · ${item.sessionFolder}/conversation.md`;
   card.append(heading, path);
 
   if ((item.attachments || 0) > 0) {

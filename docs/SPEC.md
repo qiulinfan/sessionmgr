@@ -1,15 +1,18 @@
-# Session Manager v1.0 技术规格
+# Session Manager v1.1 技术规格
 
 ## 1. 进程与命令面
 
 ```text
 sessionmgr                                      # GUI
 sessionmgr gui [--listen 127.0.0.1:0] [--no-open] [--claude-home PATH] [--deepseek-home PATH]
+               [--omp-home PATH] [--omp-session-dir PATH] [--opencode-db PATH]
 sessionmgr config set-directory [--json] PATH
 sessionmgr config show [--json]
 sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived]
                   [--include-non-git] [--directory PATH] [--codex-home PATH]
-                  [--claude-home PATH] [--deepseek-home PATH] [--json]
+                  [--claude-home PATH] [--deepseek-home PATH] [--omp-home PATH]
+                  [--omp-session-dir PATH]
+                  [--opencode-db PATH] [--sources codex,claude-code,deepseek,omp,opencode] [--json]
 sessionmgr list [--directory PATH] [--history] [--json]
 sessionmgr cleanup-internal [--directory PATH] [--codex-home PATH]
                             [--apply] [--json]
@@ -19,15 +22,19 @@ sessionmgr version
 `archive` 是 `export` 的兼容别名。`--output` 是不更新持久配置的一次性兼容 flag；
 新调用应使用会保存目录的 `--directory`。
 
-CLI 每次自动扫描 Codex、Claude Code 与 DeepSeek Harness 三个 source；任何目录不存在都视为
+CLI 默认扫描五个受支持 source；任何目录不存在都视为
 零候选而不失败。Codex home 取 `--codex-home`、`CODEX_HOME`、`~/.codex`；Claude home 取
 `--claude-home`、`CLAUDE_CONFIG_DIR`、`~/.claude`；DeepSeek home 取 `--deepseek-home`、
-`DSH_HOME`、`~/.dsh`。`export` 默认处理全部 hosted Git repositories；显式 `--repo` 时只处理
+`DSH_HOME`、`~/.dsh`。OMP home 取 `--omp-home`、`PI_CODING_AGENT_DIR`、`~/.omp/agent`；
+OMP session 目录优先取 `--omp-session-dir`、`PI_CODING_AGENT_SESSION_DIR`，否则是
+`<omp-home>/sessions`；
+OpenCode 数据库取 `--opencode-db` 或 `$XDG_DATA_HOME/opencode/opencode.db`，缺省数据根为
+`~/.local/share`（Windows 优先 `LOCALAPPDATA`）。`export` 默认处理全部 hosted Git repositories；显式 `--repo` 时只处理
 该仓库。`--include-non-git` 开启后，all scope
 也包括无法映射到 hosted remote 的可访问 CWD，显式 `--repo PATH` 也可直接指向这种目录。
 
-GUI 不使用 harness include 选项。顶部三个 peer switches 明确发送本次 `sources` selection；
-第一次打开按 home 数据目录是否存在初始化，之后保存在本机 config schema v2。三个 source 可
+GUI 不使用 harness include 选项。顶部五个 peer switches 明确发送本次 `sources` selection；
+首次打开五个均默认开启，环境面板独立报告是否发现来源，之后保存在本机 config schema v3。五个 source 可
 任意关闭或全部关闭；source selection 不隐含 Codex archived 或 non-Git inclusion。
 
 普通 discovery 只扫描 `sessions/`。`--include-archived` 或 GUI request 的
@@ -40,18 +47,20 @@ entry 不会生成 tombstone，也不会进入任何删除队列，因此已导�
 非 Git目录默认通过 `filtered_non_git` 计数排除。`--include-non-git` 或 GUI request 的
 `include_non_git: true` 才进入本机目录匹配。该选项不持久化，且不隐含 archived inclusion。
 
-## 2. 持久配置 v2
+## 2. 持久配置 v3
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "export_directory": "/absolute/path",
   "device_id": "device:0123456789abcdef0123456789abcdef",
   "device_name": "workstation",
   "sources": {
     "codex": true,
     "claude_code": true,
-    "deepseek": false
+    "deepseek": false,
+    "omp": true,
+    "opencode": true
   }
 }
 ```
@@ -67,11 +76,13 @@ entry 不会生成 tombstone，也不会进入任何删除队列，因此已导�
 4. 拒绝通过 config symlink 写入；
 5. 以用户可读写权限写入并 `fsync`。
 
-`sources` 是 GUI preference；字段省略表示从未选择，前端按环境 availability 初始化并立即
-通过 token-protected local API 保存。CLI 自动扫描三源，不读取该 GUI preference。
+`sources` 是本机 CLI/GUI 共用的用户选择；字段省略表示从未选择，GUI 首次打开把五个
+受支持来源全部设为开启并通过 token-protected local API 保存。CLI 未收到 `--sources`
+时读取保存的选择；没有保存值时也开启五源。缺少原生状态的来源返回零候选。
 
-reader 接受 legacy schema v1，并只在内存中规范化为 v2；read-only load 不改变原 bytes。下一次
-保存目录、生成缺失 device identity 或保存 source preference 时才原子写成 v2。v1 若包含
+reader 接受 legacy schema v1/v2，并只在内存中规范化为 v3；read-only load 不改变原 bytes。v2 的
+三个旧开关保留原值，新 OMP/OpenCode 开关默认开启。下一次保存目录、生成缺失 device identity
+或保存 source preference 时才原子写成 v3。v1 若包含
 `sources` 必须 fail closed。未知 config schema 或字段必须阻止写回，原文件保持可检查；未来新增
 required semantics 时增加 schema version。
 
@@ -126,7 +137,9 @@ hash 输入，绝不写入 Markdown、repository sidecar、session sidecar 或 C
 ## 4. Identity and change hashes / layout v5 / renderer v9
 
 ```text
-source_hash = sha256(raw_source_bytes)
+plain file source_hash = sha256(completed JSONL prefix bytes)
+DeepSeek Zstandard source_hash = sha256(decoded completed JSONL prefix bytes)
+OpenCode source_hash = sha256(length-framed identity/title/created/message/part rows in one read-only snapshot)
 
 Codex session_key = sha256("device-session-v1\0" + device_id + "\0" + native_session_id)
 
@@ -135,6 +148,9 @@ DeepSeek session_key = sha256("device-harness-session-v1\0" + device_id + "\0"
 
 Claude session_key = sha256("device-harness-session-v1\0" + device_id + "\0"
                             + "claude-code" + "\0" + native_session_id)
+
+OMP/OpenCode session_key = sha256("device-harness-session-v1\0" + device_id + "\0"
+                                  + harness_id + "\0" + native_session_id)
 
 document_hash = sha256(rendered_conversation_md_bytes)
 ```
@@ -172,6 +188,10 @@ Claude session 使用
 标题，因此 `<variant>` 固定取 harness-qualified session key digest 的前 8 hex。它是 Claude
 特有的 deterministic collision discriminator；真实短 digest collision 仍由 hidden identity
 校验拒绝，不允许覆盖。Codex/DeepSeek 路径不增加该后缀。
+
+OMP/OpenCode session 使用 `<harness>--<created-time>--<session-title>--<variant>`；
+`<variant>` 同样取 harness-qualified session key digest 的前 8 hex，避免同名同秒的
+不同原生会话争用一个可见目录。旧 Codex、DeepSeek、Claude 路径不变。
 
 可见路径只承担语义：导出根目录下不存在 `repositories/` wrapper，hosted repository 与
 device 之间也不存在 `sessions/` wrapper；local-directory repository 的 device 已在
@@ -214,7 +234,7 @@ content hash；不保存绝对本机路径、data URL 或带 credential/query �
 renderer v2 不修改或删除任何既有 v1 文件。
 
 session metadata schema v1 只允许省略 `harness`，并严格解释为 `codex`，按既有 key 算法
-验证。schema v2 必须声明 `codex`、`claude-code` 或 `deepseek`，并按对应算法验证。读取旧 v1 sidecar 不会
+验证。schema v2 必须声明五个受支持 harness 之一，并按对应算法验证。读取旧 v1 sidecar 不会
 立即写回；只有该 source 再次安全发布时才以 sidecar-last 顺序升级为 v2。
 
 ## 6. Codex parsing
@@ -250,6 +270,9 @@ assistant 优先使用 `response_item.message(role=assistant)`，完全没有 re
 按 JSONL record 顺序合并。旧 JSONL 完全没有 user event 时兼容 response user message，
 但完整匹配已知注入 envelope 的 response 被排除。完全没有 canonical user message 的
 context-only source 不发布 repository/session 文档，不计为失败；raw source 仍保持只读。
+新 JSONL 有 `event_msg.task_started` / `task_complete` 时，以最后一个 `task_complete`
+作为可发布边界；其后的 user、assistant 和工具记录留待当前轮完成。只有 `task_started`
+而没有一次 `task_complete` 的 source 记 `busy`。没有这组标记的旧 source 保留既有兼容解析。
 标题在 normalization 与 internal classification 之后生成：顶层 session 的最新 index title
 优先，否则使用第一条净化后的真实 user message。internal session 不通过解析父 transcript
 伪造“真实标题”。
@@ -280,8 +303,12 @@ Zstandard frame 的顺序拼接，解压后的逻辑内容按 frame 顺序连接
 
 每个 Zstandard frame 必须有标准 magic、合法 header/block layout 与 content checksum。
 decoder 必须验证 checksum、支持 concatenated frames、限制并发为 1，并将解压后 session
-限制为 512 MiB。截断 frame/header/block/checksum 或完整 frame 后的半条 JSONL 归为
-`busy`；非法 magic、reserved bits、无 checksum、checksum mismatch 或解码错误归为 skipped。
+限制为 512 MiB。截断 frame/header/block/checksum 归为 `busy`；完整 frame 内的半条
+JSONL 若已有可验证的上轮完成边界，则舍弃该半行并导出前缀，否则归为 `busy`；非法 magic、
+reserved bits、无 checksum、checksum mismatch 或解码错误归为 skipped。
+出现 `turn/start` / `turn/end` 时，只有最后一个 `turn/end` 及以前的完整事件可发布；
+后续流式文本、工具事件和半条 JSONL 不进入本次导出。完整压缩 frame 内的未完成轮次
+使用解压后完成前缀计算稳定 source hash；截断压缩 frame 仍记 `busy`。
 
 第一条 JSONL record 必须是：
 
@@ -325,6 +352,9 @@ source hash 始终对压缩/原始文件 bytes 计算，而不是对解压结果
 home 的 transcript discovery 只枚举 `<CLAUDE_HOME>/projects/*/*.jsonl` regular files，不递归
 进入 project 子目录。`<session>/subagents/`、`tool-results/`、project `memory/`、全局
 `sessions/`、`history.jsonl`、file-history、cache、settings、auth 与 session-env 都不读取。
+`teleported-from` 与已知 web/cloud/mobile entrypoint 表示云端来源；
+即使该 JSONL 已复制进 `projects`，也标记 `filtered_internal`。本地 Remote Control 会话
+仍按其本机 transcript 处理。
 官方声明 transcript entry schema 是可随任何 Claude Code release 改变的内部格式，因此该
 adapter 是 shape-validated、fail-closed 的只读兼容层，而不是稳定 native schema 声明。
 
@@ -344,6 +374,11 @@ filename identity。读取器：
 5. ancestry 反转为根到 anchor 的渲染顺序，不按 timestamp 排序；去重 UUID node 数减去 selected
    UUID 数计入 `alternate_branch_records`；
 6. selected ancestry 的 `isSidechain=true` 或非空 `agentId` 才计入 `filtered_internal`。
+
+selected ancestry 若出现原生 `message.stop_reason`，只导出到最后一个 `end_turn` 或
+`stop_sequence` assistant record。之后的 user、`tool_use` 和工具反馈属于正在运行的轮次；
+当前分支没有已结束轮次则记 `busy`，不借用其他分支的答案。旧 transcript 完全没有
+`stop_reason` 时保留既有解析行为。当前轮的原生记录保持原样留待下次导出。
 
 conversation projection：
 
@@ -426,15 +461,16 @@ discovery 完成后，对所有候选文件执行一次批量观察：
 3. 再次记录 fingerprint；变化或消失的 source 记为 `busy`；
 4. 打开稳定文件，并确认 handle identity 与观察对象相同；
 5. 读取后同时检查 handle 与 pathname fingerprint；
-6. 验证最后一个非空 JSONL record 是完整 JSON；DeepSeek compressed source 还按 6.1
-   验证 frame、checksum 与解压上限；
-7. 任一步出现 source mutation、replacement、OS sharing/lock violation 或 incomplete
-   tail 时记为 `busy`，不解析和发布。
+6. 解析完整 JSONL records；DeepSeek compressed source 还按 6.1 验证 frame、checksum 与
+   解压上限。只有最后一行未写完且已存在原生完成边界时，允许舍弃该半行并取上一轮；
+7. source mutation、replacement、OS sharing/lock violation，以及没有可确认的已完成
+   turn 时记为 `busy`；换行结束的损坏 record 仍作为解析错误处理。
 
 该算法不主动申请文件锁。Unix advisory lock 不是可靠 liveness signal；Windows
 sharing/lock violation 会显式映射为 `busy`。permission 和其他 I/O 错误仍是 `skipped`。
 `busy` 不加入 warnings，也不使命令失败；human output 仍只显示 changeset，JSON result
-增加 `busy` counter。
+增加 `busy` counter。稳定读取的运行中 source 可以发布已完成前缀；前缀之外的写入
+不会改变该前缀的 source hash。
 
 ## 8. Incremental changeset
 
@@ -552,16 +588,17 @@ server，前端把它放入 `X-Sessionmgr-Token` header。所有 `/api/*` 请求
 
 API：
 
-- `GET /api/state`：当前持久目录，以及只读的 `environment`：运行平台、Git 可用性、Codex、
-  Claude Code、DeepSeek Harness home path 与各自 `sessions/`/`projects/` 目录是否存在；
+- `GET /api/state`：当前持久目录，以及只读的 `environment`：运行平台、Git 可用性、五种
+  harness 对应的 session 目录或 OpenCode 数据库是否存在；
 - `PUT /api/config`：验证并保存目录；
 - `POST /api/pick-directory`：调用平台目录对话框；
 - `POST /api/export`：接受 `directory`、all/current `scope`、布尔值 `include_archived` 与
-  `include_non_git`，以及 `sources.codex`、`sources.claude_code`、`sources.deepseek`。source
+  `include_non_git`，以及 `sources.codex`、`sources.claude_code`、`sources.deepseek`、
+  `sources.omp`、`sources.opencode`。source
   selection 可全部 false；省略 `sources` 的旧客户端按当前环境自动探测，bundled GUI 总是显式发送。
 
-前端最上方在 Environment 之前显示三个同级 switch。`/api/state.source_preferences` 为空时，
-各 switch 以 environment availability 初始化并立即 `PUT /api/sources`；之后 reload 或随机端口
+前端最上方在 Environment 之前显示五个同级 switch。`/api/state.source_preferences` 为空时，
+所有 switch 均初始化为开启并立即 `PUT /api/sources`；之后 reload 或随机端口
 重启使用 config 中的用户值，即使 source 后来缺失也不悄悄改回。写请求串行，避免快速拨动乱序。
 Codex switch 关闭时 archived checkbox disabled；请求中的 archived
 值不启用已关闭 source。前端首次加载使用 English；用户可切换 English/中文，选择只保存在浏览器本地，不改变
@@ -570,7 +607,7 @@ Codex switch 关闭时 archived checkbox disabled；请求中的 archived
 源码构建依赖分开：EXE 不需要 Go 或 Make；Git 用于 repository detection。panel 在 Windows
 缺少 Git 时显示 `winget install --id Git.Git -e --source winget` 和 Git 官方安装页，但不自动
 执行命令、提权或修改 PATH；安装后用户关闭并重新打开 Session Manager 触发重新检测。
-Codex、Claude 与 DeepSeek 行分别显示当前解析后的 home path 及数据目录是否存在。hosted Git changeset 在客户端按 `repository_key`
+五个 harness 行分别显示当前解析后的 session path 或数据库路径及其是否存在。hosted Git changeset 在客户端按 `repository_key`
 和 `device_name` 分成两级原生 `<details>` 目录树；repository/device summary 可独立展开，
 session 变化作为对应 device 的叶节点显示。local-directory change 仍按 `repository_key`
 聚合，但 `(non-git)<device>/<directory>` repository 根已经表达 device scope，因此 session
@@ -591,7 +628,8 @@ raised surface `#21262d`、border `#30363d`、正文 `#f0f6fc`，操作强调色
 | 选择目录 | `osascript` | Zenity，回退 KDialog/手填 | PowerShell FolderBrowserDialog |
 | 配置目录 | Application Support | XDG config | AppData |
 
-核心依赖 Go standard library、固定版本的纯 Go `github.com/klauspost/compress/zstd` 与运行时
+核心依赖 Go standard library、固定版本的纯 Go `github.com/klauspost/compress/zstd`、
+`modernc.org/sqlite` 与运行时
 Git。`make cross-check` 编译 darwin/arm64、linux/amd64、windows/amd64；`make dist` 额外
 产出三系统 AMD64/ARM64 binaries，均必须保持 `CGO_ENABLED=0` 可构建。源码构建要求调用者
 在 `PATH` 中提供 Go 1.24+；仓库不下载或维护私有 Go toolchain。
@@ -714,3 +752,41 @@ v1.0.2 将 renderer 升为 v9，明确标记 fragment/ancestry 投影变更；�
 连续 Codex source bundle hash 作为 logical session source hash；已有由单 fragment 发布的
 document 会在所有权/hash 验证后更新一次。Claude filename identity 不变；同 filename、不同
 project 的 non-identical visible transcripts 现在 fail closed，而 bridge-only copies 静默忽略。
+
+## 13. v1.1.0 OMP 与 OpenCode 来源
+
+OMP 只扫描解析后的 session 目录中的 `**/*.jsonl` regular files，拒绝 symlink。默认 agent home
+是 `~/.omp/agent`，可由 `PI_CODING_AGENT_DIR` 或 `--omp-home` 覆盖；独立会话目录可由
+`PI_CODING_AGENT_SESSION_DIR` 或 `--omp-session-dir` 覆盖。adapter 只承诺 OMP
+session header v3：允许前置 256-byte `title` 槽，验证 header ID、timestamp、绝对 CWD、
+record ID/parent 与 JSONL 完整性。选择最后 append entry 的 parent 链作为当前分支；其他分支
+的 message 数量由 `alternate_branch_records` 报告，不进入正文。若当前分支含原生
+`stopReason`，只保留最近一个 `stop` assistant record 及以前的分支；`toolUse`、
+`error`、`aborted`、`length` 与新 user 仍属未完成轮次。正文只取 user/assistant
+text；thinking、tool result、custom 状态、`credential_pin` 与 `session_init` 不渲染。
+assistant 的 `toolCall` 只计数。`blob:sha256:` image reference 只从已选分支解析到该 agent
+home 的 blob store，继续经过 50 MiB、hash、敏感内容与 owned-file 附件校验；其他图像引用
+保留为未归档引用。未知 header version 或不完整 parent 链 fail closed。
+
+OpenCode 默认只读 `$XDG_DATA_HOME/opencode/opencode.db`（默认数据根 `~/.local/share`）；
+Windows 优先 `LOCALAPPDATA`，`--opencode-db` 可覆盖。SQLite 必须以 `mode=ro` 打开，
+在一个 read-only transaction 中读取 `session`、`message`、`part` 三表。会话的
+`source_hash` 是 session identity/title/created time、已完成的 message rows 与 part rows 按稳定顺序写入
+length-framed SHA-256 的结果；数据库本体、WAL、认证及 share tables 不复制到归档。
+`session.time_updated` 不入 hash，因为新一轮运行时它会变化。`LastEventAt` 取最后一个
+已完成 message 的更新时间。只读事务中的当前 user、缺少 `time.completed` 的 assistant，
+或以 `finish=tool-calls` 结束且仍需工具后续的 assistant 都不作为轮次终点；有上轮已完成
+内容时同时增加 `busy` 计数并发布稳定前缀，没有时只计 `busy`。
+`session.parent_id` 指向子会话时作为 internal source 排除。正文只渲染 user/assistant 的
+text parts，tool parts 只计数，reasoning、tool output 和 step bookkeeping 不渲染；file parts
+只对 data URL 进入原有附件安全流程。原生目录已消失
+且没有可验证 hosted remote 的会话继续按现有 workspace 规则 skipped，不从 project slug
+反推路径。
+
+五个 harness 在 CLI 与 GUI 中并列。未保存偏好时均默认开启；CLI `--sources` 可选择明确子集。
+config schema v3 对 v2 的旧三个开关保留原值，并将新 OMP/OpenCode 开关设为开启。旧 schema
+只在内存中迁移；下一次配置写入才保存 v3。repository/attachment/session sidecar schema、
+layout v5、renderer v9 与 export-result schema v3 均不变；schema-v2 sidecar 的 harness enum
+扩展为 `omp` 与 `opencode`。两者使用 harness-qualified session key，并在语义目录中增加
+8-hex variant；历史 Codex key 和缺省 harness sidecar 的 Codex 解释仅用于旧归档兼容，
+不参与新来源选择。旧版 reader 对未知 required harness fail closed。

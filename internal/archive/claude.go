@@ -35,16 +35,18 @@ type claudeRecord struct {
 	Message                 json.RawMessage `json:"message"`
 	AITitle                 string          `json:"aiTitle"`
 	AgentName               string          `json:"agentName"`
+	Entrypoint              string          `json:"entrypoint"`
 	Origin                  struct {
 		Kind string `json:"kind"`
 	} `json:"origin"`
 }
 
 type claudeMessage struct {
-	ID      string          `json:"id"`
-	Role    string          `json:"role"`
-	Model   string          `json:"model"`
-	Content json.RawMessage `json:"content"`
+	ID         string          `json:"id"`
+	Role       string          `json:"role"`
+	Model      string          `json:"model"`
+	StopReason string          `json:"stop_reason"`
+	Content    json.RawMessage `json:"content"`
 }
 
 type claudeContentBlock struct {
@@ -59,10 +61,12 @@ type claudeContentBlock struct {
 }
 
 type claudeNode struct {
-	record    claudeRecord
-	message   claudeMessage
-	timestamp time.Time
-	order     int
+	record      claudeRecord
+	message     claudeMessage
+	timestamp   time.Time
+	order       int
+	startOffset int
+	endOffset   int
 }
 
 type claudeAssistantGroup struct {
@@ -125,8 +129,11 @@ func discoverClaudeSessionFiles(home string) ([]string, error) {
 }
 
 func parseClaudeSession(raw []byte, fallbackID string) (Session, error) {
-	if !completeJSONL(raw) {
-		return Session{}, fmt.Errorf("%w: Claude Code source ends with an incomplete JSONL record", errSourceBusy)
+	var partial bool
+	var prefixErr error
+	raw, partial, prefixErr = completeRecordPrefix(raw)
+	if prefixErr != nil {
+		return Session{}, prefixErr
 	}
 	result := Session{
 		ID:         strings.TrimSpace(fallbackID),
@@ -143,9 +150,11 @@ func parseClaudeSession(raw []byte, fallbackID string) (Session, error) {
 	var anchor *claudeNode
 	explicitTitle := ""
 	generatedTitle := ""
+	anyStopReason := false
 	remaining := raw
 	order := 0
 	for len(remaining) > 0 {
+		startOffset := len(raw) - len(remaining)
 		line, rest, found := bytes.Cut(remaining, []byte{'\n'})
 		if found {
 			remaining = rest
@@ -162,6 +171,12 @@ func parseClaudeSession(raw []byte, fallbackID string) (Session, error) {
 		if err := json.Unmarshal(line, &record); err != nil {
 			return Session{}, fmt.Errorf("parse Claude Code session %q record %d: %w", result.ID, order, err)
 		}
+		if record.Type == "teleported-from" ||
+			record.Entrypoint == "claude-code-web" || record.Entrypoint == "web" ||
+			record.Entrypoint == "cloud" || record.Entrypoint == "mobile" {
+			result.ExcludeReason = "cloud"
+			return result, nil
+		}
 		// Claude Code forks copy their ancestor records into the new transcript.
 		// The filename identifies the current physical session; a different record
 		// sessionId is permitted only as ancestry, never as a replacement identity.
@@ -177,11 +192,14 @@ func parseClaudeSession(raw []byte, fallbackID string) (Session, error) {
 		if record.UUID == "" {
 			continue
 		}
-		node := &claudeNode{record: record, order: order}
+		node := &claudeNode{record: record, order: order, startOffset: startOffset, endOffset: len(raw) - len(remaining)}
 		node.timestamp = parseTimestamp(record.Timestamp)
 		if rawJSONPresent(record.Message) {
 			if err := json.Unmarshal(record.Message, &node.message); err != nil {
 				return Session{}, fmt.Errorf("parse Claude Code session %q message record %d: %w", result.ID, order, err)
+			}
+			if record.Type == "assistant" && node.message.StopReason != "" {
+				anyStopReason = true
 			}
 		}
 		occurrences[record.UUID] = append(occurrences[record.UUID], node)
@@ -193,6 +211,9 @@ func parseClaudeSession(raw []byte, fallbackID string) (Session, error) {
 	// copy. It is not a user conversation and must not turn an otherwise useful
 	// export into a partial failure.
 	if anchor == nil {
+		if partial {
+			return Session{}, fmt.Errorf("%w: Claude Code source ends with an incomplete JSONL record", errSourceBusy)
+		}
 		return result, nil
 	}
 
@@ -221,6 +242,40 @@ func parseClaudeSession(raw []byte, fallbackID string) (Session, error) {
 	}
 	for left, right := 0, len(chain)-1; left < right; left, right = left+1, right-1 {
 		chain[left], chain[right] = chain[right], chain[left]
+	}
+	lastTerminal := -1
+	markerSeen := anyStopReason
+	for index, node := range chain {
+		if node.record.Type != "assistant" || node.message.StopReason == "" {
+			continue
+		}
+		markerSeen = true
+		if node.message.StopReason == "end_turn" || node.message.StopReason == "stop_sequence" {
+			lastTerminal = index
+		}
+	}
+	activeStart := -1
+	for index := lastTerminal + 1; index < len(chain); index++ {
+		node := chain[index]
+		if node.record.Type == "assistant" || (node.record.Type == "user" &&
+			!rawJSONPresent(node.record.ToolUseResult) && node.record.SourceToolAssistantUUID == "" &&
+			!node.record.IsMeta && node.record.Origin.Kind != "task-notification" && node.record.PromptSource != "system") {
+			activeStart = node.startOffset
+			break
+		}
+	}
+	if partial || (markerSeen && activeStart >= 0) {
+		if lastTerminal < 0 {
+			return Session{}, fmt.Errorf("%w: Claude Code session has no completed turn", errSourceBusy)
+		}
+		cutoff := len(raw)
+		if activeStart >= 0 {
+			cutoff = activeStart
+			if cutoff < chain[lastTerminal].endOffset {
+				return Session{}, fmt.Errorf("%w: Claude Code completion boundary is out of order", errSourceBusy)
+			}
+		}
+		return parseClaudeSession(raw[:cutoff], fallbackID)
 	}
 	selectedUUIDs := make(map[string]bool, len(chain))
 	for _, node := range chain {

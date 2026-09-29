@@ -14,14 +14,17 @@ import (
 )
 
 const (
-	SchemaVersion       = 2
-	legacySchemaVersion = 1
+	SchemaVersion         = 3
+	previousSchemaVersion = 2
+	legacySchemaVersion   = 1
 )
 
 type SourcePreferences struct {
 	Codex      bool `json:"codex"`
 	ClaudeCode bool `json:"claude_code"`
 	DeepSeek   bool `json:"deepseek"`
+	OMP        bool `json:"omp"`
+	OpenCode   bool `json:"opencode"`
 }
 
 type Config struct {
@@ -65,12 +68,21 @@ func (store Store) Load() (Config, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Config{}, fmt.Errorf("parse config %s: unexpected trailing data", store.Path)
 	}
-	if result.SchemaVersion != SchemaVersion && result.SchemaVersion != legacySchemaVersion {
+	if result.SchemaVersion != SchemaVersion && result.SchemaVersion != previousSchemaVersion && result.SchemaVersion != legacySchemaVersion {
 		return Config{}, fmt.Errorf("unsupported config schema %d", result.SchemaVersion)
 	}
 	if result.SchemaVersion == legacySchemaVersion {
 		if result.SourcePreferences != nil {
 			return Config{}, fmt.Errorf("legacy config declares source preferences")
+		}
+		result.SchemaVersion = SchemaVersion
+	}
+	if result.SchemaVersion == previousSchemaVersion {
+		// v2 knew only three sources. Preserve those choices and enable newly
+		// supported sources until the user explicitly changes them.
+		if result.SourcePreferences != nil {
+			result.SourcePreferences.OMP = true
+			result.SourcePreferences.OpenCode = true
 		}
 		result.SchemaVersion = SchemaVersion
 	}
@@ -118,6 +130,7 @@ func (store Store) SetSourcePreferences(preferences SourcePreferences) (Config, 
 	current.SchemaVersion = SchemaVersion
 	current.SourcePreferences = &SourcePreferences{
 		Codex: preferences.Codex, ClaudeCode: preferences.ClaudeCode, DeepSeek: preferences.DeepSeek,
+		OMP: preferences.OMP, OpenCode: preferences.OpenCode,
 	}
 	if err := store.save(current); err != nil {
 		return Config{}, err

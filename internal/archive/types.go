@@ -12,25 +12,29 @@ const (
 	MaxAttachmentBytes        = int64(50 * 1024 * 1024)
 )
 
-// SourceSelection identifies the native harnesses selected for one export.
-// A nil *SourceSelection in Options retains the historical library default of
-// Codex plus the deprecated IncludeDeepSeek field. Product entrypoints always
-// pass an explicit selection so a missing native state directory is optional.
+// SourceSelection identifies the supported native harnesses selected for one
+// export. A nil selection enables every supported source; missing native state
+// is optional and contributes no sessions.
 type SourceSelection struct {
 	Codex      bool
 	ClaudeCode bool
 	DeepSeek   bool
+	OMP        bool
+	OpenCode   bool
 }
 
 type Options struct {
-	CodexHome    string
-	ClaudeHome   string
-	DeepSeekHome string
-	Output       string
-	Repo         string
-	AllRepos     bool
-	SessionID    string
-	Sources      *SourceSelection
+	CodexHome     string
+	ClaudeHome    string
+	DeepSeekHome  string
+	OMPHome       string
+	OMPSessionDir string
+	OpenCodeDB    string
+	Output        string
+	Repo          string
+	AllRepos      bool
+	SessionID     string
+	Sources       *SourceSelection
 
 	// IncludeArchived adds Codex archived_sessions/ to discovery. Ordinary
 	// exports inspect only active sessions/ so users can archive a conversation

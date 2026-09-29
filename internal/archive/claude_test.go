@@ -429,6 +429,104 @@ func TestClaudeSemanticDirectoriesDisambiguateForkedSessions(t *testing.T) {
 	}
 }
 
+func TestClaudeCloudOriginIsExcludedEvenWhenTranscriptIsLocal(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "work")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(root, "claude")
+	const id = "cloud-collision"
+	local := claudeUserRecord(id, "local-u", "", "2026-09-29T01:00:00Z", workspace, []any{map[string]any{"type": "text", "text": "local request"}})
+	localAnswer := claudeAssistantRecord(id, "local-a", "local-u", "local-message", "2026-09-29T01:00:01Z", workspace, []any{map[string]any{"type": "text", "text": "local answer"}})
+	localAnswer["message"].(map[string]any)["stop_reason"] = "end_turn"
+	cloud := claudeUserRecord(id, "cloud-u", "", "2026-09-29T01:00:00Z", workspace, []any{map[string]any{"type": "text", "text": "cloud request"}})
+	cloudAnswer := claudeAssistantRecord(id, "cloud-a", "cloud-u", "cloud-message", "2026-09-29T01:00:01Z", workspace, []any{map[string]any{"type": "text", "text": "cloud answer"}})
+	cloudAnswer["message"].(map[string]any)["stop_reason"] = "end_turn"
+	for project, records := range map[string][]map[string]any{
+		"local": {local, localAnswer},
+		"cloud": {{"type": "teleported-from", "remoteSessionId": "session_remote"}, cloud, cloudAnswer},
+	} {
+		path := filepath.Join(home, "projects", project, id+".jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, marshalClaudeRecords(t, records), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := Export(context.Background(), Options{
+		ClaudeHome: home, Output: filepath.Join(root, "archive"), AllRepos: true, IncludeNonGit: true,
+		Sources: &SourceSelection{ClaudeCode: true}, DeviceID: "device:test", DeviceName: "test", StabilityWindow: -1,
+	})
+	if err != nil || result.Created != 1 || result.FilteredInternal != 1 || len(result.Changes) != 1 {
+		t.Fatalf("cloud transcript was exported or local transcript was lost: %+v / %v", result, err)
+	}
+	document, err := os.ReadFile(result.Changes[0].Path)
+	if err != nil || !bytes.Contains(document, []byte("local answer")) || bytes.Contains(document, []byte("cloud answer")) {
+		t.Fatalf("wrong Claude source was rendered: %v", err)
+	}
+}
+
+func TestClaudeLocalRemoteControlAndCloudEntrypoint(t *testing.T) {
+	const id = "remote-control-local"
+	cwd := t.TempDir()
+	user := claudeUserRecord(id, "u", "", "2026-09-29T01:00:00Z", cwd, []any{map[string]any{"type": "text", "text": "local request"}})
+	user["entrypoint"] = "cli"
+	user["remoteSessionId"] = "remote-control-id"
+	answer := claudeAssistantRecord(id, "a", "u", "m", "2026-09-29T01:00:01Z", cwd, []any{map[string]any{"type": "text", "text": "local answer"}})
+	answer["message"].(map[string]any)["stop_reason"] = "end_turn"
+	local, err := parseClaudeSession(marshalClaudeRecords(t, []map[string]any{user, answer}), id)
+	if err != nil || local.ExcludeReason != "" || local.UserMessages != 1 {
+		t.Fatalf("local Remote Control transcript was excluded: %+v / %v", local, err)
+	}
+	user["entrypoint"] = "cloud"
+	cloud, err := parseClaudeSession(marshalClaudeRecords(t, []map[string]any{user, answer}), id)
+	if err != nil || cloud.ExcludeReason != "cloud" {
+		t.Fatalf("cloud entrypoint was not excluded: %+v / %v", cloud, err)
+	}
+}
+
+func TestClaudeCloudMarkerSkipsUnsupportedCloudMessageShape(t *testing.T) {
+	const id = "cloud-shape"
+	session, err := parseClaudeSession(marshalClaudeRecords(t, []map[string]any{
+		{"type": "teleported-from", "remoteSessionId": "session_cloud"},
+		{"type": "assistant", "sessionId": id, "uuid": "a", "message": 42},
+	}), id)
+	if err != nil || session.ExcludeReason != "cloud" || len(session.Messages) != 0 {
+		t.Fatalf("cloud transcript was parsed as a local conversation: %+v / %v", session, err)
+	}
+}
+
+func TestClaudeRunningTurnExportsPreviousCompletedTurn(t *testing.T) {
+	const id = "running-claude"
+	cwd := t.TempDir()
+	u1 := claudeUserRecord(id, "u1", "", "2026-09-29T01:00:00Z", cwd, []any{map[string]any{"type": "text", "text": "first question"}})
+	a1 := claudeAssistantRecord(id, "a1", "u1", "m1", "2026-09-29T01:00:01Z", cwd, []any{map[string]any{"type": "text", "text": "first answer"}})
+	a1["message"].(map[string]any)["stop_reason"] = "end_turn"
+	title := map[string]any{"type": "ai-title", "sessionId": id, "aiTitle": "Saved title"}
+	u2 := claudeUserRecord(id, "u2", "a1", "2026-09-29T01:00:02Z", cwd, []any{map[string]any{"type": "text", "text": "current question"}})
+	a2 := claudeAssistantRecord(id, "a2", "u2", "m2", "2026-09-29T01:00:03Z", cwd, []any{map[string]any{"type": "text", "text": "partial answer"}})
+	a2["message"].(map[string]any)["stop_reason"] = "tool_use"
+	previous := marshalClaudeRecords(t, []map[string]any{u1, a1, title})
+	for _, raw := range [][]byte{
+		marshalClaudeRecords(t, []map[string]any{u1, a1, title, u2}),
+		marshalClaudeRecords(t, []map[string]any{u1, a1, title, u2, a2}),
+		append(marshalClaudeRecords(t, []map[string]any{u1, a1, title, u2, a2}), []byte(`{"type":"assistant"`)...),
+	} {
+		session, err := parseClaudeSession(raw, id)
+		if err != nil || session.UserMessages != 1 || session.AssistantMessages != 1 ||
+			session.RawHash != digestBytes(previous) || len(session.Messages) != 2 || session.Messages[1].Text != "first answer" {
+			t.Fatalf("running Claude turn was included: %+v / %v", session, err)
+		}
+	}
+	a2["message"].(map[string]any)["stop_reason"] = "end_turn"
+	finished, err := parseClaudeSession(marshalClaudeRecords(t, []map[string]any{u1, a1, title, u2, a2}), id)
+	if err != nil || finished.UserMessages != 2 || finished.AssistantMessages != 2 {
+		t.Fatalf("completed Claude turn did not appear: %+v / %v", finished, err)
+	}
+}
+
 func claudeUserRecord(id, uuid, parent, timestamp, cwd string, content []any) map[string]any {
 	return map[string]any{
 		"type": "user", "uuid": uuid, "parentUuid": nullableParent(parent), "sessionId": id,

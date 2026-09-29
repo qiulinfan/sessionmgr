@@ -62,6 +62,26 @@ func TestStoreMigratesLegacyConfigAndPersistsSourcePreferences(t *testing.T) {
 	}
 }
 
+func TestStoreMigratesThreeSourcePreferencesWithoutChangingUserChoices(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	original := []byte(`{"schema_version":2,"export_directory":"/archive","sources":{"codex":false,"claude_code":true,"deepseek":false}}` + "\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := Store{Path: path}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := SourcePreferences{Codex: false, ClaudeCode: true, DeepSeek: false, OMP: true, OpenCode: true}
+	if loaded.SchemaVersion != SchemaVersion || loaded.SourcePreferences == nil || !reflect.DeepEqual(*loaded.SourcePreferences, want) {
+		t.Fatalf("v2 choices or new defaults were lost: %+v", loaded)
+	}
+	if after, err := os.ReadFile(path); err != nil || !bytes.Equal(after, original) {
+		t.Fatalf("migration read changed saved config: %q / %v", after, err)
+	}
+}
+
 func TestResolveDirectoryRequiresConfiguration(t *testing.T) {
 	store := Store{Path: filepath.Join(t.TempDir(), "missing.json")}
 	if _, err := store.ResolveDirectory("", false); err == nil {

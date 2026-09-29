@@ -272,6 +272,11 @@ func sourceErrorIsBusy(err error) bool {
 }
 
 func parseSession(raw []byte, fallbackID string, titles map[string]titleRecord) (Session, error) {
+	var prefixErr error
+	raw, prefixErr = completedNativePrefix(harnessCodex, raw)
+	if prefixErr != nil {
+		return Session{}, prefixErr
+	}
 	result := Session{Harness: harnessCodex, RawHash: digestBytes(raw)}
 	var responseUsers, responseAssistants, eventUsers, eventAssistants []orderedMessage
 	filteredUserInput := 0

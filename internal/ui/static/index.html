@@ -12,7 +12,7 @@
         <div>
           <p class="eyebrow">AGENT SESSION ARCHIVE</p>
           <h1 data-i18n="heroTitle">Keep only what changed.</h1>
-          <p class="lede" data-i18n="heroLede">Choose a persistent directory and export Codex, Claude Code, or DeepSeek Harness sessions as Markdown.</p>
+          <p class="lede" data-i18n="heroLede">Choose a persistent directory and export detected agent sessions as Markdown.</p>
         </div>
         <div class="hero-tools">
           <label class="language-picker">
@@ -32,7 +32,7 @@
             <p class="step" data-i18n="sourcesStep">SOURCES</p>
             <h2 data-i18n="sessionSources">Session sources</h2>
           </div>
-          <span class="muted" data-i18n="sourceToggleHint">Detected on first open · you stay in control</span>
+          <span class="muted" data-i18n="sourceToggleHint">Supported sources start on · switch off any source</span>
         </div>
         <div class="source-switches">
           <label class="source-switch">
@@ -48,6 +48,16 @@
           <label class="source-switch">
             <span><strong>DeepSeek Harness</strong><small data-i18n="deepSeekSourceHint">Local DsH conversations</small></span>
             <input id="source-deepseek" type="checkbox" role="switch" aria-label="DeepSeek Harness" />
+            <span class="switch-track" aria-hidden="true"><span></span></span>
+          </label>
+          <label class="source-switch">
+            <span><strong>Oh My Pi</strong><small data-i18n="ompSourceHint">Local OMP conversations</small></span>
+            <input id="source-omp" type="checkbox" role="switch" aria-label="Oh My Pi" />
+            <span class="switch-track" aria-hidden="true"><span></span></span>
+          </label>
+          <label class="source-switch">
+            <span><strong>OpenCode</strong><small data-i18n="openCodeSourceHint">Local OpenCode conversations</small></span>
+            <input id="source-opencode" type="checkbox" role="switch" aria-label="OpenCode" />
             <span class="switch-track" aria-hidden="true"><span></span></span>
           </label>
         </div>
@@ -92,6 +102,20 @@
               <span id="setup-deepseek-status" class="setup-status pending" data-i18n="checking">Checking…</span>
             </div>
             <p id="setup-deepseek-detail" class="setup-detail"></p>
+          </div>
+          <div class="setup-item">
+            <div class="setup-line">
+              <strong>Oh My Pi</strong>
+              <span id="setup-omp-status" class="setup-status pending" data-i18n="checking">Checking…</span>
+            </div>
+            <p id="setup-omp-detail" class="setup-detail"></p>
+          </div>
+          <div class="setup-item">
+            <div class="setup-line">
+              <strong>OpenCode</strong>
+              <span id="setup-opencode-status" class="setup-status pending" data-i18n="checking">Checking…</span>
+            </div>
+            <p id="setup-opencode-detail" class="setup-detail"></p>
           </div>
         </div>
       </section>

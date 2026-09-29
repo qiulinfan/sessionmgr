@@ -179,13 +179,14 @@ func TestDeepSeekExportIsOptInIdempotentAndListable(t *testing.T) {
 
 	withoutDeepSeek := opts
 	withoutDeepSeek.IncludeDeepSeek = false
+	withoutDeepSeek.Sources = &SourceSelection{Codex: true}
 	withoutDeepSeek.Output = filepath.Join(root, "codex-only")
 	result, err := Export(context.Background(), withoutDeepSeek)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Sources != 0 || result.Created != 0 {
-		t.Fatalf("DeepSeek was not opt-in: %#v", result)
+		t.Fatalf("explicit source selection included DeepSeek: %#v", result)
 	}
 
 	first, err := Export(context.Background(), opts)
@@ -354,6 +355,53 @@ func deepSeekTestEvent(seq int, at time.Time, eventType string, data map[string]
 		result["surfaceOp"] = surface
 	}
 	return result
+}
+
+func TestDeepSeekRunningTurnKeepsPreviousTurnEnd(t *testing.T) {
+	created := time.Date(2026, 9, 29, 1, 0, 0, 0, time.UTC)
+	cwd := t.TempDir()
+	user := func(seq int, text string) map[string]any {
+		return deepSeekTestEvent(seq, created.Add(time.Duration(seq+1)*time.Second), "user/message", map[string]any{
+			"role": "user", "source": map[string]any{"kind": "user"}, "content": []any{map[string]any{"type": "text", "text": text}},
+		}, "append")
+	}
+	assistant := func(seq int, text string) map[string]any {
+		return deepSeekTestEvent(seq, created.Add(time.Duration(seq+1)*time.Second), "assistant/message", map[string]any{
+			"message": map[string]any{"role": "assistant", "source": map[string]any{"kind": "model"}, "content": []any{map[string]any{"type": "text", "text": text}}},
+		}, "append")
+	}
+	previous := []map[string]any{
+		deepSeekTestEvent(0, created.Add(time.Second), "turn/start", map[string]any{"turn": 0}, nil),
+		user(1, "first question"), assistant(2, "first answer"),
+		deepSeekTestEvent(3, created.Add(4*time.Second), "turn/end", map[string]any{"turn": 0, "reason": "completed"}, nil),
+		deepSeekTestEvent(4, created.Add(5*time.Second), "session/title", map[string]any{"title": "Saved title"}, nil),
+	}
+	active := append(append([]map[string]any{}, previous...),
+		deepSeekTestEvent(5, created.Add(6*time.Second), "turn/start", map[string]any{"turn": 1}, nil),
+		user(6, "current question"), assistant(7, "partial answer"))
+	for _, compressed := range []bool{false, true} {
+		baseline, err := parseDeepSeekSession(deepSeekTestLog(t, "deepseek-running", cwd, created, 0, previous, compressed), compressed, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		one, err := parseDeepSeekSession(deepSeekTestLog(t, "deepseek-running", cwd, created, 0, active, compressed), compressed, t.TempDir())
+		if err != nil || one.UserMessages != 1 || one.AssistantMessages != 1 || len(one.Messages) != 2 || one.Messages[1].Text != "first answer" {
+			t.Fatalf("running DeepSeek turn was included (compressed=%v): %+v / %v", compressed, one, err)
+		}
+		if one.RawHash != baseline.RawHash {
+			t.Fatalf("DeepSeek completed prefix hash changed when current turn began (compressed=%v)", compressed)
+		}
+		changed := append(append([]map[string]any{}, active...), deepSeekTestEvent(8, created.Add(9*time.Second), "tool/call", map[string]any{"name": "read"}, nil))
+		two, err := parseDeepSeekSession(deepSeekTestLog(t, "deepseek-running", cwd, created, 0, changed, compressed), compressed, t.TempDir())
+		if err != nil || two.RawHash != one.RawHash {
+			t.Fatalf("DeepSeek source hash changed during active turn: %+v / %v", two, err)
+		}
+	}
+	finished := append(append([]map[string]any{}, active...), deepSeekTestEvent(8, created.Add(9*time.Second), "turn/end", map[string]any{"turn": 1, "reason": "completed"}, nil))
+	session, err := parseDeepSeekSession(deepSeekTestLog(t, "deepseek-running", cwd, created, 0, finished, false), false, t.TempDir())
+	if err != nil || session.UserMessages != 2 || session.AssistantMessages != 2 {
+		t.Fatalf("completed DeepSeek turn did not appear: %+v / %v", session, err)
+	}
 }
 
 func deepSeekTestLog(t *testing.T, id, cwd string, created time.Time, depth int, records []map[string]any, compressed bool) []byte {
