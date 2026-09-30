@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sessionmgr/sessionmgr/internal/archive"
@@ -46,6 +47,7 @@ type exportRequest struct {
 	Scope           string                    `json:"scope"`
 	IncludeArchived bool                      `json:"include_archived"`
 	IncludeNonGit   bool                      `json:"include_non_git"`
+	FullScan        bool                      `json:"full_scan"`
 	Sources         *config.SourcePreferences `json:"sources"`
 }
 
@@ -177,6 +179,10 @@ func NewHandlerWithSources(token string, store config.Store, codexHome, claudeHo
 }
 
 func NewHandlerWithAllSources(token string, store config.Store, codexHome, claudeHome, deepSeekHome, ompHome, ompSessionDir, openCodeDB, repo string) (http.Handler, error) {
+	return newHandlerWithAllSources(token, store, codexHome, claudeHome, deepSeekHome, ompHome, ompSessionDir, openCodeDB, repo, revealDocument)
+}
+
+func newHandlerWithAllSources(token string, store config.Store, codexHome, claudeHome, deepSeekHome, ompHome, ompSessionDir, openCodeDB, repo string, reveal func(string) error) (http.Handler, error) {
 	if token == "" {
 		return nil, fmt.Errorf("GUI API token is required")
 	}
@@ -188,6 +194,8 @@ func NewHandlerWithAllSources(token string, store config.Store, codexHome, claud
 		return nil, err
 	}
 	mux := http.NewServeMux()
+	var revealMu sync.Mutex
+	revealRoots := make(map[string]string)
 	mux.Handle("GET /", securityHeaders(http.FileServer(http.FS(staticRoot))))
 	mux.HandleFunc("GET /api/state", requireToken(token, func(w http.ResponseWriter, _ *http.Request) {
 		value, err := store.Load()
@@ -195,10 +203,20 @@ func NewHandlerWithAllSources(token string, store config.Store, codexHome, claud
 			writeAPIError(w, http.StatusInternalServerError, err)
 			return
 		}
+		lastExport, err := archive.LastExportTime(store.ExportStatePath(), value.ExportDirectory)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		lastExportAt := ""
+		if !lastExport.IsZero() {
+			lastExportAt = lastExport.UTC().Format(time.RFC3339Nano)
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"schema_version":     config.SchemaVersion,
 			"directory":          value.ExportDirectory,
 			"source_preferences": value.SourcePreferences,
+			"last_export_at":     lastExportAt,
 			"environment":        inspectAllEnvironment(codexHome, claudeHome, deepSeekHome, ompSessionDir, openCodeDB),
 		})
 	}))
@@ -244,6 +262,33 @@ func NewHandlerWithAllSources(token string, store config.Store, codexHome, claud
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"directory": directory})
 	}))
+	mux.HandleFunc("POST /api/reveal", requireToken(token, func(w http.ResponseWriter, request *http.Request) {
+		var body struct {
+			Path string `json:"path"`
+		}
+		if err := decodeJSON(w, request, &body); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		path := filepath.Clean(body.Path)
+		revealMu.Lock()
+		root, allowed := revealRoots[path]
+		revealMu.Unlock()
+		if !allowed {
+			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("only sessions exported by this GUI can be revealed"))
+			return
+		}
+		path, err := validateRevealPath(root, path)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := reveal(path); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"opened": true})
+	}))
 	mux.HandleFunc("POST /api/export", requireToken(token, func(w http.ResponseWriter, request *http.Request) {
 		var body exportRequest
 		if err := decodeJSON(w, request, &body); err != nil {
@@ -281,9 +326,15 @@ func NewHandlerWithAllSources(token string, store config.Store, codexHome, claud
 			Output: directory, Repo: repo, AllRepos: allRepos,
 			IncludeArchived: body.IncludeArchived,
 			IncludeNonGit:   body.IncludeNonGit,
-			Sources:         &selection,
-			DeviceID:        device.DeviceID, DeviceName: device.DeviceName,
+			CheckpointPath:  store.ExportStatePath(), FullScan: body.FullScan,
+			Sources:  &selection,
+			DeviceID: device.DeviceID, DeviceName: device.DeviceName,
 		})
+		revealMu.Lock()
+		for _, change := range result.Changes {
+			revealRoots[filepath.Clean(change.Path)] = result.Output
+		}
+		revealMu.Unlock()
 		response := exportResponse{Result: result}
 		if exportErr != nil {
 			response.Error = exportErr.Error()

@@ -179,6 +179,12 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 .session-change { min-width: 0; padding: 13px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
 .session-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .session-change h3 { min-width: 0; margin: 1px 0 0; font-size: 15px; overflow-wrap: anywhere; }
+.session-link { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.session-link:hover { color: var(--blue); text-decoration: underline; text-underline-offset: 3px; }
+.session-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 3px; }
+.session-link:disabled { cursor: progress; opacity: 0.65; }
+.reveal-status { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
+.reveal-status.error { color: var(--red); }
 .path { margin: 0; color: var(--muted); font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .attachment-summary { margin: 7px 0 0; color: var(--green); font-size: 12px; font-weight: 650; }
 .badge { flex: none; min-width: 62px; padding: 5px 8px; border-radius: 999px; text-align: center; font-size: 11px; font-weight: 700; }

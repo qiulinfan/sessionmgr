@@ -1,4 +1,4 @@
-# Session Manager v1.1 技术规格
+# Session Manager v1.2 技术规格
 
 ## 1. 进程与命令面
 
@@ -9,7 +9,7 @@ sessionmgr gui [--listen 127.0.0.1:0] [--no-open] [--claude-home PATH] [--deepse
 sessionmgr config set-directory [--json] PATH
 sessionmgr config show [--json]
 sessionmgr export [--all | --repo PATH] [--session ID] [--include-archived]
-                  [--include-non-git] [--directory PATH] [--codex-home PATH]
+                  [--include-non-git] [--full-scan] [--directory PATH] [--codex-home PATH]
                   [--claude-home PATH] [--deepseek-home PATH] [--omp-home PATH]
                   [--omp-session-dir PATH]
                   [--opencode-db PATH] [--sources codex,claude-code,deepseek,omp,opencode] [--json]
@@ -31,7 +31,8 @@ OMP session 目录优先取 `--omp-session-dir`、`PI_CODING_AGENT_SESSION_DIR`�
 OpenCode 数据库取 `--opencode-db` 或 `$XDG_DATA_HOME/opencode/opencode.db`，缺省数据根为
 `~/.local/share`（Windows 优先 `LOCALAPPDATA`）。`export` 默认处理全部 hosted Git repositories；显式 `--repo` 时只处理
 该仓库。`--include-non-git` 开启后，all scope
-也包括无法映射到 hosted remote 的可访问 CWD，显式 `--repo PATH` 也可直接指向这种目录。
+也包括无法映射到 hosted remote 的原生绝对 CWD，允许该目录已经删除。显式 `--repo PATH`
+仍要求目录可访问。不存在的目录按记录路径建立本机身份，不创建目录，也不从名称猜测 hosted remote。
 
 GUI 不使用 harness include 选项。顶部五个 peer switches 明确发送本次 `sources` selection；
 首次打开五个均默认开启，环境面板独立报告是否发现来源，之后保存在本机 config schema v3。五个 source 可
@@ -89,6 +90,23 @@ required semantics 时增加 schema version。
 `device_id` 在第一次导出时由 128-bit cryptographic random value 生成，之后由本机配置
 稳定保存。`device_name` 默认来自 hostname。改变导出目录不得改变这两个字段；它们不能
 存放在 Git 管理的导出目录中，否则新机器 pull 后会错误地继承旧机器身份。
+
+### 2.1 本机增量导出记录 v1
+
+CLI 与 GUI 在 config 同目录保存 `export-state.json`（schema v1），不写入共享 archive。
+checkpoint 按导出目录、设备、来源路径和开关、all/current/session 范围以及 archived/non-Git
+策略隔离。首次选择全量扫描；之后以最近扫描开始时间减一小时为窗口下界。
+
+文件来源先检查 size、mtime 和已知 session identity，较早且未变化的内容不再读取。
+从未见过的路径、mtime/size 变化、Codex title index 变化以及 pending 失败/忙碌来源仍须处理，
+因此保留旧 timestamp 的新副本也可导出。某个 Codex/Claude logical session 的成员被选中时，
+整组已知文件一起读取；已知成员无法读取时不以残缺内容覆盖 archive。OpenCode 在读取内容
+前比较 session header 和 session/message/part 的最新更新时间。
+
+partial export 保留成功变化并更新时间，同时保存 pending 来源供下次重试。取消或提前失败
+不推进记录。`--full-scan` 和 GUI `full_scan` 绕过筛选并刷新记录；改变 destination 或策略
+开始独立的全量扫描。library 未提供 `CheckpointPath` 时继续全量扫描。未知 checkpoint
+schema/字段拒绝写回；checkpoint 通过同目录临时文件、fsync 与 rename 发布。
 
 ## 3. Repository key v1
 
@@ -397,7 +415,9 @@ conversation projection：
   `Claude Code session <ID>`。标题 record 没有可信 timestamp 时不使用 mtime 补造；
 - CWD/branch/version 只从 selected ancestry 取得。repository mapping 从最新到最早尝试可访问的
   `relocatedCwd`/`cwd`；project 目录名不可反解为 CWD，当前 worktree commit 不可冒充 transcript
-  commit，所有候选失效时 warning 只能说明 workspace unavailable，不能包含绝对路径。
+  commit。无法找到 hosted remote 时可使用原生绝对 CWD 建立本机目录身份，包含已删除目录，
+  仍受 non-Git opt-in 控制；不能从 Claude project 目录名反推路径。没有可用原生路径时
+  warning 只能说明 workspace unavailable，不能包含绝对路径。
 
 同 filename stem 出现在多个 Claude project directory 时，schema v2 无法诚实表达 project-key
 identity。raw 完全相同的 copy 可确定性去重；bridge-only + 一个可见 source 只导出可见 source；
@@ -498,10 +518,15 @@ export result JSON 在 v0.6 使用 schema v3；`Change` 增加 required `harness
 entry 增加 `harness`（legacy Codex sidecar 规范化为 `codex`）。v0.5 的
 `filtered_non_git`、`full_exported` 与 change kind `full` 保持。hosted Git session 保持上述
 增量规则。local-directory session 不使用
-unchanged 快路：每次 opt-in export 都重新执行 canonical message selection、屏蔽、附件处理、
+unchanged 快路：每个被本机增量筛选选中的 opt-in source 都重新执行 canonical message selection、屏蔽、附件处理、
 render、document/attachment ownership 验证和 sidecar-last 发布。第一次没有 current entry 时
 仍标记 `new`；已有 current entry 时标记 `full` 并增加 `full_exported`。即使 bytes 相同也要
 重新发布 owned document/sidecar，但不得加入 export timestamp 或其他制造 Git 内容差异的字段。
+
+v1.2 export result 使用 schema v4，新增 `scanned_sources`、`ignored_unchanged`、`incremental`、
+可选 `since` 与 `last_export_at`。`sources` 保持 discovery 总数；`scanned_sources` 是本次
+选中读取内容的来源数，`ignored_unchanged` 不计入 skipped。Markdown 换行与 ownership hash
+判定保持 renderer v9 的现有行为。
 
 changeset 只由本轮发现并成功解析的 source 驱动。archive reader 在导出开始时读取的既有
 entry 不会因为本轮没有对应 source 而被修改或删除；`List` 继续从隐藏 sidecar 派生该
@@ -574,7 +599,8 @@ single binary
 ```
 
 启动时生成 256-bit random token，放在浏览器 URL fragment 中；fragment 不发送给 HTTP
-server，前端把它放入 `X-Sessionmgr-Token` header。所有 `/api/*` 请求必须验证 token。
+server，前端先保存到当前 tab 的 session storage，再清理可见 URL，并把它放入
+`X-Sessionmgr-Token` header。所有 `/api/*` 请求必须验证 token。
 
 安全约束：
 
@@ -588,14 +614,18 @@ server，前端把它放入 `X-Sessionmgr-Token` header。所有 `/api/*` 请求
 
 API：
 
-- `GET /api/state`：当前持久目录，以及只读的 `environment`：运行平台、Git 可用性、五种
+- `GET /api/state`：当前持久目录、本机 `last_export_at`，以及只读的 `environment`：运行平台、Git 可用性、五种
   harness 对应的 session 目录或 OpenCode 数据库是否存在；
 - `PUT /api/config`：验证并保存目录；
 - `POST /api/pick-directory`：调用平台目录对话框；
 - `POST /api/export`：接受 `directory`、all/current `scope`、布尔值 `include_archived` 与
-  `include_non_git`，以及 `sources.codex`、`sources.claude_code`、`sources.deepseek`、
+  `include_non_git`、`full_scan`，以及 `sources.codex`、`sources.claude_code`、`sources.deepseek`、
   `sources.omp`、`sources.opencode`。source
   selection 可全部 false；省略 `sources` 的旧客户端按当前环境自动探测，bundled GUI 总是显式发送。
+- `POST /api/reveal`：接受 `path`，只允许该 GUI 进程成功导出的 `conversation.md`。检查
+  文件仍为 regular file，解析 symlink 后仍在对应 archive 内，再调用原生 file manager。
+  macOS 与 Windows 请求定位文件；Linux 打开所在目录。未知路径、symlink escape、缺失文件
+  不调用系统命令。
 
 前端最上方在 Environment 之前显示五个同级 switch。`/api/state.source_preferences` 为空时，
 所有 switch 均初始化为开启并立即 `PUT /api/sources`；之后 reload 或随机端口
@@ -636,7 +666,7 @@ Git。`make cross-check` 编译 darwin/arm64、linux/amd64、windows/amd64；`ma
 
 ### 11.1 Windows release pipeline
 
-开发源码的当前版本是 `1.0.2`。`internal/app.version` 必须是可由 Go linker `-X` 覆盖的
+开发源码的当前版本是 `1.2.0`。`internal/app.version` 必须是可由 Go linker `-X` 覆盖的
 string variable；正式构建使用：
 
 ```text
@@ -659,8 +689,9 @@ string variable；正式构建使用：
 7. builder 验证两个文件以 `MZ` PE magic 开头，反向提取两个 architecture 的 resource 并要求
    应用图标与 tag 对应 `ProductVersion` 均存在，再执行当前 Windows architecture 的 binary，
    要求输出 `sessionmgr <version>`；
-8. builder 将两个 exe 作为保留 1 天的 workflow artifact 交给独立 publish job；build job
-   只有 `contents: read`；
+8. Windows builder 将两个 exe 作为保留 1 天的 workflow artifact；独立 macOS job 调用
+   `scripts/build-macos-release.sh` 构建并验证 universal app zip 与 checksum。两个 build job
+   都只有 `contents: read`，publish 同时等待两者成功；
 9. 只有 publish job 获得 `contents: write`，使用当前 workflow-scoped `GITHUB_TOKEN` 和
    `gh release create --verify-tag` 一次创建 Release 并上传全部资产。任何前置步骤失败都不得
    调用 release creation。
@@ -670,6 +701,8 @@ string variable；正式构建使用：
 ```text
 sessionmgr-v<version>-windows-amd64.exe
 sessionmgr-v<version>-windows-arm64.exe
+sessionmgr-v<version>-macos-universal.zip
+sessionmgr-v<version>-macos-universal.zip.sha256
 ```
 
 `scripts/build-windows-release.ps1 -Version <version>` 是本地与 CI 共用的唯一 Windows release
@@ -681,6 +714,28 @@ extraction 与当前架构 version execution 契约。调用环境必须在 `PAT
 
 当前 release 不包含 Authenticode certificate 或签名 secret。Release notes 与 README 必须明确
 binary 未签名及可能出现 SmartScreen warning，不得暗示已验证发布者身份。
+
+### 11.2 macOS 原生 App
+
+`make macos-app VERSION=<version>` 与 release CI 复用同一 macOS builder。需要 Go 与 Xcode
+command-line tools；分发的 `.app` 已包含后端，不要求使用者安装 Go、Make 或终端工具链。
+Swift launcher 只使用 AppKit/WebKit 系统 framework，目标为 macOS 14+。launcher 和 Go
+backend 均由 arm64/x86_64 两个 binary 经 lipo 合并；归档前检查架构、版本、Info.plist、
+图标和 code-signature 完整性。构建产物在 Git-ignored `dist/`，无机器配置或真实会话。
+
+App 启动 `Contents/Resources/bin/sessionmgr gui --no-open`，仅通过匿名 pipe 获取本机
+readiness URL。随机 token 不写入日志，不打开外部浏览器；原生 WKWebView 复用同一 UI/API。
+默认工作目录为用户 home，额外 App 启动参数转交 GUI backend。App 与 CLI 共用 local config
+和 checkpoint；退出或关闭最后窗口会 terminate/wait 它拥有的后端，Dock reopen 激活同一窗口。
+Edit/Reload 菜单提供系统快捷键。
+
+WKWebView 自动 navigation 只接受本 App server 的 scheme/host/port；显式 HTTPS link
+可打开系统浏览器。ATS 仅设置
+[`NSAllowsLocalNetworking`](https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity/nsallowslocalnetworking)
+供本机 HTTP 使用，不全局允许任意 HTTP，也不引入 native JavaScript filesystem bridge。
+
+App 使用 ad-hoc signature 作本机构建完整性验证，未做 Developer ID signing 或 Apple
+notarization；release notes 必须明确这些状态。应用图标复用 `assets/sessionmgr.png`。
 
 ## 12. 兼容性
 

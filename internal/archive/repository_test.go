@@ -126,6 +126,33 @@ func TestLocalDirectoryRepositoryIdentityIsDeviceScoped(t *testing.T) {
 	}
 }
 
+func TestDeletedDirectoryKeepsDeviceLocalIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deleted-workspace")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before, err := localDirectoryRepositoryForSession(Session{CWD: path}, "device:test", "test-device")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	after, err := localDirectoryRepositoryForSession(Session{CWD: path}, "device:test", "test-device")
+	if err != nil || before != after {
+		t.Fatalf("deletion changed identity: before=%+v after=%+v err=%v", before, after, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("deleted native workspace was recreated")
+	}
+	if _, err := localDirectoryRepositoryFromPath(path, "device:test", "test-device"); err == nil {
+		t.Fatal("explicit current-directory scope accepted a missing directory")
+	}
+	if _, err := localDirectoryRepositoryForSession(Session{CWD: "relative-missing"}, "device:test", "test-device"); err == nil {
+		t.Fatal("invented identity for a missing relative path")
+	}
+}
+
 func gitForTest(t *testing.T, directory string, args ...string) {
 	t.Helper()
 	command := exec.Command("git", args...)

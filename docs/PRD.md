@@ -230,6 +230,8 @@ hosted Git remote key | device-local directory key
   不需要 Go/Make；检查只读，不得自动安装、提权或修改 PATH；
 - 桌面与窄屏布局必须可用；
 - UI 不得执行 `git add`、commit 或 push。
+- 显示本机最近导出时间，提供全量重新扫描选项与本次读取/略过计数；新导出的 session
+  标题可点击并通过原生文件管理器打开其所在位置。入口必须限制在本 GUI 成功导出的文件。
 
 ### FR-7 CLI
 
@@ -242,17 +244,21 @@ hosted Git remote key | device-local directory key
 - CLI export 默认扫描五个受支持 source，不要求任何 source 存在，并允许 `--sources` 明确
   指定子集；`--claude-home`、`--deepseek-home`、`--omp-home`、`--omp-session-dir`、
   `--opencode-db` 可覆盖各自默认位置；
-- `export --include-non-git` 必须显式包括没有 hosted remote 的可访问 CWD；未传时不得发布；
+- `export --include-non-git` 必须显式包括没有 hosted remote 的原生绝对 CWD，允许目录已经
+  删除；未传时不得发布。不得重建已删除的原生目录或按目录名猜测 hosted remote；
+- 本机保存最近扫描开始时间，后续导出使用一小时重叠窗口，避免读取较早且未变化的内容。
+  新文件、元数据变化、重命名、pending 失败/忙碌来源必须保留；提供 `--full-scan`；
 - partial export 必须保留成功 changeset，同时以非零退出码和 warning 报告跳过项。
 
 ### FR-8 三系统分发
 
-- 核心与 GUI 必须保持纯 Go、`CGO_ENABLED=0` 可构建；Zstandard 与 SQLite 依赖必须是
-  可固定版本的纯 Go 实现；
+- 核心与 WebUI server 必须保持纯 Go、`CGO_ENABLED=0` 可构建；Zstandard 与 SQLite 依赖
+  必须是可固定版本的纯 Go 实现。macOS 原生窗口可使用系统 AppKit/WebKit 与打包后的后端；
 - 必须能交叉构建 macOS、Linux、Windows；
 - 目录打开/浏览使用各平台最接近的可用方式，并提供手工路径 fallback；
 - 严格的 `vMAJOR.MINOR.PATCH` tag 必须在测试通过后自动创建 GitHub Release，至少附带
-  Windows AMD64/ARM64 两个单文件 `.exe`；
+  Windows AMD64/ARM64 两个单文件 `.exe`，以及 macOS 14+ arm64/x86_64 universal app zip
+  和 checksum；macOS 与 Windows 构建任一步失败均不得发布；
 - release binary 的 `sessionmgr version` 必须等于 tag 去掉 `v` 后的版本，开发构建继续明确
   显示 `-dev`；
 - Windows release executable 必须包含已审阅的应用图标以及与 tag 一致的 file/product version
@@ -264,6 +270,9 @@ hosted Git remote key | device-local directory key
 - tag version 必须匹配 source version，且同版本 devlog 必须已审阅并标记为 `Released`；
 - Windows release 当前未签名时，下载说明必须明确 SmartScreen 风险，不得暗示已完成
   Authenticode 验证。
+- macOS builder 复用系统 Swift/Xcode 与现有图标，检查架构、版本、bundle signature 和 zip；
+  App 启动不需要终端，退出会停止其拥有的服务。未做 Developer ID signing/notarization
+  时必须如实标注；本次不引入 Apple account 或签名 credentials。
 
 ## 5. 非目标
 
@@ -357,8 +366,8 @@ hosted Git remote key | device-local directory key
     不进入正文；direct human 和分片 assistant text 保持 ancestry 顺序。
 51. Claude structured image/document 经过附件上限、敏感内容与 owned-file 校验；不读取相邻 caches、
     tool-results 或 file-history，原始 transcript hash 在导出前后不变。
-52. 一个已不存在 CWD 的 Claude source 不通过 project 目录名反推路径，而是安全 skipped；其他
-    可映射 source 的成功 changeset 仍保留并以非零退出码报告 partial export。
+52. 已不存在 CWD 的 Claude source 不通过 project 目录名反推路径；明确开启非 Git 导出后，
+    使用原生绝对 CWD 的本机身份归档。未开启时安静计入 `filtered_non_git`。
 53. 三个同 native ID、同 repository、连续时间边界的 Codex JSONL fragments 一次导出只创建一份
     document，完整消息各出现一次；重复导出 no-op，任一 fragment 变化只产生一次 update。
 54. Copied Claude ancestry、detached system roots、off-chain replay 和 anchor 后 attachment 不导致

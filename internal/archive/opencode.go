@@ -25,7 +25,7 @@ const harnessOpenCode = "opencode"
 type openCodeSessionRow struct {
 	id, directory, title, version string
 	parentID                      sql.NullString
-	created, updated              int64
+	created, updated, modified    int64
 }
 
 type openCodeMessageRow struct {
@@ -34,11 +34,13 @@ type openCodeMessageRow struct {
 }
 
 type openCodeReadResult struct {
-	sessions []Session
-	sources  int
-	busy     int
-	skipped  int
-	warnings []string
+	sessions       []Session
+	sources        int
+	busy           int
+	skipped        int
+	warnings       []string
+	ignored        int
+	busySessionIDs []string
 }
 
 type openCodeMessageData struct {
@@ -92,7 +94,11 @@ func resolveOpenCodeDB(configured string) (string, error) {
 	return filepath.Abs(filepath.Join(root, "opencode", "opencode.db"))
 }
 
-func readOpenCodeSessions(ctx context.Context, path string, _ time.Duration) (openCodeReadResult, error) {
+func readOpenCodeSessions(ctx context.Context, path string, window time.Duration) (openCodeReadResult, error) {
+	return readOpenCodeSessionsSelected(ctx, path, window, nil)
+}
+
+func readOpenCodeSessionsSelected(ctx context.Context, path string, _ time.Duration, selectSession func(openCodeSessionRow) bool) (openCodeReadResult, error) {
 	result := openCodeReadResult{sessions: []Session{}}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -123,15 +129,18 @@ func readOpenCodeSessions(ctx context.Context, path string, _ time.Duration) (op
 		return result, fmt.Errorf("snapshot OpenCode database: %w", err)
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT id, directory, title, version, parent_id, time_created, time_updated
-		FROM session ORDER BY time_created, id`)
+	rows, err := tx.QueryContext(ctx, `SELECT s.id, s.directory, s.title, s.version, s.parent_id, s.time_created, s.time_updated,
+		max(s.time_created, s.time_updated,
+			coalesce((SELECT max(time_updated) FROM message WHERE session_id = s.id), 0),
+			coalesce((SELECT max(time_updated) FROM part WHERE session_id = s.id), 0))
+		FROM session s ORDER BY s.time_created, s.id`)
 	if err != nil {
 		return result, fmt.Errorf("read OpenCode sessions: %w", err)
 	}
 	var headers []openCodeSessionRow
 	for rows.Next() {
 		var row openCodeSessionRow
-		if err := rows.Scan(&row.id, &row.directory, &row.title, &row.version, &row.parentID, &row.created, &row.updated); err != nil {
+		if err := rows.Scan(&row.id, &row.directory, &row.title, &row.version, &row.parentID, &row.created, &row.updated, &row.modified); err != nil {
 			rows.Close()
 			return result, fmt.Errorf("read OpenCode session row: %w", err)
 		}
@@ -147,10 +156,15 @@ func readOpenCodeSessions(ctx context.Context, path string, _ time.Duration) (op
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
+		if selectSession != nil && !selectSession(header) {
+			result.ignored++
+			continue
+		}
 		session, activeTail, err := readOpenCodeSession(ctx, tx, header)
 		if err != nil {
 			if sourceErrorIsBusy(err) {
 				result.busy++
+				result.busySessionIDs = append(result.busySessionIDs, header.id)
 				continue
 			}
 			result.skipped++
@@ -159,6 +173,7 @@ func readOpenCodeSessions(ctx context.Context, path string, _ time.Duration) (op
 		}
 		if activeTail {
 			result.busy++
+			result.busySessionIDs = append(result.busySessionIDs, header.id)
 		}
 		result.sessions = append(result.sessions, session)
 	}

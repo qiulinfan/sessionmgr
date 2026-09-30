@@ -1,4 +1,4 @@
-.PHONY: build test vet race cross-check dist check clean prepare-bin prepare-dist \
+.PHONY: build macos-app test vet race cross-check dist check clean prepare-bin prepare-dist \
 	cross-darwin-arm64 cross-linux-amd64 cross-windows-amd64 \
 	dist-darwin-arm64 dist-darwin-amd64 dist-linux-amd64 dist-linux-arm64 \
 	dist-windows-amd64 dist-windows-arm64
@@ -58,6 +58,9 @@ $(NO_CGO_TARGETS): export CGO_ENABLED := 0
 
 build: | prepare-bin
 	$(GO) build -trimpath -o "$(BIN_PATH)" ./cmd/sessionmgr
+
+macos-app:
+	GO="$(GO)" bash scripts/build-macos-release.sh $(VERSION)
 
 test:
 	$(GO) test ./...

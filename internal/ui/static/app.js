@@ -1,5 +1,8 @@
 const tokenFromURL = window.location.hash.replace(/^#/, "");
-if (tokenFromURL) sessionStorage.setItem("sessionmgr-token", tokenFromURL);
+if (tokenFromURL) {
+  sessionStorage.setItem("sessionmgr-token", tokenFromURL);
+  history.replaceState(null, "", window.location.pathname + window.location.search);
+}
 const token = tokenFromURL || sessionStorage.getItem("sessionmgr-token") || "";
 
 const directory = document.querySelector("#directory");
@@ -13,6 +16,10 @@ const exportButton = document.querySelector("#export");
 const languageSelect = document.querySelector("#language");
 const includeArchived = document.querySelector("#include-archived");
 const includeNonGit = document.querySelector("#include-non-git");
+const fullScan = document.querySelector("#full-scan");
+const exportHistory = document.querySelector("#export-history");
+const scanSummary = document.querySelector("#scan-summary");
+let lastExportAt = "";
 const sourceCodex = document.querySelector("#source-codex");
 const sourceClaude = document.querySelector("#source-claude");
 const sourceDeepSeek = document.querySelector("#source-deepseek");
@@ -50,7 +57,7 @@ const translations = {
     ompSourceHint: "Local OMP conversations",
     openCodeSourceHint: "Local OpenCode conversations",
     environment: "Environment",
-    portableRuntime: "Portable EXE · no Go or Make needed",
+    portableRuntime: "Portable app · no Go or Make needed",
     environmentHint: "Session Manager checks the local tools and session folders it uses. Nothing is installed automatically.",
     checking: "Checking…",
     ready: "Ready",
@@ -81,6 +88,13 @@ const translations = {
     currentRepository: "Current directory",
     includeArchived: "Include archived Codex sessions",
     includeNonGit: "Include non-Git directories (full export)",
+    fullScan: "Rescan all sessions",
+    firstExport: "The first export checks all sessions. Later exports include the previous hour of updates.",
+    lastExport: "Last export: {time} · includes the previous hour of updates",
+    scanSummary: "Read {scanned} source(s) · {ignored} older unchanged source(s) left out",
+    revealSession: "Show {title} in its folder",
+    revealingSession: "Opening folder…",
+    revealedSession: "Shown in file manager",
     exportChanges: "Export changes",
     exporting: "Exporting…",
     exportedChanges: "Changes from this export",
@@ -119,7 +133,7 @@ const translations = {
     ompSourceHint: "本机 OMP 对话",
     openCodeSourceHint: "本机 OpenCode 对话",
     environment: "运行环境",
-    portableRuntime: "便携 EXE · 不需要 Go 或 Make",
+    portableRuntime: "便携应用 · 不需要 Go 或 Make",
     environmentHint: "Session Manager 会检查所需的本地工具和 session 目录，不会自动安装或提权。",
     checking: "检查中…",
     ready: "可用",
@@ -150,6 +164,13 @@ const translations = {
     currentRepository: "当前目录",
     includeArchived: "包括已归档的 Codex sessions",
     includeNonGit: "包括非 Git 目录（全量导出）",
+    fullScan: "重新扫描全部 sessions",
+    firstExport: "首次导出会检查全部 sessions；后续导出保留一小时重叠窗口。",
+    lastExport: "最近导出：{time} · 保留一小时重叠窗口",
+    scanSummary: "读取 {scanned} 个来源 · 略过 {ignored} 个较早且未变化的来源",
+    revealSession: "打开 {title} 所在位置",
+    revealingSession: "正在打开文件夹…",
+    revealedSession: "已在文件管理器中显示",
     exportChanges: "导出变化",
     exporting: "正在导出…",
     exportedChanges: "本次导出变化",
@@ -343,6 +364,9 @@ function setBusy(busy) {
 function renderBusy() {
   exportButton.disabled = exportBusy;
   exportButton.textContent = t(exportBusy ? "exporting" : "exportChanges");
+  exportHistory.textContent = lastExportAt
+    ? t("lastExport", { time: new Date(lastExportAt).toLocaleString(language === "zh" ? "zh-CN" : "en-US") })
+    : t("firstExport");
 }
 
 function showError(error) {
@@ -354,6 +378,7 @@ function renderResult() {
   changes.replaceChildren();
   warnings.replaceChildren();
   warnings.classList.add("hidden");
+  scanSummary.classList.add("hidden");
   if (resultState.kind === "idle") {
     resultCount.textContent = "—";
     message.className = "empty";
@@ -439,7 +464,13 @@ function sessionChange(item) {
   const heading = document.createElement("div");
   heading.className = "session-heading";
   const title = document.createElement("h3");
-  title.textContent = item.title;
+  const reveal = document.createElement("button");
+  reveal.type = "button";
+  reveal.className = "session-link";
+  reveal.textContent = item.title;
+  reveal.title = t("revealSession", { title: item.title });
+  reveal.setAttribute("aria-label", reveal.title);
+  title.append(reveal);
   const badge = document.createElement("span");
   badge.className = `badge ${item.kind}`;
   badge.textContent = t({ new: "badgeNew", updated: "badgeUpdated", renamed: "badgeRenamed", full: "badgeFull" }[item.kind] || item.kind);
@@ -449,6 +480,24 @@ function sessionChange(item) {
   path.className = "path";
   path.textContent = `${item.harness || "unknown"} · ${item.sessionFolder}/conversation.md`;
   card.append(heading, path);
+  const revealStatus = document.createElement("p");
+  revealStatus.className = "reveal-status hidden";
+  revealStatus.setAttribute("role", "status");
+  card.append(revealStatus);
+  reveal.addEventListener("click", async () => {
+    reveal.disabled = true;
+    revealStatus.classList.remove("hidden", "error");
+    revealStatus.textContent = t("revealingSession");
+    try {
+      await api("/api/reveal", { method: "POST", body: JSON.stringify({ path: item.path }) });
+      revealStatus.textContent = t("revealedSession");
+    } catch (error) {
+      revealStatus.classList.add("error");
+      revealStatus.textContent = error.message || String(error);
+    } finally {
+      reveal.disabled = false;
+    }
+  });
 
   if ((item.attachments || 0) > 0) {
     const attachmentSummary = document.createElement("p");
@@ -467,6 +516,13 @@ function renderChanges(payload) {
   const busy = payload.result.busy || 0;
   const filtered = payload.result.filtered_internal || 0;
   const filteredNonGit = payload.result.filtered_non_git || 0;
+  if (payload.result.last_export_at) lastExportAt = payload.result.last_export_at;
+  renderBusy();
+  scanSummary.textContent = t("scanSummary", {
+    scanned: payload.result.scanned_sources || 0,
+    ignored: payload.result.ignored_unchanged || 0,
+  });
+  scanSummary.classList.remove("hidden");
   resultCount.textContent = String(items.length);
   if (items.length === 0) {
     message.className = busy > 0 || filtered > 0 || filteredNonGit > 0 ? "empty busy" : "empty success";
@@ -570,6 +626,7 @@ exportButton.addEventListener("click", async () => {
         scope: document.querySelector("#scope").value,
         include_archived: includeArchived.checked,
         include_non_git: includeNonGit.checked,
+        full_scan: fullScan.checked,
         sources: currentSources(),
       }),
     });
@@ -587,6 +644,7 @@ applyLanguage();
 api("/api/state")
   .then((state) => {
     directory.value = state.directory || "";
+    lastExportAt = state.last_export_at || "";
     environmentState = state.environment || null;
     sourcePreferencesState = state.source_preferences || null;
     initializeSourcePreferences();

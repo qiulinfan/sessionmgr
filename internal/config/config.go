@@ -39,6 +39,12 @@ type Store struct {
 	Path string
 }
 
+// ExportStatePath keeps machine-local scan history beside the configuration,
+// never inside the shareable session archive.
+func (store Store) ExportStatePath() string {
+	return filepath.Join(filepath.Dir(store.Path), "export-state.json")
+}
+
 func DefaultStore() (Store, error) {
 	if override := strings.TrimSpace(os.Getenv("SESSIONMGR_CONFIG")); override != "" {
 		path, err := filepath.Abs(override)

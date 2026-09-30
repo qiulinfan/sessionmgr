@@ -390,7 +390,7 @@ func TestExportSilentlySkipsClaudeBridgeOnlySource(t *testing.T) {
 	}
 }
 
-func TestExportClaudeUnavailableWorkspaceDoesNotExposeAbsolutePath(t *testing.T) {
+func TestExportClaudeDeletedWorkspaceRequiresNonGitOptIn(t *testing.T) {
 	root := t.TempDir()
 	claudeHome := filepath.Join(root, "claude")
 	missingWorkspace := filepath.Join(root, "deleted-workspace")
@@ -404,15 +404,25 @@ func TestExportClaudeUnavailableWorkspaceDoesNotExposeAbsolutePath(t *testing.T)
 	}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Export(context.Background(), Options{
+	opts := Options{
 		ClaudeHome: claudeHome, Output: filepath.Join(root, "archive"), AllRepos: true,
 		Sources: &SourceSelection{ClaudeCode: true}, DeviceID: "device:test", DeviceName: "test-device", StabilityWindow: -1,
-	})
-	if err == nil || result.Skipped != 1 || len(result.Warnings) != 1 {
-		t.Fatalf("unavailable workspace was not a safe partial export: %+v, %v", result, err)
 	}
-	if strings.Contains(result.Warnings[0], missingWorkspace) || !strings.Contains(result.Warnings[0], "workspace is unavailable") {
-		t.Fatalf("workspace warning leaked an absolute path: %q", result.Warnings[0])
+	result, err := Export(context.Background(), opts)
+	if err != nil || result.FilteredNonGit != 1 || result.Skipped != 0 || len(result.Warnings) != 0 {
+		t.Fatalf("deleted workspace did not retain non-Git opt-in: %+v, %v", result, err)
+	}
+	opts.IncludeNonGit = true
+	included, err := Export(context.Background(), opts)
+	if err != nil || included.Created != 1 || len(included.Warnings) != 0 {
+		t.Fatalf("deleted Claude workspace was not exported: %+v, %v", included, err)
+	}
+	document, err := os.ReadFile(included.Changes[0].Path)
+	if err != nil || strings.Contains(string(document), missingWorkspace) {
+		t.Fatalf("deleted workspace path leaked into document: %v", err)
+	}
+	if _, err := os.Stat(missingWorkspace); !os.IsNotExist(err) {
+		t.Fatal("export recreated the deleted native workspace")
 	}
 }
 

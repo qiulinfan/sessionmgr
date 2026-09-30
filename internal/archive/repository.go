@@ -70,6 +70,18 @@ func localDirectoryRepositoryForSession(session Session, deviceID, deviceName st
 			return repo, nil
 		}
 	}
+	// A native absolute CWD remains evidence of a device-local directory after
+	// deletion. Keep the same path-derived identity without recreating it or
+	// guessing a hosted repository from its name.
+	for index := len(paths) - 1; index >= 0; index-- {
+		if !filepath.IsAbs(paths[index]) {
+			continue
+		}
+		repo, err := localDirectoryRepository(paths[index], deviceID, deviceName, true)
+		if err == nil {
+			return repo, nil
+		}
+	}
 	return Repository{}, fmt.Errorf("workspace is unavailable")
 }
 
@@ -99,6 +111,10 @@ func repositoryFromRemote(canonical string) Repository {
 }
 
 func localDirectoryRepositoryFromPath(path, deviceID, deviceName string) (Repository, error) {
+	return localDirectoryRepository(path, deviceID, deviceName, false)
+}
+
+func localDirectoryRepository(path, deviceID, deviceName string, allowMissing bool) (Repository, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return Repository{}, fmt.Errorf("local directory is missing")
@@ -108,16 +124,13 @@ func localDirectoryRepositoryFromPath(path, deviceID, deviceName string) (Reposi
 		return Repository{}, err
 	}
 	info, err := os.Stat(absolute)
-	if err != nil {
+	if err != nil && !(allowMissing && os.IsNotExist(err)) {
 		return Repository{}, fmt.Errorf("inspect local directory: %w", err)
 	}
-	if !info.IsDir() {
+	if err == nil && !info.IsDir() {
 		return Repository{}, fmt.Errorf("local path is not a directory: %s", absolute)
 	}
-	if resolved, resolveErr := filepath.EvalSymlinks(absolute); resolveErr == nil {
-		absolute = resolved
-	}
-	absolute = filepath.Clean(absolute)
+	absolute = canonicalDirectoryPath(absolute)
 	directoryName := filepath.Base(absolute)
 	if directoryName == "." || directoryName == string(filepath.Separator) || strings.TrimSpace(directoryName) == "" {
 		directoryName = "directory"
@@ -134,6 +147,28 @@ func localDirectoryRepositoryFromPath(path, deviceID, deviceName string) (Reposi
 		DeviceID:      deviceID,
 		DeviceName:    deviceName,
 	}, nil
+}
+
+// Resolve the surviving parent of a missing directory as well. In particular,
+// macOS's /var -> /private/var alias must not change a directory identity merely
+// because its final component was removed.
+func canonicalDirectoryPath(path string) string {
+	current := path
+	var suffix []string
+	for {
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			for index := len(suffix) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, suffix[index])
+			}
+			return filepath.Clean(resolved)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return filepath.Clean(path)
+		}
+		suffix = append(suffix, filepath.Base(current))
+		current = parent
+	}
 }
 
 // NormalizeRemote removes transport and credentials so SSH and HTTPS clones of

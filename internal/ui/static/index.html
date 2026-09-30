@@ -69,7 +69,7 @@
             <p class="step">00</p>
             <h2 data-i18n="environment">Environment</h2>
           </div>
-          <span class="muted" data-i18n="portableRuntime">Portable EXE · no Go or Make needed</span>
+          <span class="muted" data-i18n="portableRuntime">Portable app · no Go or Make needed</span>
         </div>
         <p class="hint" data-i18n="environmentHint">Session Manager checks the local tools and session folders it uses. Nothing is installed automatically.</p>
         <div class="setup-list">
@@ -155,6 +155,11 @@
           <input id="include-non-git" type="checkbox" />
           <span data-i18n="includeNonGit">Include non-Git directories (full export)</span>
         </label>
+        <label class="archive-option">
+          <input id="full-scan" type="checkbox" />
+          <span data-i18n="fullScan">Rescan all sessions</span>
+        </label>
+        <p id="export-history" class="hint"></p>
         <button id="export" class="button primary" type="button" data-i18n="exportChanges">Export changes</button>
       </section>
 
@@ -167,6 +172,7 @@
           <span id="result-count" class="counter">—</span>
         </div>
         <div id="message" class="empty" data-i18n="notExported">No export has been run yet.</div>
+        <p id="scan-summary" class="hint hidden"></p>
         <div id="warnings" class="warnings hidden"></div>
         <div id="changes" class="change-tree"></div>
       </section>

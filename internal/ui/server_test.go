@@ -231,7 +231,7 @@ func TestGUIStaticPageHasSecurityHeaders(t *testing.T) {
 	}
 	if !bytes.Contains(page, []byte(`id="setup-git-status"`)) ||
 		!bytes.Contains(page, []byte("winget install --id Git.Git -e --source winget")) ||
-		!bytes.Contains(page, []byte("Portable EXE · no Go or Make needed")) {
+		!bytes.Contains(page, []byte("Portable app · no Go or Make needed")) {
 		t.Fatal("GUI environment setup guidance is missing")
 	}
 

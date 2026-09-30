@@ -77,6 +77,9 @@ jobs:
       - name: Test with the race detector
         run: go test -race ./...
 
+      - name: Check frontend syntax
+        run: node --check internal/ui/static/app.js
+
   build:
     name: Build Windows executables
     needs: validate
@@ -107,9 +110,40 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  build_macos:
+    name: Build macOS universal app
+    needs: validate
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: go.sum
+
+      - name: Build and verify macOS release app
+        run: bash scripts/build-macos-release.sh '${{ needs.validate.outputs.release_version }}'
+
+      - name: Stage validated macOS release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-release-assets
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
     name: Publish the tag release
-    needs: build
+    needs: [build, build_macos]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -123,6 +157,12 @@ jobs:
           name: windows-release-assets
           path: dist
 
+      - name: Download validated macOS release assets
+        uses: actions/download-artifact@v8
+        with:
+          name: macos-release-assets
+          path: dist
+
       - name: Publish the tag release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -130,9 +170,9 @@ jobs:
         shell: bash
         run: |
           release_version="${RELEASE_VERSION#v}"
-          gh release create "$GITHUB_REF_NAME" dist/*.exe \
+          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/*.zip dist/*.sha256 \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --generate-notes \
             --title "Session Manager $release_version" \
-            --notes "Portable icon-bearing Windows executables are attached for AMD64 and ARM64. These binaries are not Authenticode-signed, so Windows SmartScreen may show a warning."
+            --notes "Includes incremental export with a one-hour overlap, deleted-workspace archives with non-Git opt-in, reveal-in-folder actions, and a native macOS window. Download the universal macOS app zip for Apple Silicon or Intel Macs (macOS 14+), or the Windows executable for your architecture. The macOS bundle uses ad-hoc integrity signing and is not Apple-notarized or Developer ID-signed. Windows binaries are not Authenticode-signed."

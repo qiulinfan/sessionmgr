@@ -18,7 +18,7 @@ import (
 
 // version is a variable so release builds can stamp the reviewed tag version
 // with -ldflags -X. Development builds keep an explicit prerelease suffix.
-var version = "1.1.0"
+var version = "1.2.0"
 
 type commandError struct {
 	exitCode int
@@ -120,6 +120,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	sessionID := flags.String("session", "", "export one native session ID")
 	includeArchived := flags.Bool("include-archived", false, "also export Codex archived sessions")
 	includeNonGit := flags.Bool("include-non-git", false, "also fully export sessions from directories without a hosted Git remote")
+	fullScan := flags.Bool("full-scan", false, "rescan all sessions instead of using the local export checkpoint")
 	source := flags.String("codex-home", "", "Codex state directory (default: CODEX_HOME or ~/.codex)")
 	claudeSource := flags.String("claude-home", "", "Claude Code state directory (default: CLAUDE_CONFIG_DIR or ~/.claude)")
 	deepSeekSource := flags.String("deepseek-home", "", "DeepSeek Harness state directory (default: DSH_HOME or ~/.dsh)")
@@ -185,7 +186,8 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 		IncludeArchived: *includeArchived,
 		IncludeNonGit:   *includeNonGit,
 		Sources:         &selection,
-		DeviceID:        device.DeviceID, DeviceName: device.DeviceName,
+		CheckpointPath:  store.ExportStatePath(), FullScan: *fullScan,
+		DeviceID: device.DeviceID, DeviceName: device.DeviceName,
 	})
 	if *jsonOutput {
 		if err := writeJSON(stdout, result); err != nil {
@@ -470,7 +472,7 @@ Usage:
   sessionmgr config show
   sessionmgr export [--all | --repo PATH] [--session ID] [--sources codex,claude-code,deepseek,omp,opencode]
                     [--omp-home PATH] [--omp-session-dir PATH] [--opencode-db PATH]
-                    [--include-archived] [--include-non-git] [--directory PATH]
+                    [--include-archived] [--include-non-git] [--full-scan] [--directory PATH]
   sessionmgr list [--history]
   sessionmgr cleanup-internal [--directory PATH] [--apply]
   sessionmgr version
@@ -478,5 +480,7 @@ Usage:
 Available session stores for all five supported harnesses are scanned automatically.
 The configured export directory persists across launches. Output lists
 only files changed by the current operation. "archive" remains an alias for
-"export". cleanup-internal is a dry run unless --apply is provided.`)
+"export". Later exports use local scan history with a one-hour overlap;
+--full-scan checks every session again. cleanup-internal is a dry run unless
+--apply is provided.`)
 }

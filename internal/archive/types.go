@@ -4,7 +4,7 @@ import "time"
 
 const (
 	SchemaVersion             = 1
-	ExportResultSchemaVersion = 3
+	ExportResultSchemaVersion = 4
 	LocalRepositorySchema     = 2
 	SessionMetadataSchema     = 2
 	LayoutVersion             = 5
@@ -52,6 +52,12 @@ type Options struct {
 	DeviceID      string
 	DeviceName    string
 
+	// CheckpointPath is local machine state, outside the exported archive. An
+	// empty path keeps library callers on a full scan. FullScan bypasses the
+	// time filter while refreshing the same checkpoint.
+	CheckpointPath string
+	FullScan       bool
+
 	// StabilityWindow is the shared quiet period used before reading discovered
 	// session files. Zero selects the production default; a negative value
 	// disables the delay for deterministic fixtures that cannot mutate.
@@ -72,6 +78,11 @@ type Result struct {
 	Attachments         int      `json:"attachments"`
 	ArchivedAttachments int      `json:"archived_attachments"`
 	Output              string   `json:"output"`
+	ScannedSources      int      `json:"scanned_sources"`
+	IgnoredUnchanged    int      `json:"ignored_unchanged"`
+	Incremental         bool     `json:"incremental"`
+	Since               string   `json:"since,omitempty"`
+	LastExportAt        string   `json:"last_export_at,omitempty"`
 	Changes             []Change `json:"changes"`
 	Warnings            []string `json:"warnings,omitempty"`
 }

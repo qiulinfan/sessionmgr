@@ -25,11 +25,18 @@ type parsedNativeSession struct {
 }
 
 type logicalSessionIssue struct {
-	count   int
-	warning string
+	count     int
+	warning   string
+	harness   string
+	sessionID string
 }
 
 func Export(ctx context.Context, opts Options) (Result, error) {
+	if opts.CheckpointPath != "" {
+		checkpointExportMu.Lock()
+		defer checkpointExportMu.Unlock()
+	}
+	startedAt := time.Now().UTC()
 	result := Result{SchemaVersion: ExportResultSchemaVersion, Changes: []Change{}}
 	selected := selectedSources(opts)
 	if selected.Codex && opts.CodexHome == "" {
@@ -82,6 +89,10 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		return result, err
 	}
 	result.Output = output
+	opts.Output = output
+	if _, statErr := os.Stat(output); errors.Is(statErr, os.ErrNotExist) {
+		opts.FullScan = true
+	}
 	if err := os.MkdirAll(output, 0o755); err != nil {
 		return result, err
 	}
@@ -160,6 +171,21 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, err
 		}
 	}
+	incremental, err := beginIncrementalExport(opts, selected, target, startedAt)
+	if err != nil {
+		return result, err
+	}
+	result.Incremental = !incremental.since.IsZero()
+	if result.Incremental {
+		result.Since = formatTime(incremental.since)
+	}
+	sources = incremental.filterSources(sources, titles)
+	result.ScannedSources = len(sources)
+	result.IgnoredUnchanged = result.Sources - len(sources)
+	paths = paths[:0]
+	for _, source := range sources {
+		paths = append(paths, source.path)
+	}
 	window := opts.StabilityWindow
 	if window == 0 {
 		window = defaultStabilityWindow
@@ -183,12 +209,14 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		path := source.path
 		expected, ok := stable[path]
 		if !ok {
+			incremental.failedSource(source)
 			continue
 		}
 		var raw []byte
 		var readErr error
 		raw, readErr = readObservedFile(ctx, path, expected)
 		if readErr != nil {
+			incremental.failedSource(source)
 			if errors.Is(readErr, context.Canceled) || errors.Is(readErr, context.DeadlineExceeded) {
 				return result, readErr
 			}
@@ -203,6 +231,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		if source.harness == harnessCodex || (source.harness == harnessDeepSeek && !source.compressed) {
 			raw, readErr = completedNativePrefix(source.harness, raw)
 			if readErr != nil {
+				incremental.failedSource(source)
 				if sourceErrorIsBusy(readErr) {
 					result.Busy++
 					continue
@@ -229,6 +258,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			session, parseErr = parseSession(raw, fallbackID, titles)
 		}
 		if parseErr != nil {
+			incremental.failedSource(source)
 			if sourceErrorIsBusy(parseErr) {
 				result.Busy++
 				continue
@@ -237,22 +267,33 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(path), parseErr))
 			continue
 		}
+		incremental.noteParsed(source, session, titles)
 		if opts.SessionID != "" && session.ID != opts.SessionID {
+			incremental.settle(session.Harness, session.ID)
 			continue
 		}
 		parsed = append(parsed, parsedNativeSession{source: source, session: session})
 	}
 	if selected.OpenCode {
-		openCode, readErr := readOpenCodeSessions(ctx, opts.OpenCodeDB, window)
+		openCode, readErr := readOpenCodeSessionsSelected(ctx, opts.OpenCodeDB, window, func(header openCodeSessionRow) bool {
+			return incremental.selectOpenCode(opts.OpenCodeDB, header)
+		})
 		if readErr != nil {
 			return result, fmt.Errorf("read OpenCode sessions: %w", readErr)
 		}
 		result.Sources += openCode.sources
+		result.ScannedSources += openCode.sources - openCode.ignored
+		result.IgnoredUnchanged += openCode.ignored
 		result.Busy += openCode.busy
 		result.Skipped += openCode.skipped
 		result.Warnings = append(result.Warnings, openCode.warnings...)
+		for _, id := range openCode.busySessionIDs {
+			incremental.retry[logicalSourceKey(harnessOpenCode, id)] = true
+		}
 		for _, session := range openCode.sessions {
+			incremental.parsed[sourceStateKey(harnessOpenCode, opts.OpenCodeDB+"\x00"+session.ID)] = true
 			if opts.SessionID != "" && session.ID != opts.SessionID {
+				incremental.settle(session.Harness, session.ID)
 				continue
 			}
 			parsed = append(parsed, parsedNativeSession{
@@ -265,15 +306,24 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	for _, issue := range issues {
 		result.Skipped += issue.count
 		result.Warnings = append(result.Warnings, issue.warning)
+		incremental.retry[logicalSourceKey(issue.harness, issue.sessionID)] = true
 	}
 	for _, session := range logicalSessions {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		if incremental.blocked[logicalSourceKey(session.Harness, session.ID)] {
+			continue
+		}
 		if session.ExcludeReason != "" {
 			result.FilteredInternal++
+			incremental.settle(session.Harness, session.ID)
 			continue
 		}
 		if session.UserMessages == 0 {
 			// Context-only startup records are not conversations. Keep the raw
 			// Codex source untouched and silently leave it out of the archive.
+			incremental.settle(session.Harness, session.ID)
 			continue
 		}
 		repo, repoErr := repositoryForSession(ctx, session)
@@ -282,6 +332,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			if localErr == nil {
 				if !opts.IncludeNonGit {
 					result.FilteredNonGit++
+					incremental.settle(session.Harness, session.ID)
 					continue
 				}
 				repo = localRepo
@@ -292,10 +343,12 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("session %s: workspace is unavailable or has no hosted Git remote", session.ID))
 			}
 			if repoErr != nil {
+				incremental.retry[logicalSourceKey(session.Harness, session.ID)] = true
 				continue
 			}
 		}
 		if !opts.AllRepos && repo.Key != target.Key {
+			incremental.settle(session.Harness, session.ID)
 			continue
 		}
 		result.Matched++
@@ -305,10 +358,12 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		previousHistory := history[key]
 		created, snapshotPath, documentHash, publishErr := publishSnapshot(output, &snapshot, previousHistory)
 		if publishErr != nil {
+			incremental.retry[logicalSourceKey(session.Harness, session.ID)] = true
 			result.Skipped++
 			result.Warnings = append(result.Warnings, fmt.Sprintf("session %s: %v", session.ID, publishErr))
 			continue
 		}
+		incremental.settle(session.Harness, session.ID)
 		attachments, archivedFiles := attachmentCounts(snapshot.Session)
 		result.Attachments += attachments
 		result.ArchivedAttachments += archivedFiles
@@ -342,15 +397,20 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			result.Unchanged++
 		}
 	}
-	if opts.SessionID != "" && result.Matched == 0 && result.Busy == 0 && result.FilteredInternal == 0 {
+	if opts.SessionID != "" && result.Matched == 0 && result.Busy == 0 && result.FilteredInternal == 0 && !incremental.ignoredSession(opts.SessionID) {
 		return result, fmt.Errorf("session %q was not found for the selected repository scope", opts.SessionID)
 	}
+	var exportErr error
 	if result.Skipped > 0 {
-		sortChanges(result.Changes)
-		return result, fmt.Errorf("export completed with %d skipped session source(s)", result.Skipped)
+		exportErr = fmt.Errorf("export completed with %d skipped session source(s)", result.Skipped)
+	}
+	if err := incremental.save(); err != nil {
+		exportErr = errors.Join(exportErr, fmt.Errorf("save local export checkpoint: %w", err))
+	} else if opts.CheckpointPath != "" {
+		result.LastExportAt = formatTime(startedAt)
 	}
 	sortChanges(result.Changes)
-	return result, nil
+	return result, exportErr
 }
 
 func selectedSources(opts Options) SourceSelection {
@@ -396,6 +456,7 @@ func coalesceLogicalSessions(values []parsedNativeSession) ([]Session, []logical
 		if err != nil {
 			issues = append(issues, logicalSessionIssue{
 				count: len(codexGroups[id]), warning: fmt.Sprintf("session %s: Codex fragments could not be safely coalesced", id),
+				harness: harnessCodex, sessionID: id,
 			})
 			continue
 		}
@@ -440,6 +501,7 @@ func chooseClaudeSource(candidates []parsedNativeSession) (*parsedNativeSession,
 		if candidate.session.RawHash != firstHash {
 			return nil, &logicalSessionIssue{
 				count: len(candidates), warning: fmt.Sprintf("session %s: Claude Code transcript identity is ambiguous", candidates[0].session.ID),
+				harness: harnessClaudeCode, sessionID: candidates[0].session.ID,
 			}
 		}
 	}
