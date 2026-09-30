@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -54,6 +55,25 @@ func TestSearchShowCustomPathsAndConfigRemainReadOnly(t *testing.T) {
 	}
 	if result.Total != 1 || result.Matches[0].SessionID != "query-cli" {
 		t.Fatalf("custom path and mixed-position flags: %+v", result)
+	}
+	checkout := filepath.Join(root, "checkout")
+	child := filepath.Join(checkout, "child")
+	if err := os.MkdirAll(child, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"-C", checkout, "init", "--quiet"}, {"-C", checkout, "remote", "add", "origin", "https://github.com/example/query-cli.git"}} {
+		if output, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("fixture checkout: %s: %v", output, err)
+		}
+	}
+	t.Chdir(child)
+	for _, path := range []string{".", "..", "../child", checkout} {
+		if err := json.Unmarshal(run("search", "TRANSFORMER", "--directory", output, "--repo", path, "--json"), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Total != 1 {
+			t.Fatalf("local repository %q was not resolved: %+v", path, result)
+		}
 	}
 	var evidence archive.EvidenceResult
 	if err := json.Unmarshal(run("show", "--directory", output, "--key", result.Matches[0].SessionKey, "--from-line", "1", "--to-line", "5", "--json"), &evidence); err != nil {

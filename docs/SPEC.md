@@ -27,6 +27,7 @@ smg show (--session ID|--key KEY|--path PATH) [--directory PATH]
 `--directory`/`--output` 查询路径仅本次使用；默认读取保存目录。literal `~/...`、空格
 和相对路径均支持。export `--output` 是一次性目标，`--directory` 保存默认值；原生
 来源 home/database flags 也允许自定义路径。检索只访问指定 archive，不发现 native sources。
+search `--repo .` 和 `--repo ..` 按当前/父目录的 Git 仓库身份筛选。
 
 安装到 PATH 的 `smg` 与 `sessionmgr` 共用同一 executable、配置和子命令。
 `smg --version` 输出 `sessionmgr <version>`；`smg --help` 列出完整用法。
@@ -700,7 +701,7 @@ Git。`make cross-check` 编译 darwin/arm64、linux/amd64、windows/amd64；`ma
 
 ### 11.1 Windows release pipeline
 
-开发源码的当前版本是 `1.4.0`。`internal/app.version` 必须是可由 Go linker `-X` 覆盖的
+开发源码的当前版本是 `1.4.1`。`internal/app.version` 必须是可由 Go linker `-X` 覆盖的
 string variable；正式构建使用：
 
 ```text

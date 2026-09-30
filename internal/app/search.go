@@ -45,7 +45,7 @@ func commandSearch(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return err
 	}
 	repository := *repo
-	if filepath.IsAbs(repository) || strings.HasPrefix(repository, "./") || strings.HasPrefix(repository, "../") || strings.HasPrefix(repository, "~") {
+	if repository == "." || repository == ".." || filepath.IsAbs(repository) || strings.HasPrefix(repository, "./") || strings.HasPrefix(repository, "../") || strings.HasPrefix(repository, "~") {
 		path, err := config.ResolvePath(repository)
 		if err != nil {
 			return err
