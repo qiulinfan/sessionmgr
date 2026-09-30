@@ -89,6 +89,25 @@ func TestResolveDirectoryRequiresConfiguration(t *testing.T) {
 	}
 }
 
+func TestCustomTildePathResolutionDoesNotCreateOrRemember(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := ResolvePath("~/smg-example with spaces")
+	if err != nil || path != filepath.Join(home, "smg-example with spaces") {
+		t.Fatalf("literal home expansion: %s, %v", path, err)
+	}
+	store := Store{Path: filepath.Join(t.TempDir(), "config.json")}
+	resolved, err := store.ResolveDirectory("~/smg-example with spaces", false)
+	if err != nil || resolved != path {
+		t.Fatalf("one-time path: %s, %v", resolved, err)
+	}
+	if _, err := os.Stat(store.Path); !os.IsNotExist(err) {
+		t.Fatal("read-only resolution created config")
+	}
+}
+
 func TestEnsureDevicePersistsStableMachineIdentity(t *testing.T) {
 	root := t.TempDir()
 	store := Store{Path: filepath.Join(root, "config.json")}

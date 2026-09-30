@@ -104,7 +104,7 @@ func (store Store) SetExportDirectory(directory string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	abs, err := filepath.Abs(directory)
+	abs, err := ResolvePath(directory)
 	if err != nil {
 		return Config{}, err
 	}
@@ -220,8 +220,7 @@ func (store Store) ResolveDirectory(override string, remember bool) (string, err
 			value, err := store.SetExportDirectory(override)
 			return value.ExportDirectory, err
 		}
-		abs, err := filepath.Abs(override)
-		return filepath.Clean(abs), err
+		return ResolvePath(override)
 	}
 	value, err := store.Load()
 	if err != nil {
@@ -231,4 +230,21 @@ func (store Store) ResolveDirectory(override string, remember bool) (string, err
 		return "", fmt.Errorf("export directory is not configured; run: sessionmgr config set-directory PATH")
 	}
 	return value.ExportDirectory, nil
+}
+
+// ResolvePath accepts literal ~/ paths from argument arrays as well as ordinary
+// relative or absolute paths. It never creates a directory or writes config.
+func ResolvePath(value string) (string, error) {
+	if value == "~" || strings.HasPrefix(value, "~/") || strings.HasPrefix(value, `~\`) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		if value == "~" {
+			value = home
+		} else {
+			value = filepath.Join(home, value[2:])
+		}
+	}
+	return filepath.Abs(value)
 }

@@ -235,6 +235,11 @@ hosted Git remote key | device-local directory key
 
 ### FR-7 CLI
 
+- 支持 metadata-first `search`，按仓库/会话/来源/设备/源活动重合时间与主题筛选，自定义
+  archive 路径和分页；unknown timing 明确可观察，正文搜索须明确限定范围；
+- `show` 明确选择一项并核验完整 hash 后才返回限定编号行与实际覆盖时间，歧义/缺失/
+  改动不得伪装成功。查询不修改默认目录、不刷新源、不导出、不执行 Git。
+
 - 提供可安装 `smg`，支持裸启动、`--version`、`--help` 及既有子命令；user-local 安装
   不依赖 Go/checkout，不覆盖 unrelated command/symlink；App 菜单可以安装；
 - macOS 裸调用优先打开已安装 App，`gui` 保留前台 browser server；

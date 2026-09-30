@@ -18,7 +18,7 @@ import (
 
 // version is a variable so release builds can stamp the reviewed tag version
 // with -ldflags -X. Development builds keep an explicit prerelease suffix.
-var version = "1.3.0"
+var version = "1.4.0"
 
 type commandError struct {
 	exitCode int
@@ -45,6 +45,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, err
 		err = commandConfig(args[1:], stdout, stderr)
 	case "list":
 		err = commandList(args[1:], stdout, stderr)
+	case "search":
+		err = commandSearch(ctx, args[1:], stdout, stderr)
+	case "show":
+		err = commandShow(ctx, args[1:], stdout, stderr)
 	case "cleanup-internal":
 		err = commandCleanupInternal(ctx, args[1:], stdout, stderr)
 	case "gui":
@@ -144,6 +148,22 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	repoWasSet := flagWasSet(flags, "repo")
 	if *all && repoWasSet {
 		return argumentError("--all and --repo are mutually exclusive")
+	}
+	for _, path := range []*string{source, claudeSource, deepSeekSource, ompSource, ompSessionDir, openCodeDB} {
+		if *path != "" {
+			resolved, err := config.ResolvePath(*path)
+			if err != nil {
+				return err
+			}
+			*path = resolved
+		}
+	}
+	if repoWasSet {
+		resolved, err := config.ResolvePath(*repo)
+		if err != nil {
+			return err
+		}
+		*repo = resolved
 	}
 	if *directory != "" && *output != "" {
 		return argumentError("--directory and --output are mutually exclusive")
@@ -480,6 +500,11 @@ Usage:
                     [--omp-home PATH] [--omp-session-dir PATH] [--opencode-db PATH]
                     [--include-archived] [--include-non-git] [--full-scan] [--directory PATH]
   smg list [--history]
+  smg search [QUERY] [--directory PATH] [--repo NAME|REMOTE|PATH] [--session ID]
+                    [--harness NAME] [--device ID|NAME] [--since TIME] [--until TIME]
+                    [--timezone ZONE] [--content] [--limit N] [--offset N] [--json]
+  smg show (--session ID | --key KEY | --path PATH) [--directory PATH]
+           [--harness NAME] [--device ID|NAME] [--from-line N] [--to-line N] [--json]
   smg cleanup-internal [--directory PATH] [--apply]
   smg version
 
@@ -489,5 +514,8 @@ The configured export directory persists across launches. Output lists
 only files changed by the current operation. "archive" remains an alias for
 "export". Later exports use local scan history with a one-hour overlap;
 --full-scan checks every session again. cleanup-internal is a dry run unless
---apply is provided.`)
+--apply is provided. search is read-only metadata retrieval; --content requires
+a narrow scope. show verifies document hashes before returning bounded lines.
+For one-time export paths use --output; --directory remembers the export path.
+Search/show directory overrides are always one-time and never save config.`)
 }
