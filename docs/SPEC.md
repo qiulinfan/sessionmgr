@@ -1,6 +1,14 @@
-# Session Manager v1.2 技术规格
+# Session Manager v1.3 技术规格
 
 ## 1. 进程与命令面
+
+安装到 PATH 的 `smg` 与 `sessionmgr` 共用同一 executable、配置和子命令。
+`smg --version` 输出 `sessionmgr <version>`；`smg --help` 列出完整用法。
+裸调用与 `open` 在 macOS 优先打开已安装 App；`gui` 显式启动前台 browser server。
+`install-cli [--directory PATH]` 默认复制当前 executable 到 `~/.local/bin/smg`（Windows
+为 `smg.exe`），不要求 Go 或 checkout，不自动修改 PATH。只更新本产品 executable，
+拒绝 unrelated file/symlink，以 copy/fsync/rename 发布。源码提供 `make install-cli`；
+App 菜单提供 **Install smg Command**。
 
 ```text
 sessionmgr                                      # GUI
@@ -666,7 +674,7 @@ Git。`make cross-check` 编译 darwin/arm64、linux/amd64、windows/amd64；`ma
 
 ### 11.1 Windows release pipeline
 
-开发源码的当前版本是 `1.2.0`。`internal/app.version` 必须是可由 Go linker `-X` 覆盖的
+开发源码的当前版本是 `1.3.0`。`internal/app.version` 必须是可由 Go linker `-X` 覆盖的
 string variable；正式构建使用：
 
 ```text
@@ -736,6 +744,13 @@ WKWebView 自动 navigation 只接受本 App server 的 scheme/host/port；显�
 
 App 使用 ad-hoc signature 作本机构建完整性验证，未做 Developer ID signing 或 Apple
 notarization；release notes 必须明确这些状态。应用图标复用 `assets/sessionmgr.png`。
+
+### 11.3 独立 CLI 分发
+
+macOS 从同一 universal backend 发布只含 `smg` 的 CLI tarball；Linux 对 AMD64/ARM64
+构建纯 Go executable 并发布 tarball。各 archive 配套 SHA-256。解压后运行
+`./smg install-cli`；Windows 使用下载 executable 的 `install-cli` 子命令安装
+`smg.exe`。发布同时等待三个 build job 成功。安装不导出会话、不改配置、不建后台服务。
 
 ## 12. 兼容性
 

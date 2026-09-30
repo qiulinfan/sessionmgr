@@ -137,13 +137,38 @@ jobs:
           name: macos-release-assets
           path: |
             dist/*.zip
+            dist/*macos-cli.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  build_cli:
+    name: Build Linux CLI archives
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: go.sum
+      - name: Build CLI release assets
+        run: bash scripts/build-cli-release.sh '${{ needs.validate.outputs.release_version }}'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cli-release-assets
+          path: |
+            dist/*linux*.tar.gz
             dist/*.sha256
           if-no-files-found: error
           retention-days: 1
 
   publish:
     name: Publish the tag release
-    needs: [build, build_macos]
+    needs: [build, build_macos, build_cli]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -163,6 +188,12 @@ jobs:
           name: macos-release-assets
           path: dist
 
+      - name: Download CLI release assets
+        uses: actions/download-artifact@v8
+        with:
+          name: cli-release-assets
+          path: dist
+
       - name: Publish the tag release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -170,9 +201,9 @@ jobs:
         shell: bash
         run: |
           release_version="${RELEASE_VERSION#v}"
-          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/*.zip dist/*.sha256 \
+          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/*.zip dist/*.tar.gz dist/*.sha256 \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --generate-notes \
             --title "Session Manager $release_version" \
-            --notes "Includes incremental export with a one-hour overlap, deleted-workspace archives with non-Git opt-in, reveal-in-folder actions, and a native macOS window. Download the universal macOS app zip for Apple Silicon or Intel Macs (macOS 14+), or the Windows executable for your architecture. The macOS bundle uses ad-hoc integrity signing and is not Apple-notarized or Developer ID-signed. Windows binaries are not Authenticode-signed."
+            --notes "Adds the smg command and install-cli installer, with version/help/export/list/config commands sharing the existing configuration. On macOS, smg opens the installed native app; smg gui explicitly starts the browser UI. The app menu can install smg. Download the universal macOS app zip or CLI archive, Linux AMD64/ARM64 CLI archive, or Windows executable. The macOS bundle uses ad-hoc integrity signing and is not Apple-notarized or Developer ID-signed. Windows binaries are not Authenticode-signed."

@@ -45,6 +45,8 @@ final class SessionManagerDelegate: NSObject, NSApplicationDelegate, WKNavigatio
         let menu = NSMenu()
         let applicationMenu = NSMenu()
         applicationMenu.addItem(withTitle: "About Session Manager", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        let installCLI = applicationMenu.addItem(withTitle: "Install smg Command…", action: #selector(installCommandLineTool), keyEquivalent: "")
+        installCLI.target = self
         applicationMenu.addItem(.separator())
         applicationMenu.addItem(withTitle: "Quit Session Manager", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let applicationItem = NSMenuItem()
@@ -106,6 +108,31 @@ final class SessionManagerDelegate: NSObject, NSApplicationDelegate, WKNavigatio
         }
         startupTimeout = timeout
         DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: timeout)
+    }
+
+    @objc private func installCommandLineTool() {
+        guard let executable = Bundle.main.url(forResource: "sessionmgr", withExtension: nil, subdirectory: "bin") else { return }
+        let installer = Process()
+        let output = Pipe()
+        installer.executableURL = executable
+        installer.arguments = ["install-cli"]
+        installer.standardOutput = output
+        installer.standardError = output
+        let alert = NSAlert()
+        do {
+            try installer.run()
+            output.fileHandleForWriting.closeFile()
+            let response = output.fileHandleForReading.readDataToEndOfFile()
+            installer.waitUntilExit()
+            alert.messageText = installer.terminationStatus == 0 ? "smg command installed" : "smg installation failed"
+            alert.informativeText = String(decoding: response.prefix(8192), as: UTF8.self)
+        } catch {
+            alert.messageText = "smg installation failed"
+            alert.informativeText = "The bundled installer could not be started."
+        }
+        output.fileHandleForReading.closeFile()
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     private func readStartupOutput(_ data: Data) {

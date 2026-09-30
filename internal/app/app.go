@@ -18,7 +18,7 @@ import (
 
 // version is a variable so release builds can stamp the reviewed tag version
 // with -ldflags -X. Development builds keep an explicit prerelease suffix.
-var version = "1.2.0"
+var version = "1.3.0"
 
 type commandError struct {
 	exitCode int
@@ -29,7 +29,7 @@ func (e *commandError) Error() string { return e.message }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 	if len(args) == 0 {
-		args = []string{"gui"}
+		args = []string{"open"}
 	}
 	if args[0] == "version" || args[0] == "--version" {
 		fmt.Fprintf(stdout, "sessionmgr %s\n", version)
@@ -49,6 +49,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, err
 		err = commandCleanupInternal(ctx, args[1:], stdout, stderr)
 	case "gui":
 		err = commandGUI(ctx, args[1:], stdout, stderr)
+	case "open":
+		err = commandOpen(ctx, args[1:], stdout, stderr)
+	case "install-cli":
+		err = commandInstallCLI(args[1:], stdout, stderr)
 	default:
 		printHelp(stderr)
 		err = &commandError{exitCode: 2, message: "unknown command " + args[0]}
@@ -465,18 +469,21 @@ func printHelp(output io.Writer) {
 	fmt.Fprintln(output, `sessionmgr exports Codex, Claude Code, DeepSeek Harness, Oh My Pi, and OpenCode conversations as readable Markdown files.
 
 Usage:
-  sessionmgr                         Open the GUI
-  sessionmgr gui [--no-open] [--claude-home PATH] [--deepseek-home PATH]
+  smg                                Open the macOS app when installed, otherwise the browser UI
+  smg --version
+  smg install-cli [--directory PATH]  Install the smg command (default: ~/.local/bin)
+  smg gui [--no-open] [--claude-home PATH] [--deepseek-home PATH]
                  [--omp-home PATH] [--omp-session-dir PATH] [--opencode-db PATH]
-  sessionmgr config set-directory PATH
-  sessionmgr config show
-  sessionmgr export [--all | --repo PATH] [--session ID] [--sources codex,claude-code,deepseek,omp,opencode]
+  smg config set-directory PATH
+  smg config show
+  smg export [--all | --repo PATH] [--session ID] [--sources codex,claude-code,deepseek,omp,opencode]
                     [--omp-home PATH] [--omp-session-dir PATH] [--opencode-db PATH]
                     [--include-archived] [--include-non-git] [--full-scan] [--directory PATH]
-  sessionmgr list [--history]
-  sessionmgr cleanup-internal [--directory PATH] [--apply]
-  sessionmgr version
+  smg list [--history]
+  smg cleanup-internal [--directory PATH] [--apply]
+  smg version
 
+smg and sessionmgr use the same commands, configuration, and export checkpoints.
 Available session stores for all five supported harnesses are scanned automatically.
 The configured export directory persists across launches. Output lists
 only files changed by the current operation. "archive" remains an alias for

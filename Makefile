@@ -1,4 +1,4 @@
-.PHONY: build macos-app test vet race cross-check dist check clean prepare-bin prepare-dist \
+.PHONY: build install-cli macos-app test vet race cross-check dist check clean prepare-bin prepare-dist \
 	cross-darwin-arm64 cross-linux-amd64 cross-windows-amd64 \
 	dist-darwin-arm64 dist-darwin-amd64 dist-linux-amd64 dist-linux-arm64 \
 	dist-windows-amd64 dist-windows-arm64
@@ -18,6 +18,7 @@ EXEEXT :=
 endif
 
 BIN_PATH := $(BIN_DIR)/sessionmgr$(EXEEXT)
+SMG_PATH := $(BIN_DIR)/smg$(EXEEXT)
 
 # Native Windows GNU Make uses cmd.exe even when Make is launched from
 # PowerShell. Git Bash sets MSYSTEM and should keep using POSIX commands.
@@ -30,6 +31,7 @@ prepare-dist:
 
 clean:
 	if exist "$(subst /,\,$(BIN_PATH))" del /Q "$(subst /,\,$(BIN_PATH))"
+	if exist "$(subst /,\,$(SMG_PATH))" del /Q "$(subst /,\,$(SMG_PATH))"
 	if exist "$(DIST_DIR)" rmdir /S /Q "$(DIST_DIR)"
 
 else
@@ -41,6 +43,7 @@ prepare-dist:
 
 clean:
 	rm -f "$(BIN_PATH)"
+	rm -f "$(SMG_PATH)"
 	rm -rf "$(DIST_DIR)"
 
 endif
@@ -58,6 +61,10 @@ $(NO_CGO_TARGETS): export CGO_ENABLED := 0
 
 build: | prepare-bin
 	$(GO) build -trimpath -o "$(BIN_PATH)" ./cmd/sessionmgr
+	$(GO) build -trimpath -o "$(SMG_PATH)" ./cmd/sessionmgr
+
+install-cli: build
+	"$(BIN_PATH)" install-cli
 
 macos-app:
 	GO="$(GO)" bash scripts/build-macos-release.sh $(VERSION)

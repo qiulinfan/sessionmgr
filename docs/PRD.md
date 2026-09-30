@@ -235,6 +235,11 @@ hosted Git remote key | device-local directory key
 
 ### FR-7 CLI
 
+- 提供可安装 `smg`，支持裸启动、`--version`、`--help` 及既有子命令；user-local 安装
+  不依赖 Go/checkout，不覆盖 unrelated command/symlink；App 菜单可以安装；
+- macOS 裸调用优先打开已安装 App，`gui` 保留前台 browser server；
+- macOS universal、Linux AMD64/ARM64 CLI archive/checksum 与 App/Windows 资产一起发布。
+
 - 必须提供 `config set-directory`、`config show`、`export`、`list`、`cleanup-internal`、
   `gui`、`version`；
 - human output 与 JSON output 必须分离；

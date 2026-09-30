@@ -104,5 +104,15 @@ mkdir -p "$app_directory"
 mv "$staged_app" "$app_path"
 ditto -c -k --sequesterRsrc --keepParent "$app_path" "$distribution_root/$asset_name"
 (cd "$distribution_root" && shasum -a 256 "$asset_name") > "$distribution_root/$asset_name.sha256"
+cli_asset="sessionmgr-v$version-macos-cli.tar.gz"
+cp "$app_path/Contents/Resources/bin/sessionmgr" "$temporary_root/smg"
+"$temporary_root/smg" install-cli --directory "$temporary_root/cli-install" >/dev/null
+if [[ "$("$temporary_root/cli-install/smg" --version)" != "sessionmgr $version" ]]; then
+  echo "Installed macOS CLI version verification failed." >&2
+  exit 1
+fi
+COPYFILE_DISABLE=1 tar -czf "$distribution_root/$cli_asset" -C "$temporary_root" smg
+(cd "$distribution_root" && shasum -a 256 "$cli_asset") > "$distribution_root/$cli_asset.sha256"
 echo "Built $app_path"
 echo "Release asset: $distribution_root/$asset_name"
+echo "CLI asset: $distribution_root/$cli_asset"

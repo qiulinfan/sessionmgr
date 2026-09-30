@@ -12,6 +12,7 @@ The repository-level requirements are defined in
 
 | Version | Status | Date | Summary |
 | --- | --- | --- | --- |
+| [`v1.3.0`](./v1.3.0.md) | Released | 2026-09-30 | Installed smg command and portable CLI downloads |
 | [`v1.2.0`](./v1.2.0.md) | Released | 2026-09-30 | Incremental scans, deleted workspaces, folder reveal, and a native macOS app |
 | [`v1.1.0`](./v1.1.0.md) | Released | 2026-09-29 | Five peer sources, completed-turn export, and Claude cloud exclusion |
 | [`v1.0.2`](./v1.0.2.md) | Released | 2026-09-04 | Recover valid Codex fragments and Claude copied ancestry safely |
