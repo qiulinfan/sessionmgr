@@ -41,6 +41,7 @@ type openCodeReadResult struct {
 	warnings       []string
 	ignored        int
 	busySessionIDs []string
+	incomplete     []SourceIssue
 }
 
 type openCodeMessageData struct {
@@ -160,8 +161,16 @@ func readOpenCodeSessionsSelected(ctx context.Context, path string, _ time.Durat
 			result.ignored++
 			continue
 		}
+		if automatedOpenCodeDirectory(header.directory) {
+			result.sessions = append(result.sessions, Session{ID: header.id, Harness: harnessOpenCode, ExcludeReason: "automated_cli"})
+			continue
+		}
 		session, activeTail, err := readOpenCodeSession(ctx, tx, header)
 		if err != nil {
+			if stableIncomplete(err, time.UnixMilli(header.modified), time.Now()) {
+				result.incomplete = append(result.incomplete, SourceIssue{Harness: harnessOpenCode, SessionID: header.id, Reason: err.Error(), LastActivity: time.UnixMilli(header.modified).UTC()})
+				continue
+			}
 			if sourceErrorIsBusy(err) {
 				result.busy++
 				result.busySessionIDs = append(result.busySessionIDs, header.id)

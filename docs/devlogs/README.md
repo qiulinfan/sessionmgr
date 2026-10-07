@@ -12,6 +12,7 @@ The repository-level requirements are defined in
 
 | Version | Status | Date | Summary |
 | --- | --- | --- | --- |
+| [`v1.4.2`](./v1.4.2.md) | Released | 2026-10-07 | Separate stable incomplete histories, suppress stale retries, and filter generated engine CLI jobs |
 | [`v1.4.1`](./v1.4.1.md) | Released | 2026-09-30 | Resolve current and parent checkout paths in search repository filters |
 | [`v1.4.0`](./v1.4.0.md) | Released | 2026-09-30 | Read-only search, verified excerpts, and custom archive/source paths |
 | [`v1.3.0`](./v1.3.0.md) | Released | 2026-09-30 | Installed smg command and portable CLI downloads |

@@ -101,7 +101,8 @@ const translations = {
     notExported: "No export has been run yet.",
     readingSessions: "Reading agent sessions…",
     noChanges: "No changes. The export directory is up to date.",
-    busySessions: "No exported changes; {count} active session(s) will be retried next time.",
+    busySessions: "No exported changes; {count} changing or recently unfinished source(s) will be retried.",
+    incompleteSessions: "{count} stable incomplete histories remain; unchanged sources are not repeatedly retried.",
     filteredSessions: "No exported changes; {count} internal session(s) were excluded.",
     filteredNonGit: "No exported changes; {count} non-Git session(s) were excluded. Enable full export to include them.",
     saving: "Saving…",
@@ -177,7 +178,8 @@ const translations = {
     notExported: "尚未执行导出。",
     readingSessions: "正在读取 agent sessions…",
     noChanges: "没有变化，导出目录已经是最新状态。",
-    busySessions: "没有导出变化；{count} 个正在写入的 session 已留到下次。",
+    busySessions: "没有导出变化；{count} 个变化中或近期未结束的来源将在下次重试。",
+    incompleteSessions: "有 {count} 条稳定的未完成历史；来源未变化时不重复重试。",
     filteredSessions: "没有导出变化；已排除 {count} 个内部 session。",
     filteredNonGit: "没有导出变化；已排除 {count} 个非 Git session。开启全量导出即可包括它们。",
     saving: "保存中…",
@@ -514,6 +516,7 @@ function sessionChange(item) {
 function renderChanges(payload) {
   const items = payload.result.changes || [];
   const busy = payload.result.busy || 0;
+  const incomplete = payload.result.incomplete || 0;
   const filtered = payload.result.filtered_internal || 0;
   const filteredNonGit = payload.result.filtered_non_git || 0;
   if (payload.result.last_export_at) lastExportAt = payload.result.last_export_at;
@@ -525,9 +528,11 @@ function renderChanges(payload) {
   scanSummary.classList.remove("hidden");
   resultCount.textContent = String(items.length);
   if (items.length === 0) {
-    message.className = busy > 0 || filtered > 0 || filteredNonGit > 0 ? "empty busy" : "empty success";
+    message.className = busy > 0 || incomplete > 0 || filtered > 0 || filteredNonGit > 0 ? "empty busy" : "empty success";
     message.textContent = busy > 0
       ? t("busySessions", { count: busy })
+      : incomplete > 0
+        ? t("incompleteSessions", { count: incomplete })
       : filtered > 0
         ? t("filteredSessions", { count: filtered })
         : filteredNonGit > 0

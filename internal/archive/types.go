@@ -4,7 +4,7 @@ import "time"
 
 const (
 	SchemaVersion             = 1
-	ExportResultSchemaVersion = 4
+	ExportResultSchemaVersion = 5
 	LocalRepositorySchema     = 2
 	SessionMetadataSchema     = 2
 	LayoutVersion             = 5
@@ -65,26 +65,28 @@ type Options struct {
 }
 
 type Result struct {
-	SchemaVersion       int      `json:"schema_version"`
-	Sources             int      `json:"sources"`
-	Matched             int      `json:"matched"`
-	Created             int      `json:"created"`
-	Unchanged           int      `json:"unchanged"`
-	Busy                int      `json:"busy"`
-	FilteredInternal    int      `json:"filtered_internal"`
-	FilteredNonGit      int      `json:"filtered_non_git"`
-	FullExported        int      `json:"full_exported"`
-	Skipped             int      `json:"skipped"`
-	Attachments         int      `json:"attachments"`
-	ArchivedAttachments int      `json:"archived_attachments"`
-	Output              string   `json:"output"`
-	ScannedSources      int      `json:"scanned_sources"`
-	IgnoredUnchanged    int      `json:"ignored_unchanged"`
-	Incremental         bool     `json:"incremental"`
-	Since               string   `json:"since,omitempty"`
-	LastExportAt        string   `json:"last_export_at,omitempty"`
-	Changes             []Change `json:"changes"`
-	Warnings            []string `json:"warnings,omitempty"`
+	SchemaVersion       int           `json:"schema_version"`
+	Sources             int           `json:"sources"`
+	Matched             int           `json:"matched"`
+	Created             int           `json:"created"`
+	Unchanged           int           `json:"unchanged"`
+	Busy                int           `json:"busy"`
+	Incomplete          int           `json:"incomplete"`
+	SourceIssues        []SourceIssue `json:"source_issues,omitempty"`
+	FilteredInternal    int           `json:"filtered_internal"`
+	FilteredNonGit      int           `json:"filtered_non_git"`
+	FullExported        int           `json:"full_exported"`
+	Skipped             int           `json:"skipped"`
+	Attachments         int           `json:"attachments"`
+	ArchivedAttachments int           `json:"archived_attachments"`
+	Output              string        `json:"output"`
+	ScannedSources      int           `json:"scanned_sources"`
+	IgnoredUnchanged    int           `json:"ignored_unchanged"`
+	Incremental         bool          `json:"incremental"`
+	Since               string        `json:"since,omitempty"`
+	LastExportAt        string        `json:"last_export_at,omitempty"`
+	Changes             []Change      `json:"changes"`
+	Warnings            []string      `json:"warnings,omitempty"`
 }
 
 type CleanupOptions struct {
@@ -247,4 +249,12 @@ type Entry struct {
 	Versions       int    `json:"versions"`
 	Legacy         bool   `json:"legacy,omitempty"`
 	Path           string `json:"path"`
+}
+
+// SourceIssue describes a stable but incomplete source; it does not imply a live process.
+type SourceIssue struct {
+	Harness      string    `json:"harness"`
+	SessionID    string    `json:"session_id,omitempty"`
+	Reason       string    `json:"reason"`
+	LastActivity time.Time `json:"last_activity"`
 }

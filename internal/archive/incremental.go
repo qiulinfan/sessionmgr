@@ -8,12 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
-const exportStateSchema = 1
+const exportStateSchema = 2
 const exportOverlap = time.Hour
 
 // GUI exports share one process. Serialize checkpoint-backed exports so a
@@ -32,12 +33,13 @@ type exportCheckpoint struct {
 }
 
 type exportSourceState struct {
-	Harness    string    `json:"harness"`
-	SessionID  string    `json:"session_id,omitempty"`
-	Size       int64     `json:"size"`
-	ModifiedAt time.Time `json:"modified_at"`
-	TitleHash  string    `json:"title_hash,omitempty"`
-	Pending    bool      `json:"pending"`
+	Harness    string       `json:"harness"`
+	SessionID  string       `json:"session_id,omitempty"`
+	Size       int64        `json:"size"`
+	ModifiedAt time.Time    `json:"modified_at"`
+	TitleHash  string       `json:"title_hash,omitempty"`
+	Pending    bool         `json:"pending"`
+	Deferred   *SourceIssue `json:"deferred,omitempty"`
 }
 
 type incrementalExport struct {
@@ -76,9 +78,10 @@ func loadExportState(path string) (exportState, error) {
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return state, fmt.Errorf("local export checkpoint contains trailing data")
 	}
-	if state.SchemaVersion != exportStateSchema || state.Scopes == nil {
+	if (state.SchemaVersion != 1 && state.SchemaVersion != exportStateSchema) || state.Scopes == nil {
 		return state, fmt.Errorf("unsupported local export checkpoint schema %d", state.SchemaVersion)
 	}
+	state.SchemaVersion = exportStateSchema
 	return state, nil
 }
 
@@ -149,10 +152,15 @@ func (run *incrementalExport) filterSources(sources []nativeSessionSource, title
 		selected := run.since.IsZero() || !known || old.Pending || err != nil ||
 			!next.ModifiedAt.Before(run.since) || next.Size != old.Size ||
 			!next.ModifiedAt.Equal(old.ModifiedAt) || next.TitleHash != old.TitleHash
+		if !run.full && known && old.Deferred != nil && err == nil && next.Size == old.Size && next.ModifiedAt.Equal(old.ModifiedAt) && next.TitleHash == old.TitleHash {
+			selected = false
+		}
 		if selected {
+			next.Deferred = nil
 			if source.harness == harnessCodex && err == nil && info.Mode().IsRegular() {
 				if id := peekCodexSessionID(source.path); id != "" {
 					next.SessionID = id
+					next.TitleHash = titleStateHash(titles[id])
 				}
 			} else if source.harness == harnessClaudeCode {
 				next.SessionID = strings.TrimSuffix(filepath.Base(source.path), filepath.Ext(source.path))
@@ -224,6 +232,10 @@ func (run *incrementalExport) selectOpenCode(path string, header openCodeSession
 	}
 	selected := run.since.IsZero() || !known || old.Pending || !next.ModifiedAt.Before(run.since) ||
 		!next.ModifiedAt.Equal(old.ModifiedAt) || next.TitleHash != old.TitleHash
+	if !run.full && known && old.Deferred != nil && next.ModifiedAt.Equal(old.ModifiedAt) && next.TitleHash == old.TitleHash {
+		selected = false
+		next.Deferred = old.Deferred
+	}
 	next.Pending = selected
 	run.next.Sources[key] = next
 	return selected
@@ -257,7 +269,8 @@ func (run *incrementalExport) save() error {
 	}
 	for key, source := range run.next.Sources {
 		group := logicalSourceKey(source.Harness, source.SessionID)
-		if run.settled[group] && !run.retry[group] && run.parsed[key] {
+		if run.settled[group] && !run.retry[group] && (run.parsed[key] || source.Deferred != nil) {
+			source.Deferred = nil
 			source.Pending = false
 			run.next.Sources[key] = source
 		}
@@ -306,4 +319,39 @@ func LastExportTime(path, output string) (time.Time, error) {
 		}
 	}
 	return latest, nil
+}
+
+func (run *incrementalExport) deferIncomplete(key, reason string) {
+	state := run.next.Sources[key]
+	state.Pending = false
+	reason = strings.TrimPrefix(reason, errSourceBusy.Error()+": ")
+	reason = strings.TrimPrefix(reason, errSourceIncomplete.Error()+": ")
+	state.Deferred = &SourceIssue{Harness: state.Harness, SessionID: state.SessionID, Reason: reason, LastActivity: state.ModifiedAt}
+	run.next.Sources[key] = state
+}
+
+func (run *incrementalExport) reportIncomplete(result *Result) {
+	seen := make(map[string]bool)
+	for key, state := range run.next.Sources {
+		if state.Deferred == nil {
+			continue
+		}
+		group := logicalSourceKey(state.Harness, state.SessionID)
+		if state.SessionID == "" {
+			group = key
+		}
+		// A complete readable copy supersedes an old incomplete physical copy.
+		if run.settled[group] && !run.retry[group] {
+			continue
+		}
+		if !seen[group] {
+			result.SourceIssues = append(result.SourceIssues, *state.Deferred)
+			seen[group] = true
+		}
+	}
+	sort.Slice(result.SourceIssues, func(i, j int) bool {
+		a, b := result.SourceIssues[i], result.SourceIssues[j]
+		return a.Harness+a.SessionID < b.Harness+b.SessionID
+	})
+	result.Incomplete = len(result.SourceIssues)
 }

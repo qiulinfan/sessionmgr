@@ -23,6 +23,7 @@ func completedNativePrefix(harness string, raw []byte) ([]byte, error) {
 	var lastDone int
 	activeStart := -1
 	markerSeen := false
+	aborted := false
 	for offset := 0; offset < len(complete); {
 		start := offset
 		line, _, found := bytes.Cut(complete[offset:], []byte{'\n'})
@@ -55,8 +56,11 @@ func completedNativePrefix(harness string, raw []byte) ([]byte, error) {
 					if activeStart < 0 {
 						activeStart = start
 					}
+				case "turn_aborted":
+					markerSeen, aborted, activeStart = true, true, -1
 				case "task_complete":
 					markerSeen, lastDone, activeStart = true, end, -1
+					aborted = false
 				case "user_message":
 					if activeStart < 0 {
 						activeStart = start
@@ -83,6 +87,12 @@ func completedNativePrefix(harness string, raw []byte) ([]byte, error) {
 			return nil, fmt.Errorf("%w: no completed turn", errSourceBusy)
 		}
 		return complete[:activeStart], nil
+	}
+	if aborted && activeStart < 0 {
+		if lastDone == 0 {
+			return nil, fmt.Errorf("%w: turn explicitly aborted", errSourceIncomplete)
+		}
+		return complete[:lastDone], nil
 	}
 	if partial {
 		if !markerSeen || lastDone == 0 {

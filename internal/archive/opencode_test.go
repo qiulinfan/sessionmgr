@@ -156,7 +156,7 @@ func TestOpenCodeLeavesIncompleteAssistantForNextExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.busy != 1 || result.skipped != 0 || len(result.warnings) != 0 || len(result.sessions) != 1 {
+	if result.busy != 0 || len(result.incomplete) != 1 || result.skipped != 0 || len(result.warnings) != 0 || len(result.sessions) != 1 {
 		t.Fatalf("incomplete assistant was published or treated as corruption: %+v", result)
 	}
 }

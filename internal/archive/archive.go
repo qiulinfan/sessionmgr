@@ -231,6 +231,10 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		if source.harness == harnessCodex || (source.harness == harnessDeepSeek && !source.compressed) {
 			raw, readErr = completedNativePrefix(source.harness, raw)
 			if readErr != nil {
+				if stableIncomplete(readErr, expected.info.ModTime(), startedAt) {
+					incremental.deferIncomplete(sourceStateKey(source.harness, path), readErr.Error())
+					continue
+				}
 				incremental.failedSource(source)
 				if sourceErrorIsBusy(readErr) {
 					result.Busy++
@@ -258,6 +262,10 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			session, parseErr = parseSession(raw, fallbackID, titles)
 		}
 		if parseErr != nil {
+			if stableIncomplete(parseErr, expected.info.ModTime(), startedAt) {
+				incremental.deferIncomplete(sourceStateKey(source.harness, path), parseErr.Error())
+				continue
+			}
 			incremental.failedSource(source)
 			if sourceErrorIsBusy(parseErr) {
 				result.Busy++
@@ -287,6 +295,9 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		result.Busy += openCode.busy
 		result.Skipped += openCode.skipped
 		result.Warnings = append(result.Warnings, openCode.warnings...)
+		for _, issue := range openCode.incomplete {
+			incremental.deferIncomplete(sourceStateKey(harnessOpenCode, opts.OpenCodeDB+"\x00"+issue.SessionID), issue.Reason)
+		}
 		for _, id := range openCode.busySessionIDs {
 			incremental.retry[logicalSourceKey(harnessOpenCode, id)] = true
 		}
@@ -397,7 +408,8 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			result.Unchanged++
 		}
 	}
-	if opts.SessionID != "" && result.Matched == 0 && result.Busy == 0 && result.FilteredInternal == 0 && !incremental.ignoredSession(opts.SessionID) {
+	incremental.reportIncomplete(&result)
+	if opts.SessionID != "" && result.Matched == 0 && result.Busy == 0 && result.Incomplete == 0 && result.FilteredInternal == 0 && !incremental.ignoredSession(opts.SessionID) {
 		return result, fmt.Errorf("session %q was not found for the selected repository scope", opts.SessionID)
 	}
 	var exportErr error

@@ -131,17 +131,17 @@ func TestIncrementalExportRetriesOldBusyAndMalformedSources(t *testing.T) {
 		ageSource(t, incrementalFixturePath(opts, id), 3*time.Hour)
 	}
 	first, err := Export(context.Background(), opts)
-	if err == nil || first.Created != 1 || first.Skipped != 1 || first.Busy != 1 || first.LastExportAt == "" {
+	if err == nil || first.Created != 1 || first.Skipped != 1 || first.Busy != 0 || first.Incomplete != 1 || first.LastExportAt == "" {
 		t.Fatalf("partial first export: %+v, %v", first, err)
 	}
 	second, err := Export(context.Background(), opts)
-	if err == nil || second.ScannedSources != 2 || second.IgnoredUnchanged != 1 || second.Skipped != 1 || second.Busy != 1 {
+	if err == nil || second.ScannedSources != 1 || second.IgnoredUnchanged != 2 || second.Skipped != 1 || second.Busy != 0 || second.Incomplete != 1 {
 		t.Fatalf("old pending sources were dropped: %+v, %v", second, err)
 	}
 	writeSessionFixture(t, opts.CodexHome, "bad", "https://github.com/example/incremental.git", "repaired")
 	ageSource(t, incrementalFixturePath(opts, "bad"), 48*time.Hour)
 	repaired := mustExport(t, opts)
-	if repaired.Created != 1 || repaired.Busy != 1 || repaired.Changes[0].SessionID != "bad" {
+	if repaired.Created != 1 || repaired.Busy != 0 || repaired.Incomplete != 1 || repaired.Changes[0].SessionID != "bad" {
 		t.Fatalf("pending repair: %+v", repaired)
 	}
 }
