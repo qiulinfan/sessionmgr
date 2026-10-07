@@ -10,3 +10,27 @@ coverage.out
 /gui/frontend/package.json.md5
 /gui/frontend/wailsjs/
 /cmd/sessionmgr/rsrc_windows_*.syso
+
+# Personal editor, vault and agent environment stays local, at every depth.
+.obsidian/
+.vscode/
+.idea/
+.vs/
+.fleet/
+.zed/
+.history/
+.cursor/
+.windsurf/
+.codex/
+.claude/
+.opencode/
+.pi/
+.omp/
+*.code-workspace
+.ipynb_checkpoints/
+YOLO/
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
