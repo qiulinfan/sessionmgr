@@ -4,7 +4,7 @@ import "time"
 
 const (
 	SchemaVersion             = 1
-	ExportResultSchemaVersion = 5
+	ExportResultSchemaVersion = 6
 	LocalRepositorySchema     = 2
 	SessionMetadataSchema     = 2
 	LayoutVersion             = 5
@@ -35,6 +35,7 @@ type Options struct {
 	AllRepos      bool
 	SessionID     string
 	Sources       *SourceSelection
+	SidebarOnly   bool
 
 	// IncludeArchived adds Codex archived_sessions/ to discovery. Ordinary
 	// exports inspect only active sessions/ so users can archive a conversation
@@ -66,6 +67,7 @@ type Options struct {
 
 type Result struct {
 	SchemaVersion       int           `json:"schema_version"`
+	Scope               string        `json:"scope,omitempty"`
 	Sources             int           `json:"sources"`
 	Matched             int           `json:"matched"`
 	Created             int           `json:"created"`

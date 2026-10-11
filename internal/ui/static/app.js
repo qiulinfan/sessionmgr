@@ -14,6 +14,7 @@ const changes = document.querySelector("#changes");
 const resultCount = document.querySelector("#result-count");
 const exportButton = document.querySelector("#export");
 const languageSelect = document.querySelector("#language");
+const sidebarOnly = document.querySelector("#sidebar-only");
 const includeArchived = document.querySelector("#include-archived");
 const includeNonGit = document.querySelector("#include-non-git");
 const fullScan = document.querySelector("#full-scan");
@@ -86,6 +87,7 @@ const translations = {
     exportScope: "Export scope",
     allRepositories: "All eligible directories",
     currentRepository: "Current directory",
+    sidebarOnly: "Only Codex sidebar conversations (exclude automated jobs)",
     includeArchived: "Include archived Codex sessions",
     includeNonGit: "Include non-Git directories (full export)",
     fullScan: "Rescan all sessions",
@@ -163,6 +165,7 @@ const translations = {
     exportScope: "导出范围",
     allRepositories: "全部可用目录",
     currentRepository: "当前目录",
+    sidebarOnly: "只导出 Codex 侧边栏会话（排除自动任务）",
     includeArchived: "包括已归档的 Codex sessions",
     includeNonGit: "包括非 Git 目录（全量导出）",
     fullScan: "重新扫描全部 sessions",
@@ -326,6 +329,14 @@ function saveSourcePreferences() {
     .catch((error) => setSaveState("error", error.message || String(error)));
 }
 
+function syncSidebarScope() {
+  const only = sidebarOnly.checked;
+  if (only) { sourceCodex.checked = true; includeArchived.checked = false; }
+  for (const control of [sourceCodex, sourceClaude, sourceDeepSeek, sourceOMP, sourceOpenCode]) control.disabled = only;
+  includeArchived.disabled = only || !sourceCodex.checked;
+}
+sidebarOnly.addEventListener("change", syncSidebarScope);
+
 function initializeSourcePreferences() {
   const saved = sourcePreferencesState;
   sourceCodex.checked = typeof saved?.codex === "boolean" ? saved.codex : true;
@@ -333,13 +344,13 @@ function initializeSourcePreferences() {
   sourceDeepSeek.checked = typeof saved?.deepseek === "boolean" ? saved.deepseek : true;
   sourceOMP.checked = typeof saved?.omp === "boolean" ? saved.omp : true;
   sourceOpenCode.checked = typeof saved?.opencode === "boolean" ? saved.opencode : true;
-  includeArchived.disabled = !sourceCodex.checked;
+  syncSidebarScope();
   if (saved === null) saveSourcePreferences();
 }
 
 for (const control of [sourceCodex, sourceClaude, sourceDeepSeek, sourceOMP, sourceOpenCode]) {
   control.addEventListener("change", () => {
-    includeArchived.disabled = !sourceCodex.checked;
+    syncSidebarScope();
     saveSourcePreferences();
   });
 }
@@ -630,6 +641,7 @@ exportButton.addEventListener("click", async () => {
         directory: directory.value,
         scope: document.querySelector("#scope").value,
         include_archived: includeArchived.checked,
+        sidebar_only: sidebarOnly.checked,
         include_non_git: includeNonGit.checked,
         full_scan: fullScan.checked,
         sources: currentSources(),

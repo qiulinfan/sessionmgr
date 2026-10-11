@@ -39,6 +39,13 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	startedAt := time.Now().UTC()
 	result := Result{SchemaVersion: ExportResultSchemaVersion, Changes: []Change{}}
 	selected := selectedSources(opts)
+	if opts.SidebarOnly {
+		if opts.IncludeArchived {
+			return result, fmt.Errorf("sidebar-only export cannot include archived sessions")
+		}
+		selected = SourceSelection{Codex: true}
+		result.Scope = "codex-sidebar"
+	}
 	if selected.Codex && opts.CodexHome == "" {
 		var err error
 		opts.CodexHome, err = DefaultCodexHome()
@@ -81,6 +88,14 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	if opts.Output == "" {
 		return result, fmt.Errorf("export directory is required")
 	}
+	var sidebarIDs map[string]bool
+	if opts.SidebarOnly {
+		var err error
+		sidebarIDs, err = readCodexSidebarIDs(ctx, opts.CodexHome)
+		if err != nil {
+			return result, err
+		}
+	}
 	if strings.TrimSpace(opts.DeviceID) == "" || strings.TrimSpace(opts.DeviceName) == "" {
 		return result, fmt.Errorf("device identity is required")
 	}
@@ -113,6 +128,10 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, discoverErr
 		}
 		for _, path := range codexFiles {
+			if opts.SidebarOnly && !sidebarIDs[peekCodexSessionID(path)] {
+				result.FilteredInternal++
+				continue
+			}
 			sources = append(sources, nativeSessionSource{path: path, harness: harnessCodex})
 			paths = append(paths, path)
 		}
