@@ -332,7 +332,6 @@ function saveSourcePreferences() {
 function syncSidebarScope() {
   const only = sidebarOnly.checked;
   if (only) includeArchived.checked = false;
-  for (const control of [sourceDeepSeek, sourceOMP]) control.disabled = only;
   includeArchived.disabled = only || !sourceCodex.checked;
 }
 sidebarOnly.addEventListener("change", () => {
