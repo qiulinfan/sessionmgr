@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -18,7 +19,7 @@ import (
 
 // version is a variable so release builds can stamp the reviewed tag version
 // with -ldflags -X. Development builds keep an explicit prerelease suffix.
-var version = "1.4.4-dev"
+var version = "1.5.0-dev"
 
 type commandError struct {
 	exitCode int
@@ -129,6 +130,8 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	includeArchived := flags.Bool("include-archived", false, "also export Codex archived sessions")
 	includeNonGit := flags.Bool("include-non-git", false, "also fully export sessions from directories without a hosted Git remote")
 	fullScan := flags.Bool("full-scan", false, "rescan all sessions instead of using the local export checkpoint")
+	guiOnly := flags.Bool("gui-only", false, "export GUI conversations only (overrides the saved setting)")
+	openCodeGUIHome := flags.String("opencode-gui-home", "", "OpenCode Desktop application state directory")
 	desktopOnly := flags.Bool("desktop-only", false, "export Codex sidebar roots and Claude Desktop roots; exclude CLI, SDK and other harnesses")
 	sidebarOnly := flags.Bool("sidebar-only", false, "export only active Codex Desktop sidebar root threads")
 	source := flags.String("codex-home", "", "Codex state directory (default: CODEX_HOME or ~/.codex)")
@@ -151,7 +154,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if *all && repoWasSet {
 		return argumentError("--all and --repo are mutually exclusive")
 	}
-	for _, path := range []*string{source, claudeSource, deepSeekSource, ompSource, ompSessionDir, openCodeDB} {
+	for _, path := range []*string{source, claudeSource, deepSeekSource, ompSource, ompSessionDir, openCodeDB, openCodeGUIHome} {
 		if *path != "" {
 			resolved, err := config.ResolvePath(*path)
 			if err != nil {
@@ -204,13 +207,23 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 			return argumentError(err.Error())
 		}
 	}
+	effectiveGUIOnly := device.GUIOnly
+	if flagWasSet(flags, "gui-only") {
+		effectiveGUIOnly = *guiOnly
+	}
+	if *sidebarOnly || *desktopOnly {
+		effectiveGUIOnly = false
+		if flagWasSet(flags, "gui-only") {
+			return argumentError("--gui-only cannot be combined with legacy scope flags")
+		}
+	}
 	result, exportErr := archive.Export(ctx, archive.Options{
 		CodexHome: *source, ClaudeHome: *claudeSource, DeepSeekHome: *deepSeekSource,
 		OMPHome: *ompSource, OMPSessionDir: *ompSessionDir, OpenCodeDB: *openCodeDB,
 		Output: resolvedDirectory, Repo: *repo,
 		AllRepos: !repoWasSet || *all, SessionID: *sessionID,
 		IncludeArchived: *includeArchived,
-		SidebarOnly:     *sidebarOnly, DesktopOnly: *desktopOnly,
+		SidebarOnly:     *sidebarOnly, DesktopOnly: *desktopOnly, GUIOnly: effectiveGUIOnly, OpenCodeGUIHome: *openCodeGUIHome,
 		IncludeNonGit:  *includeNonGit,
 		Sources:        &selection,
 		CheckpointPath: store.ExportStatePath(), FullScan: *fullScan,
@@ -236,6 +249,29 @@ func commandConfig(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if len(args) > 0 && args[0] == "set-gui-only" {
+		flags := newFlagSet("config set-gui-only", stderr)
+		jsonOutput := flags.Bool("json", false, "emit JSON")
+		if err := flags.Parse(args[1:]); err != nil {
+			return flagError(err)
+		}
+		if flags.NArg() != 1 {
+			return argumentError("config set-gui-only requires true or false")
+		}
+		enabled, err := strconv.ParseBool(flags.Arg(0))
+		if err != nil {
+			return argumentError("config set-gui-only requires true or false")
+		}
+		value, err := store.SetGUIOnly(enabled)
+		if err != nil {
+			return err
+		}
+		if *jsonOutput {
+			return writeJSON(stdout, value)
+		}
+		fmt.Fprintf(stdout, "GUI-only export: %t\n", value.GUIOnly)
+		return nil
+	}
 	if len(args) == 0 || args[0] == "show" {
 		flags := newFlagSet("config show", stderr)
 		jsonOutput := flags.Bool("json", false, "emit JSON")
@@ -257,6 +293,7 @@ func commandConfig(args []string, stdout, stderr io.Writer) error {
 				"schema_version": value.SchemaVersion,
 				"config_path":    store.Path,
 				"directory":      value.ExportDirectory,
+				"gui_only":       value.GUIOnly,
 			})
 		}
 		if value.ExportDirectory == "" {
@@ -264,6 +301,7 @@ func commandConfig(args []string, stdout, stderr io.Writer) error {
 		} else {
 			fmt.Fprintln(stdout, value.ExportDirectory)
 		}
+		fmt.Fprintf(stdout, "GUI-only export: %t\n", value.GUIOnly)
 		return nil
 	}
 	if args[0] != "set-directory" {
@@ -286,6 +324,7 @@ func commandConfig(args []string, stdout, stderr io.Writer) error {
 			"schema_version": value.SchemaVersion,
 			"config_path":    store.Path,
 			"directory":      value.ExportDirectory,
+			"gui_only":       value.GUIOnly,
 		})
 	}
 	fmt.Fprintln(stdout, value.ExportDirectory)
@@ -498,10 +537,11 @@ Usage:
   smg gui [--no-open] [--claude-home PATH] [--deepseek-home PATH]
                  [--omp-home PATH] [--omp-session-dir PATH] [--opencode-db PATH]
   smg config set-directory PATH
+  smg config set-gui-only true|false
   smg config show
   smg export [--all | --repo PATH] [--session ID] [--sources codex,claude-code,deepseek,omp,opencode]
                     [--omp-home PATH] [--omp-session-dir PATH] [--opencode-db PATH]
-                    [--sidebar-only | --desktop-only] [--include-archived] [--include-non-git] [--full-scan] [--directory PATH]
+                    [--gui-only[=false] | --sidebar-only | --desktop-only] [--opencode-gui-home PATH] [--include-archived] [--include-non-git] [--full-scan] [--directory PATH]
   smg list [--history]
   smg search [QUERY] [--directory PATH] [--repo NAME|REMOTE|PATH] [--session ID]
                     [--harness NAME] [--device ID|NAME] [--since TIME] [--until TIME]

@@ -39,8 +39,16 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	startedAt := time.Now().UTC()
 	result := Result{SchemaVersion: ExportResultSchemaVersion, Changes: []Change{}}
 	selected := selectedSources(opts)
-	if opts.SidebarOnly && opts.DesktopOnly {
+	if (opts.SidebarOnly && opts.DesktopOnly) || (opts.GUIOnly && (opts.SidebarOnly || opts.DesktopOnly)) {
 		return result, fmt.Errorf("sidebar-only and desktop-only are mutually exclusive")
+	}
+	if opts.GUIOnly {
+		if opts.IncludeArchived {
+			return result, fmt.Errorf("GUI-only export cannot include archived sessions")
+		}
+		selected.DeepSeek = false
+		selected.OMP = false
+		result.Scope = "gui-conversations"
 	}
 	if opts.SidebarOnly || opts.DesktopOnly {
 		if opts.IncludeArchived {
@@ -95,9 +103,21 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		return result, fmt.Errorf("export directory is required")
 	}
 	var sidebarIDs map[string]bool
-	if opts.SidebarOnly || opts.DesktopOnly {
+	if opts.SidebarOnly || opts.DesktopOnly || (opts.GUIOnly && selected.Codex) {
 		var err error
 		sidebarIDs, err = readCodexSidebarIDs(ctx, opts.CodexHome)
+		if err != nil {
+			return result, err
+		}
+	}
+	var openCodeGUIIDs map[string]bool
+	if opts.GUIOnly && selected.OpenCode {
+		var err error
+		opts.OpenCodeGUIHome, err = resolveOpenCodeGUIHome(opts.OpenCodeGUIHome)
+		if err != nil {
+			return result, err
+		}
+		openCodeGUIIDs, err = ReadOpenCodeGUIIDs(ctx, opts.OpenCodeDB, opts.OpenCodeGUIHome)
 		if err != nil {
 			return result, err
 		}
@@ -134,7 +154,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, discoverErr
 		}
 		for _, path := range codexFiles {
-			if (opts.SidebarOnly || opts.DesktopOnly) && !sidebarIDs[peekCodexSessionID(path)] {
+			if (opts.SidebarOnly || opts.DesktopOnly || opts.GUIOnly) && !sidebarIDs[peekCodexSessionID(path)] {
 				result.FilteredInternal++
 				continue
 			}
@@ -148,7 +168,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, discoverErr
 		}
 		for _, path := range claudeFiles {
-			if opts.DesktopOnly {
+			if opts.DesktopOnly || opts.GUIOnly {
 				id, scopeErr := claudeDesktopSessionID(path)
 				if scopeErr != nil {
 					return result, scopeErr
@@ -318,7 +338,12 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		parsed = append(parsed, parsedNativeSession{source: source, session: session})
 	}
 	if selected.OpenCode {
+		guiFiltered := 0
 		openCode, readErr := readOpenCodeSessionsSelected(ctx, opts.OpenCodeDB, window, func(header openCodeSessionRow) bool {
+			if opts.GUIOnly && !openCodeGUIIDs[header.id] {
+				guiFiltered++
+				return false
+			}
 			return incremental.selectOpenCode(opts.OpenCodeDB, header)
 		})
 		if readErr != nil {
@@ -326,7 +351,8 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		}
 		result.Sources += openCode.sources
 		result.ScannedSources += openCode.sources - openCode.ignored
-		result.IgnoredUnchanged += openCode.ignored
+		result.FilteredInternal += guiFiltered
+		result.IgnoredUnchanged += openCode.ignored - guiFiltered
 		result.Busy += openCode.busy
 		result.Skipped += openCode.skipped
 		result.Warnings = append(result.Warnings, openCode.warnings...)

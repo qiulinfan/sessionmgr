@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	SchemaVersion         = 3
+	SchemaVersion         = 4
 	previousSchemaVersion = 2
 	legacySchemaVersion   = 1
 )
@@ -29,6 +29,7 @@ type SourcePreferences struct {
 
 type Config struct {
 	SchemaVersion     int                `json:"schema_version"`
+	GUIOnly           bool               `json:"gui_only"`
 	ExportDirectory   string             `json:"export_directory"`
 	DeviceID          string             `json:"device_id,omitempty"`
 	DeviceName        string             `json:"device_name,omitempty"`
@@ -74,7 +75,7 @@ func (store Store) Load() (Config, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Config{}, fmt.Errorf("parse config %s: unexpected trailing data", store.Path)
 	}
-	if result.SchemaVersion != SchemaVersion && result.SchemaVersion != previousSchemaVersion && result.SchemaVersion != legacySchemaVersion {
+	if result.SchemaVersion != SchemaVersion && result.SchemaVersion != 3 && result.SchemaVersion != previousSchemaVersion && result.SchemaVersion != legacySchemaVersion {
 		return Config{}, fmt.Errorf("unsupported config schema %d", result.SchemaVersion)
 	}
 	if result.SchemaVersion == legacySchemaVersion {
@@ -92,7 +93,17 @@ func (store Store) Load() (Config, error) {
 		}
 		result.SchemaVersion = SchemaVersion
 	}
+	result.SchemaVersion = SchemaVersion
 	return result, nil
+}
+
+func (store Store) SetGUIOnly(enabled bool) (Config, error) {
+	current, err := store.Load()
+	if err != nil {
+		return Config{}, err
+	}
+	current.GUIOnly = enabled
+	return current, store.save(current)
 }
 
 func (store Store) SetExportDirectory(directory string) (Config, error) {
@@ -120,7 +131,7 @@ func (store Store) SetExportDirectory(directory string) (Config, error) {
 	}
 	result := Config{
 		SchemaVersion: SchemaVersion, ExportDirectory: filepath.Clean(abs),
-		DeviceID: current.DeviceID, DeviceName: current.DeviceName, SourcePreferences: current.SourcePreferences,
+		DeviceID: current.DeviceID, DeviceName: current.DeviceName, SourcePreferences: current.SourcePreferences, GUIOnly: current.GUIOnly,
 	}
 	if err := store.save(result); err != nil {
 		return Config{}, err

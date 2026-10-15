@@ -46,6 +46,7 @@ type exportRequest struct {
 	Directory       string                    `json:"directory"`
 	Scope           string                    `json:"scope"`
 	IncludeArchived bool                      `json:"include_archived"`
+	GUIOnly         *bool                     `json:"gui_only"`
 	DesktopOnly     bool                      `json:"desktop_only"`
 	SidebarOnly     bool                      `json:"sidebar_only"`
 	IncludeNonGit   bool                      `json:"include_non_git"`
@@ -218,9 +219,25 @@ func newHandlerWithAllSources(token string, store config.Store, codexHome, claud
 			"schema_version":     config.SchemaVersion,
 			"directory":          value.ExportDirectory,
 			"source_preferences": value.SourcePreferences,
+			"gui_only":           value.GUIOnly,
 			"last_export_at":     lastExportAt,
 			"environment":        inspectAllEnvironment(codexHome, claudeHome, deepSeekHome, ompSessionDir, openCodeDB),
 		})
+	}))
+	mux.HandleFunc("PUT /api/gui-only", requireToken(token, func(w http.ResponseWriter, request *http.Request) {
+		var body struct {
+			GUIOnly *bool `json:"gui_only"`
+		}
+		if err := decodeJSON(w, request, &body); err != nil || body.GUIOnly == nil {
+			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("gui_only boolean is required"))
+			return
+		}
+		value, err := store.SetGUIOnly(*body.GUIOnly)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"gui_only": value.GUIOnly})
 	}))
 	mux.HandleFunc("PUT /api/sources", requireToken(token, func(w http.ResponseWriter, request *http.Request) {
 		var body config.SourcePreferences
@@ -322,12 +339,19 @@ func newHandlerWithAllSources(token string, store config.Store, codexHome, claud
 				DeepSeek: body.Sources.DeepSeek, OMP: body.Sources.OMP, OpenCode: body.Sources.OpenCode,
 			}
 		}
+		effectiveGUIOnly := device.GUIOnly
+		if body.GUIOnly != nil {
+			effectiveGUIOnly = *body.GUIOnly
+		}
+		if body.SidebarOnly || body.DesktopOnly {
+			effectiveGUIOnly = false
+		}
 		result, exportErr := archive.Export(request.Context(), archive.Options{
 			CodexHome: codexHome, ClaudeHome: claudeHome, DeepSeekHome: deepSeekHome,
 			OMPHome: ompHome, OMPSessionDir: ompSessionDir, OpenCodeDB: openCodeDB,
 			Output: directory, Repo: repo, AllRepos: allRepos,
 			IncludeArchived: body.IncludeArchived,
-			SidebarOnly:     body.SidebarOnly, DesktopOnly: body.DesktopOnly,
+			SidebarOnly:     body.SidebarOnly, DesktopOnly: body.DesktopOnly, GUIOnly: effectiveGUIOnly,
 			IncludeNonGit:  body.IncludeNonGit,
 			CheckpointPath: store.ExportStatePath(), FullScan: body.FullScan,
 			Sources:  &selection,

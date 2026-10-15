@@ -12,6 +12,7 @@ The repository-level requirements are defined in
 
 | Version | Status | Date | Summary |
 | --- | --- | --- | --- |
+| [`v1.5.0`](./v1.5.0.md) | Development | 2026-10-15 | Global GUI-only setting and verified OpenCode GUI-list scope |
 | [`v1.4.4`](./v1.4.4.md) | Development | 2026-10-13 | Combined Codex sidebar and Claude Desktop-origin roots |
 | [`v1.4.3`](./v1.4.3.md) | Released | 2026-10-11 | Native Codex sidebar export scope before parsing and archiving |
 | [`v1.4.2`](./v1.4.2.md) | Released | 2026-10-07 | Separate stable incomplete histories, suppress stale retries, and filter generated engine CLI jobs |

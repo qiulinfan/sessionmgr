@@ -95,15 +95,17 @@ func beginIncrementalExport(opts Options, selected SourceSelection, target Repos
 	// therefore starts a full discovery instead of hiding older conversations.
 	scope, err := json.Marshal(struct {
 		Generation                                                     int
-		SidebarOnly                                                    bool `json:"SidebarOnly,omitempty"`
-		DesktopOnly                                                    bool `json:"DesktopOnly,omitempty"`
+		SidebarOnly                                                    bool   `json:"SidebarOnly,omitempty"`
+		DesktopOnly                                                    bool   `json:"DesktopOnly,omitempty"`
+		GUIOnly                                                        bool   `json:"GUIOnly,omitempty"`
+		OpenCodeGUIHome                                                string `json:"OpenCodeGUIHome,omitempty"`
 		Output, DeviceID, DeviceName, Target, SessionID                string
 		CodexHome, ClaudeHome, DeepSeekHome, OMPSessionDir, OpenCodeDB string
 		Sources                                                        SourceSelection
 		AllRepos, IncludeArchived, IncludeNonGit                       bool
 	}{
 		Generation: 1, Output: opts.Output, DeviceID: opts.DeviceID, DeviceName: opts.DeviceName,
-		SidebarOnly: opts.SidebarOnly, DesktopOnly: opts.DesktopOnly,
+		SidebarOnly: opts.SidebarOnly, DesktopOnly: opts.DesktopOnly, GUIOnly: opts.GUIOnly, OpenCodeGUIHome: opts.OpenCodeGUIHome,
 		Target: target.Key, SessionID: opts.SessionID, CodexHome: opts.CodexHome,
 		ClaudeHome: opts.ClaudeHome, DeepSeekHome: opts.DeepSeekHome,
 		OMPSessionDir: opts.OMPSessionDir, OpenCodeDB: opts.OpenCodeDB, Sources: selected,
