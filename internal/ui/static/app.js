@@ -87,7 +87,7 @@ const translations = {
     exportScope: "Export scope",
     allRepositories: "All eligible directories",
     currentRepository: "Current directory",
-    sidebarOnly: "Only Codex sidebar conversations (exclude automated jobs)",
+    sidebarOnly: "Codex sidebar and Claude Desktop conversations (exclude automated jobs)",
     includeArchived: "Include archived Codex sessions",
     includeNonGit: "Include non-Git directories (full export)",
     fullScan: "Rescan all sessions",
@@ -165,7 +165,7 @@ const translations = {
     exportScope: "导出范围",
     allRepositories: "全部可用目录",
     currentRepository: "当前目录",
-    sidebarOnly: "只导出 Codex 侧边栏会话（排除自动任务）",
+    sidebarOnly: "只导出 Codex 侧边栏及 Claude 桌面对话（排除自动任务）",
     includeArchived: "包括已归档的 Codex sessions",
     includeNonGit: "包括非 Git 目录（全量导出）",
     fullScan: "重新扫描全部 sessions",
@@ -331,7 +331,7 @@ function saveSourcePreferences() {
 
 function syncSidebarScope() {
   const only = sidebarOnly.checked;
-  if (only) { sourceCodex.checked = true; includeArchived.checked = false; }
+  if (only) { sourceCodex.checked = true; sourceClaude.checked = true; sourceDeepSeek.checked = false; sourceOMP.checked = false; sourceOpenCode.checked = false; includeArchived.checked = false; }
   for (const control of [sourceCodex, sourceClaude, sourceDeepSeek, sourceOMP, sourceOpenCode]) control.disabled = only;
   includeArchived.disabled = only || !sourceCodex.checked;
 }
@@ -641,7 +641,7 @@ exportButton.addEventListener("click", async () => {
         directory: directory.value,
         scope: document.querySelector("#scope").value,
         include_archived: includeArchived.checked,
-        sidebar_only: sidebarOnly.checked,
+        desktop_only: sidebarOnly.checked,
         include_non_git: includeNonGit.checked,
         full_scan: fullScan.checked,
         sources: currentSources(),

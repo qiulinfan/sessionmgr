@@ -18,7 +18,7 @@ import (
 
 // version is a variable so release builds can stamp the reviewed tag version
 // with -ldflags -X. Development builds keep an explicit prerelease suffix.
-var version = "1.4.3"
+var version = "1.4.4-dev"
 
 type commandError struct {
 	exitCode int
@@ -129,6 +129,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	includeArchived := flags.Bool("include-archived", false, "also export Codex archived sessions")
 	includeNonGit := flags.Bool("include-non-git", false, "also fully export sessions from directories without a hosted Git remote")
 	fullScan := flags.Bool("full-scan", false, "rescan all sessions instead of using the local export checkpoint")
+	desktopOnly := flags.Bool("desktop-only", false, "export Codex sidebar roots and Claude Desktop roots; exclude CLI, SDK and other harnesses")
 	sidebarOnly := flags.Bool("sidebar-only", false, "export only active Codex Desktop sidebar root threads")
 	source := flags.String("codex-home", "", "Codex state directory (default: CODEX_HOME or ~/.codex)")
 	claudeSource := flags.String("claude-home", "", "Claude Code state directory (default: CLAUDE_CONFIG_DIR or ~/.claude)")
@@ -209,10 +210,10 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 		Output: resolvedDirectory, Repo: *repo,
 		AllRepos: !repoWasSet || *all, SessionID: *sessionID,
 		IncludeArchived: *includeArchived,
-		SidebarOnly:     *sidebarOnly,
-		IncludeNonGit:   *includeNonGit,
-		Sources:         &selection,
-		CheckpointPath:  store.ExportStatePath(), FullScan: *fullScan,
+		SidebarOnly:     *sidebarOnly, DesktopOnly: *desktopOnly,
+		IncludeNonGit:  *includeNonGit,
+		Sources:        &selection,
+		CheckpointPath: store.ExportStatePath(), FullScan: *fullScan,
 		DeviceID: device.DeviceID, DeviceName: device.DeviceName,
 	})
 	if *jsonOutput {
@@ -500,7 +501,7 @@ Usage:
   smg config show
   smg export [--all | --repo PATH] [--session ID] [--sources codex,claude-code,deepseek,omp,opencode]
                     [--omp-home PATH] [--omp-session-dir PATH] [--opencode-db PATH]
-                    [--sidebar-only] [--include-archived] [--include-non-git] [--full-scan] [--directory PATH]
+                    [--sidebar-only | --desktop-only] [--include-archived] [--include-non-git] [--full-scan] [--directory PATH]
   smg list [--history]
   smg search [QUERY] [--directory PATH] [--repo NAME|REMOTE|PATH] [--session ID]
                     [--harness NAME] [--device ID|NAME] [--since TIME] [--until TIME]

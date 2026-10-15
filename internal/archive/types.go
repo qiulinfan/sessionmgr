@@ -36,6 +36,7 @@ type Options struct {
 	SessionID     string
 	Sources       *SourceSelection
 	SidebarOnly   bool
+	DesktopOnly   bool
 
 	// IncludeArchived adds Codex archived_sessions/ to discovery. Ordinary
 	// exports inspect only active sessions/ so users can archive a conversation

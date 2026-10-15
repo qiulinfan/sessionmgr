@@ -39,12 +39,18 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	startedAt := time.Now().UTC()
 	result := Result{SchemaVersion: ExportResultSchemaVersion, Changes: []Change{}}
 	selected := selectedSources(opts)
-	if opts.SidebarOnly {
+	if opts.SidebarOnly && opts.DesktopOnly {
+		return result, fmt.Errorf("sidebar-only and desktop-only are mutually exclusive")
+	}
+	if opts.SidebarOnly || opts.DesktopOnly {
 		if opts.IncludeArchived {
 			return result, fmt.Errorf("sidebar-only export cannot include archived sessions")
 		}
-		selected = SourceSelection{Codex: true}
+		selected = SourceSelection{Codex: true, ClaudeCode: opts.DesktopOnly}
 		result.Scope = "codex-sidebar"
+		if opts.DesktopOnly {
+			result.Scope = "codex-claude-desktop"
+		}
 	}
 	if selected.Codex && opts.CodexHome == "" {
 		var err error
@@ -89,7 +95,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		return result, fmt.Errorf("export directory is required")
 	}
 	var sidebarIDs map[string]bool
-	if opts.SidebarOnly {
+	if opts.SidebarOnly || opts.DesktopOnly {
 		var err error
 		sidebarIDs, err = readCodexSidebarIDs(ctx, opts.CodexHome)
 		if err != nil {
@@ -128,7 +134,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, discoverErr
 		}
 		for _, path := range codexFiles {
-			if opts.SidebarOnly && !sidebarIDs[peekCodexSessionID(path)] {
+			if (opts.SidebarOnly || opts.DesktopOnly) && !sidebarIDs[peekCodexSessionID(path)] {
 				result.FilteredInternal++
 				continue
 			}
@@ -142,6 +148,16 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, discoverErr
 		}
 		for _, path := range claudeFiles {
+			if opts.DesktopOnly {
+				id, scopeErr := claudeDesktopSessionID(path)
+				if scopeErr != nil {
+					return result, scopeErr
+				}
+				if id == "" {
+					result.FilteredInternal++
+					continue
+				}
+			}
 			sources = append(sources, nativeSessionSource{path: path, harness: harnessClaudeCode})
 			paths = append(paths, path)
 		}

@@ -46,6 +46,7 @@ type exportRequest struct {
 	Directory       string                    `json:"directory"`
 	Scope           string                    `json:"scope"`
 	IncludeArchived bool                      `json:"include_archived"`
+	DesktopOnly     bool                      `json:"desktop_only"`
 	SidebarOnly     bool                      `json:"sidebar_only"`
 	IncludeNonGit   bool                      `json:"include_non_git"`
 	FullScan        bool                      `json:"full_scan"`
@@ -326,9 +327,9 @@ func newHandlerWithAllSources(token string, store config.Store, codexHome, claud
 			OMPHome: ompHome, OMPSessionDir: ompSessionDir, OpenCodeDB: openCodeDB,
 			Output: directory, Repo: repo, AllRepos: allRepos,
 			IncludeArchived: body.IncludeArchived,
-			SidebarOnly:     body.SidebarOnly,
-			IncludeNonGit:   body.IncludeNonGit,
-			CheckpointPath:  store.ExportStatePath(), FullScan: body.FullScan,
+			SidebarOnly:     body.SidebarOnly, DesktopOnly: body.DesktopOnly,
+			IncludeNonGit:  body.IncludeNonGit,
+			CheckpointPath: store.ExportStatePath(), FullScan: body.FullScan,
 			Sources:  &selection,
 			DeviceID: device.DeviceID, DeviceName: device.DeviceName,
 		})

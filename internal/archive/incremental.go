@@ -96,14 +96,15 @@ func beginIncrementalExport(opts Options, selected SourceSelection, target Repos
 	scope, err := json.Marshal(struct {
 		Generation                                                     int
 		SidebarOnly                                                    bool `json:"SidebarOnly,omitempty"`
+		DesktopOnly                                                    bool `json:"DesktopOnly,omitempty"`
 		Output, DeviceID, DeviceName, Target, SessionID                string
 		CodexHome, ClaudeHome, DeepSeekHome, OMPSessionDir, OpenCodeDB string
 		Sources                                                        SourceSelection
 		AllRepos, IncludeArchived, IncludeNonGit                       bool
 	}{
 		Generation: 1, Output: opts.Output, DeviceID: opts.DeviceID, DeviceName: opts.DeviceName,
-		SidebarOnly: opts.SidebarOnly,
-		Target:      target.Key, SessionID: opts.SessionID, CodexHome: opts.CodexHome,
+		SidebarOnly: opts.SidebarOnly, DesktopOnly: opts.DesktopOnly,
+		Target: target.Key, SessionID: opts.SessionID, CodexHome: opts.CodexHome,
 		ClaudeHome: opts.ClaudeHome, DeepSeekHome: opts.DeepSeekHome,
 		OMPSessionDir: opts.OMPSessionDir, OpenCodeDB: opts.OpenCodeDB, Sources: selected,
 		AllRepos: opts.AllRepos, IncludeArchived: opts.IncludeArchived, IncludeNonGit: opts.IncludeNonGit,
