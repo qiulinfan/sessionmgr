@@ -29,6 +29,57 @@ func TestResolveDeepSeekHomePrecedence(t *testing.T) {
 	}
 }
 
+func TestDeepSeekV4GenerationAndInternalSurfaceMessages(t *testing.T) {
+	home := t.TempDir()
+	directory := filepath.Join(home, "sessions", "project", "session-current")
+	os.MkdirAll(directory, 0700)
+	for _, name := range []string{"session.v3.jsonl.zstd", "session.v4.jsonl.zstd", "session.v04.jsonl", "session.v4.jsonl.tmp"} {
+		os.WriteFile(filepath.Join(directory, name), []byte("fixture"), 0600)
+	}
+	paths, err := discoverDeepSeekSessionFiles(home)
+	if err != nil || len(paths) != 1 || filepath.Base(paths[0]) != "session.v4.jsonl.zstd" {
+		t.Fatalf("wrong latest generation: %v %v", paths, err)
+	}
+	created := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	raw := deepSeekTestLog(t, "session-current", home, created, 0, []map[string]any{
+		deepSeekTestEvent(0, created, "system/message", map[string]any{"message": "internal context"}, "append"),
+		deepSeekTestEvent(1, created, "user/message", map[string]any{"role": "user", "source": map[string]any{"kind": "user"}, "content": []any{map[string]any{"type": "text", "text": "hello"}}}, "append"),
+		deepSeekTestEvent(2, created, "assistant/message", map[string]any{"message": map[string]any{"role": "assistant", "source": map[string]any{"kind": "model"}, "content": []any{map[string]any{"type": "text", "text": "answer"}}}}, "append"),
+	}, false)
+	raw = bytes.Replace(raw, []byte(`"version":0`), []byte(`"version":4`), 1)
+	session, err := parseDeepSeekSession(raw, false, home)
+	if err != nil || session.UserMessages != 1 || session.AssistantMessages != 1 || len(session.Messages) != 2 {
+		t.Fatalf("v4 parse failed: %+v %v", session, err)
+	}
+	unknown := bytes.Replace(raw, []byte(`"version":4`), []byte(`"version":5`), 1)
+	if _, err := parseDeepSeekSession(unknown, false, home); err == nil {
+		t.Fatal("future version accepted")
+	}
+	if _, err := deepSeekAppendSurface([]byte(`{"op":"replace","startSeq":0,"endSeq":1}`)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeepSeekUnsupportedGenerationDoesNotFallBack(t *testing.T) {
+	for _, version := range []string{"5", "999999999999999999999999"} {
+		t.Run(version, func(t *testing.T) {
+			home := t.TempDir()
+			directory := filepath.Join(home, "sessions", "project", "session-current")
+			if err := os.MkdirAll(directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"session.v4.jsonl", "session.v" + version + ".jsonl"} {
+				if err := os.WriteFile(filepath.Join(directory, name), []byte("fixture"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := discoverDeepSeekSessionFiles(home); err == nil || !strings.Contains(err.Error(), "unsupported") {
+				t.Fatalf("selected an old generation despite unsupported latest format: %v", err)
+			}
+		})
+	}
+}
+
 func TestDiscoverDeepSeekRejectsAmbiguousSessionEncoding(t *testing.T) {
 	home := t.TempDir()
 	directory := filepath.Join(home, "sessions", "--workspace--", "session-ambiguous")

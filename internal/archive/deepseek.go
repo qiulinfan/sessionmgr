@@ -11,7 +11,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,22 +114,55 @@ func discoverDeepSeekSessionFiles(home string) ([]string, error) {
 		if entry.IsDir() {
 			return nil
 		}
-		if entry.Name() != deepSeekCompressedFilename && entry.Name() != deepSeekPlainFilename {
+		version, ok, versionErr := deepSeekFilenameVersion(entry.Name())
+		if versionErr != nil {
+			return versionErr
+		}
+		if !ok {
 			return nil
 		}
 		directory := filepath.Dir(path)
 		if previous := byDirectory[directory]; previous != "" {
-			return fmt.Errorf("DeepSeek session directory contains both supported encodings: %s and %s", previous, path)
+			previousVersion, _, _ := deepSeekFilenameVersion(filepath.Base(previous))
+			if previousVersion == version {
+				return fmt.Errorf("DeepSeek session directory contains both supported encodings: %s and %s", previous, path)
+			}
+			if previousVersion > version {
+				return nil
+			}
 		}
 		byDirectory[directory] = path
-		paths = append(paths, path)
 		return nil
 	})
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	for _, path := range byDirectory {
+		version, _, _ := deepSeekFilenameVersion(filepath.Base(path))
+		if version != 0 && version != 4 {
+			return nil, fmt.Errorf("unsupported latest DeepSeek format v%d", version)
+		}
+		paths = append(paths, path)
+	}
 	sort.Strings(paths)
 	return paths, nil
+}
+
+var deepSeekGenerationName = regexp.MustCompile(`^session\.v([1-9][0-9]*)\.jsonl(?:\.zstd)?$`)
+
+func deepSeekFilenameVersion(name string) (int, bool, error) {
+	if name == deepSeekPlainFilename || name == deepSeekCompressedFilename {
+		return 0, true, nil
+	}
+	match := deepSeekGenerationName.FindStringSubmatch(name)
+	if match == nil {
+		return 0, false, nil
+	}
+	version, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, true, fmt.Errorf("unsupported DeepSeek format version %q", match[1])
+	}
+	return version, true, nil
 }
 
 func parseDeepSeekSession(raw []byte, compressed bool, home string) (Session, error) {
@@ -167,7 +202,7 @@ func parseDeepSeekSession(raw []byte, compressed bool, home string) (Session, er
 	if err := json.Unmarshal(first, &header); err != nil {
 		return Session{}, fmt.Errorf("parse DeepSeek session header: %w", err)
 	}
-	if header.Type != "session" || header.Version != deepSeekSessionFormat || strings.TrimSpace(header.ID) == "" {
+	if header.Type != "session" || (header.Version != deepSeekSessionFormat && header.Version != 4) || strings.TrimSpace(header.ID) == "" {
 		return Session{}, fmt.Errorf("unsupported DeepSeek session header type/version/id %q/%d/%q", header.Type, header.Version, header.ID)
 	}
 	if header.DelegationDepth == nil || *header.DelegationDepth < 0 {
@@ -295,7 +330,7 @@ func parseDeepSeekSession(raw []byte, compressed bool, home string) (Session, er
 		default:
 			if len(event.SurfaceOp) > 0 {
 				switch event.Type {
-				case "tool/result":
+				case "tool/result", "system/message", "developer/message":
 					if _, err := deepSeekAppendSurface(event.SurfaceOp); err != nil {
 						return Session{}, fmt.Errorf("parse DeepSeek tool result %d: %w", *event.Seq, err)
 					}
@@ -350,11 +385,19 @@ func deepSeekAppendSurface(raw json.RawMessage) (bool, error) {
 		return true, nil
 	}
 	var replacement struct {
-		Op    string `json:"op"`
-		Start *int   `json:"start"`
-		End   *int   `json:"end"`
+		Op       string `json:"op"`
+		Start    *int   `json:"start"`
+		End      *int   `json:"end"`
+		StartSeq *int   `json:"startSeq"`
+		EndSeq   *int   `json:"endSeq"`
 	}
-	if err := json.Unmarshal(raw, &replacement); err != nil || replacement.Op != "replace" || replacement.Start == nil || replacement.End == nil || *replacement.Start < 0 || *replacement.End < *replacement.Start {
+	if err := json.Unmarshal(raw, &replacement); err != nil {
+		return false, fmt.Errorf("invalid surface replacement")
+	}
+	if replacement.Start == nil && replacement.End == nil {
+		replacement.Start, replacement.End = replacement.StartSeq, replacement.EndSeq
+	}
+	if replacement.Op != "replace" || replacement.Start == nil || replacement.End == nil || *replacement.Start < 0 || *replacement.End < *replacement.Start {
 		return false, fmt.Errorf("invalid surface replacement")
 	}
 	return false, nil

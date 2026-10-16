@@ -64,8 +64,8 @@ sessionmgr config set-directory /path/to/session-archive
 sessionmgr export
 ```
 
-Session Manager automatically scans available Codex, Claude Code, and DeepSeek
-Harness state directories. The local GUI exposes three peer source switches at
+Session Manager automatically scans available Codex, Claude Code, DeepSeek
+Harness, Oh My Pi, and OpenCode state directories. The local GUI exposes five peer source switches at
 the top; on first open, each detected source starts enabled and can be turned off.
 Codex archived sessions and non-Git directories remain explicit policy choices:
 
@@ -77,4 +77,11 @@ sessionmgr export --include-non-git
 Use `--claude-home /path/to/claude-home` to override `CLAUDE_CONFIG_DIR` or
 `~/.claude`.
 Use `--deepseek-home /path/to/dsh-home` to override `DSH_HOME` or `~/.dsh`.
+DeepSeek format 0 and 4 logs are supported; discovery selects the latest canonical
+generation (`session.jsonl` or `session.vN.jsonl`, optionally `.zstd`) per session.
+Unknown selected formats fail explicitly rather than falling back to older logs.
+
+`export --gui-only` includes Codex Desktop, Claude Desktop-origin roots, and
+OpenCode Desktop local-project roots. OMP remains a CLI source outside this scope.
+DeepSeek roots use a separate `export --gui-only=false --sources deepseek`.
 Use `sessionmgr help` for all CLI options.

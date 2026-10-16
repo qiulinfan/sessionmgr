@@ -190,7 +190,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		for _, path := range deepSeekFiles {
 			sources = append(sources, nativeSessionSource{
 				path: path, harness: harnessDeepSeek,
-				compressed: filepath.Base(path) == deepSeekCompressedFilename,
+				compressed: strings.HasSuffix(path, ".zstd"),
 			})
 			paths = append(paths, path)
 		}
