@@ -403,3 +403,89 @@ func TestIncrementalSessionScopeKeepsNotFoundDistinctFromUnchanged(t *testing.T)
 		}
 	}
 }
+
+func TestExportWithinSkipsOldSessionsWithoutHidingThemFromWiderExports(t *testing.T) {
+	opts := checkpointOptions(t)
+	const remote = "https://github.com/example/within.git"
+	writeSessionFixture(t, opts.CodexHome, "stale", remote, "old conversation")
+	writeSessionFixture(t, opts.CodexHome, "fresh", remote, "recent conversation")
+	writeTitles(t, opts.CodexHome,
+		titleLine("stale", "Stale session", "2026-08-05T02:00:00Z"),
+		titleLine("fresh", "Fresh session", "2026-08-05T02:00:00Z"),
+	)
+	ageSource(t, incrementalFixturePath(opts, "stale"), 40*24*time.Hour)
+	ageSource(t, incrementalFixturePath(opts, "fresh"), 2*time.Hour)
+
+	opts.Within = 30 * 24 * time.Hour
+	windowed := mustExport(t, opts)
+	if windowed.Created != 1 || windowed.OutsideWindow != 1 || windowed.IgnoredUnchanged != 0 ||
+		windowed.WithinSince == "" || windowed.Changes[0].SessionID != "fresh" {
+		t.Fatalf("windowed export: %+v", windowed)
+	}
+	again := mustExport(t, opts)
+	if again.Created != 0 || again.OutsideWindow != 1 || again.IgnoredUnchanged != 1 {
+		t.Fatalf("repeated windowed export: %+v", again)
+	}
+
+	opts.Within = 0
+	wider := mustExport(t, opts)
+	if wider.Created != 1 || wider.OutsideWindow != 0 || wider.WithinSince != "" || wider.Changes[0].SessionID != "stale" {
+		t.Fatalf("wider export missed the skipped session: %+v", wider)
+	}
+}
+
+func TestExportWithinReadsOldFragmentsOfAnActiveConversation(t *testing.T) {
+	opts := checkpointOptions(t)
+	const id = "within-fragments"
+	const remote = "https://github.com/example/within-fragments.git"
+	writeTitles(t, opts.CodexHome, titleLine(id, "Long conversation", "2026-08-05T02:00:00Z"))
+	first := writeCodexFragmentFixture(t, opts.CodexHome, "first.jsonl", id, remote, "2026-08-05T01:00:00Z", "early user", "early answer")
+	second := writeCodexFragmentFixture(t, opts.CodexHome, "second.jsonl", id, remote, "2026-08-05T01:02:00Z", "late user", "late answer")
+	ageSource(t, first, 40*24*time.Hour)
+	ageSource(t, second, time.Hour)
+	opts.Within = 7 * 24 * time.Hour
+	result := mustExport(t, opts)
+	if result.Created != 1 || result.ScannedSources != 2 || result.OutsideWindow != 0 {
+		t.Fatalf("active conversation lost an old fragment: %+v", result)
+	}
+	document, err := os.ReadFile(result.Changes[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFragmentMarkersOnce(t, string(document), "early user", "early answer", "late user", "late answer")
+}
+
+func TestExportWithinDoesNotLimitAnExplicitSession(t *testing.T) {
+	opts := checkpointOptions(t)
+	writeSessionFixture(t, opts.CodexHome, "anchor", "https://github.com/example/within-anchor.git", "old anchor")
+	writeTitles(t, opts.CodexHome, titleLine("anchor", "Anchor session", "2026-08-05T02:00:00Z"))
+	ageSource(t, incrementalFixturePath(opts, "anchor"), 90*24*time.Hour)
+	opts.Within = 7 * 24 * time.Hour
+	opts.SessionID = "anchor"
+	result := mustExport(t, opts)
+	if result.Created != 1 || result.OutsideWindow != 0 || result.WithinSince != "" {
+		t.Fatalf("explicit session export was windowed: %+v", result)
+	}
+}
+
+func TestExportWithinReadsOldCompressedFragmentsOfAnActiveConversation(t *testing.T) {
+	opts := checkpointOptions(t)
+	const id = "within-compressed"
+	const remote = "https://github.com/example/within-compressed.git"
+	writeTitles(t, opts.CodexHome, titleLine(id, "Compressed long conversation", "2026-08-05T02:00:00Z"))
+	first := writeCodexFragmentFixture(t, opts.CodexHome, "first.jsonl", id, remote, "2026-08-05T01:00:00Z", "early user", "early answer")
+	second := writeCodexFragmentFixture(t, opts.CodexHome, "second.jsonl", id, remote, "2026-08-05T01:02:00Z", "late user", "late answer")
+	compressCodexFixture(t, first, true)
+	ageSource(t, first+".zst", 40*24*time.Hour)
+	ageSource(t, second, time.Hour)
+	opts.Within = 7 * 24 * time.Hour
+	result := mustExport(t, opts)
+	if result.Created != 1 || result.ScannedSources != 2 || result.OutsideWindow != 0 {
+		t.Fatalf("active conversation lost an old compressed fragment: %+v", result)
+	}
+	document, err := os.ReadFile(result.Changes[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFragmentMarkersOnce(t, string(document), "early user", "early answer", "late user", "late answer")
+}

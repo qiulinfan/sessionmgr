@@ -19,7 +19,7 @@ import (
 
 // version is a variable so release builds can stamp the reviewed tag version
 // with -ldflags -X. Development builds keep an explicit prerelease suffix.
-var version = "1.5.1-dev"
+var version = "1.6.0-dev"
 
 type commandError struct {
 	exitCode int
@@ -130,6 +130,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	includeArchived := flags.Bool("include-archived", false, "also export Codex archived sessions")
 	includeNonGit := flags.Bool("include-non-git", false, "also fully export sessions from directories without a hosted Git remote")
 	fullScan := flags.Bool("full-scan", false, "rescan all sessions instead of using the local export checkpoint")
+	within := flags.String("within", defaultExportWithin, "export only sessions active within this period, e.g. 30d, 7d, 12h; \"all\" for no limit")
 	guiOnly := flags.Bool("gui-only", false, "export GUI conversations only (overrides the saved setting)")
 	openCodeGUIHome := flags.String("opencode-gui-home", "", "OpenCode Desktop application state directory")
 	desktopOnly := flags.Bool("desktop-only", false, "export Codex sidebar roots and Claude Desktop roots; exclude CLI, SDK and other harnesses")
@@ -149,6 +150,10 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	if flags.NArg() != 0 {
 		return argumentError("export does not accept positional arguments")
+	}
+	withinDuration, err := parseWithin(*within)
+	if err != nil {
+		return argumentError(err.Error())
 	}
 	repoWasSet := flagWasSet(flags, "repo")
 	if *all && repoWasSet {
@@ -226,7 +231,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 		SidebarOnly:     *sidebarOnly, DesktopOnly: *desktopOnly, GUIOnly: effectiveGUIOnly, OpenCodeGUIHome: *openCodeGUIHome,
 		IncludeNonGit:  *includeNonGit,
 		Sources:        &selection,
-		CheckpointPath: store.ExportStatePath(), FullScan: *fullScan,
+		CheckpointPath: store.ExportStatePath(), FullScan: *fullScan, Within: withinDuration,
 		DeviceID: device.DeviceID, DeviceName: device.DeviceName,
 	})
 	if *jsonOutput {
@@ -541,7 +546,7 @@ Usage:
   smg config show
   smg export [--all | --repo PATH] [--session ID] [--sources codex,claude-code,deepseek,omp,opencode]
                     [--omp-home PATH] [--omp-session-dir PATH] [--opencode-db PATH]
-                    [--gui-only[=false] | --sidebar-only | --desktop-only] [--opencode-gui-home PATH] [--include-archived] [--include-non-git] [--full-scan] [--directory PATH]
+                    [--gui-only[=false] | --sidebar-only | --desktop-only] [--opencode-gui-home PATH] [--include-archived] [--include-non-git] [--full-scan] [--within 30d|7d|all] [--directory PATH]
   smg list [--history]
   smg search [QUERY] [--directory PATH] [--repo NAME|REMOTE|PATH] [--session ID]
                     [--harness NAME] [--device ID|NAME] [--since TIME] [--until TIME]
@@ -556,7 +561,8 @@ Available session stores for all five supported harnesses are scanned automatica
 The configured export directory persists across launches. Output lists
 only files changed by the current operation. "archive" remains an alias for
 "export". Later exports use local scan history with a one-hour overlap;
---full-scan checks every session again. cleanup-internal is a dry run unless
+--full-scan checks every session again. export --within (default 30d) skips
+sessions with no activity in that period; "all" removes the limit. cleanup-internal is a dry run unless
 --apply is provided. search is read-only metadata retrieval; --content requires
 a narrow scope. show verifies document hashes before returning bounded lines.
 For one-time export paths use --output; --directory remembers the export path.

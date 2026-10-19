@@ -74,6 +74,15 @@ sessionmgr export --include-archived
 sessionmgr export --include-non-git
 ```
 
+CLI exports only read sessions with activity in the last 30 days. Pick another
+period with `--within`, or `--within all` for no limit; a session outside the
+window is left for a later, wider export. `--session ID` ignores the window:
+
+```bash
+sessionmgr export --within 7d
+sessionmgr export --within all
+```
+
 Use `--claude-home /path/to/claude-home` to override `CLAUDE_CONFIG_DIR` or
 `~/.claude`.
 Use `--deepseek-home /path/to/dsh-home` to override `DSH_HOME` or `~/.dsh`.

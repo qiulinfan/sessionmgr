@@ -234,9 +234,13 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	if result.Incremental {
 		result.Since = formatTime(incremental.since)
 	}
+	if !incremental.cutoff.IsZero() {
+		result.WithinSince = formatTime(incremental.cutoff)
+	}
 	sources = incremental.filterSources(sources, titles)
 	result.ScannedSources = len(sources)
-	result.IgnoredUnchanged = result.Sources - len(sources)
+	result.OutsideWindow = incremental.outside
+	result.IgnoredUnchanged = result.Sources - len(sources) - incremental.outside
 	paths = paths[:0]
 	for _, source := range sources {
 		paths = append(paths, source.path)
@@ -351,6 +355,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	}
 	if selected.OpenCode {
 		guiFiltered := 0
+		outsideBefore := incremental.outside
 		openCode, readErr := readOpenCodeSessionsSelected(ctx, opts.OpenCodeDB, window, func(header openCodeSessionRow) bool {
 			if opts.GUIOnly && !openCodeGUIIDs[header.id] {
 				guiFiltered++
@@ -364,7 +369,9 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		result.Sources += openCode.sources
 		result.ScannedSources += openCode.sources - openCode.ignored
 		result.FilteredInternal += guiFiltered
-		result.IgnoredUnchanged += openCode.ignored - guiFiltered
+		openCodeOutside := incremental.outside - outsideBefore
+		result.OutsideWindow += openCodeOutside
+		result.IgnoredUnchanged += openCode.ignored - guiFiltered - openCodeOutside
 		result.Busy += openCode.busy
 		result.Skipped += openCode.skipped
 		result.Warnings = append(result.Warnings, openCode.warnings...)

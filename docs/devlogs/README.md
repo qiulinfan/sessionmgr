@@ -12,6 +12,7 @@ The repository-level requirements are defined in
 
 | Version | Status | Date | Summary |
 | --- | --- | --- | --- |
+| [`v1.6.0`](./v1.6.0.md) | Development | 2026-10-19 | `export --within` activity window, 30 days by default |
 | [`v1.5.1`](./v1.5.1.md) | Development | 2026-10-16 | DeepSeek format-4 generations and explicit personal backup scope |
 | [`v1.5.0`](./v1.5.0.md) | Development | 2026-10-15 | Global GUI-only setting and verified OpenCode GUI-list scope |
 | [`v1.4.4`](./v1.4.4.md) | Development | 2026-10-13 | Combined Codex sidebar and Claude Desktop-origin roots |

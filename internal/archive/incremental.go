@@ -52,6 +52,8 @@ type incrementalExport struct {
 	next      exportCheckpoint
 	startedAt time.Time
 	since     time.Time
+	cutoff    time.Time
+	outside   int
 	full      bool
 	retry     map[string]bool
 	settled   map[string]bool
@@ -128,6 +130,9 @@ func beginIncrementalExport(opts Options, selected SourceSelection, target Repos
 	if !run.full && !previous.LastExportAt.IsZero() && !previous.LastExportAt.After(startedAt) {
 		run.since = previous.LastExportAt.Add(-exportOverlap)
 	}
+	if opts.Within > 0 && opts.SessionID == "" {
+		run.cutoff = startedAt.Add(-opts.Within)
+	}
 	return run, nil
 }
 
@@ -144,6 +149,7 @@ func titleStateHash(title titleRecord) string {
 func (run *incrementalExport) filterSources(sources []nativeSessionSource, titles map[string]titleRecord) []nativeSessionSource {
 	eligible := make(map[string]bool)
 	groups := make(map[string]bool)
+	outside := make(map[string]bool)
 	for _, source := range sources {
 		key := sourceStateKey(source.harness, source.path)
 		old, known := run.previous.Sources[key]
@@ -155,6 +161,16 @@ func (run *incrementalExport) filterSources(sources []nativeSessionSource, title
 		}
 		if source.harness == harnessCodex && next.SessionID != "" {
 			next.TitleHash = titleStateHash(titles[next.SessionID])
+		}
+		if !run.cutoff.IsZero() && err == nil && next.ModifiedAt.Before(run.cutoff) {
+			// Resolve the logical session so an old fragment is still read when
+			// another fragment of the same conversation is inside the window.
+			if next.SessionID == "" {
+				next.SessionID = nativeSourceSessionID(source)
+			}
+			outside[key] = true
+			run.next.Sources[key] = next
+			continue
 		}
 		selected := run.since.IsZero() || !known || old.Pending || err != nil ||
 			!next.ModifiedAt.Before(run.since) || next.Size != old.Size ||
@@ -190,9 +206,28 @@ func (run *incrementalExport) filterSources(sources []nativeSessionSource, title
 			next.Pending = true
 			run.next.Sources[key] = next
 			filtered = append(filtered, source)
+		} else if outside[key] {
+			// Leave a source outside the window exactly as previously recorded;
+			// recording its current state would hide it from a wider export.
+			run.outside++
+			if old, known := run.previous.Sources[key]; known {
+				run.next.Sources[key] = old
+			} else {
+				delete(run.next.Sources, key)
+			}
 		}
 	}
 	return filtered
+}
+
+func nativeSourceSessionID(source nativeSessionSource) string {
+	switch source.harness {
+	case harnessCodex:
+		return peekCodexSessionID(source.path)
+	case harnessClaudeCode:
+		return strings.TrimSuffix(filepath.Base(source.path), filepath.Ext(source.path))
+	}
+	return ""
 }
 
 func peekCodexSessionID(path string) string {
@@ -245,6 +280,13 @@ func (run *incrementalExport) selectOpenCode(path string, header openCodeSession
 	next := exportSourceState{
 		Harness: harnessOpenCode, SessionID: header.id,
 		ModifiedAt: time.UnixMilli(header.modified).UTC(), TitleHash: digestBytes(metadata),
+	}
+	if !run.cutoff.IsZero() && next.ModifiedAt.Before(run.cutoff) {
+		run.outside++
+		if known {
+			run.next.Sources[key] = old
+		}
+		return false
 	}
 	selected := run.since.IsZero() || !known || old.Pending || !next.ModifiedAt.Before(run.since) ||
 		!next.ModifiedAt.Equal(old.ModifiedAt) || next.TitleHash != old.TitleHash

@@ -62,6 +62,12 @@ type Options struct {
 	CheckpointPath string
 	FullScan       bool
 
+	// Within limits discovery to sessions whose source changed during this
+	// period before the export started. Zero exports regardless of age. Older
+	// sources keep their prior checkpoint state, so a later wider export still
+	// finds them. An explicit SessionID ignores the window.
+	Within time.Duration
+
 	// StabilityWindow is the shared quiet period used before reading discovered
 	// session files. Zero selects the production default; a negative value
 	// disables the delay for deterministic fixtures that cannot mutate.
@@ -89,6 +95,8 @@ type Result struct {
 	IgnoredUnchanged    int           `json:"ignored_unchanged"`
 	Incremental         bool          `json:"incremental"`
 	Since               string        `json:"since,omitempty"`
+	WithinSince         string        `json:"within_since,omitempty"`
+	OutsideWindow       int           `json:"outside_window"`
 	LastExportAt        string        `json:"last_export_at,omitempty"`
 	Changes             []Change      `json:"changes"`
 	Warnings            []string      `json:"warnings,omitempty"`
