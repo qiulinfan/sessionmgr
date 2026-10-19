@@ -99,8 +99,7 @@ func CleanupInternal(ctx context.Context, opts CleanupOptions) (CleanupResult, e
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(path), readErr))
 			continue
 		}
-		fallbackID := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-		session, parseErr := parseSession(raw, fallbackID, titles)
+		session, parseErr := parseSession(raw, codexFallbackID(path), titles)
 		if parseErr != nil {
 			result.Skipped++
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(path), parseErr))

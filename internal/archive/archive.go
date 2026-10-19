@@ -158,7 +158,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 				result.FilteredInternal++
 				continue
 			}
-			sources = append(sources, nativeSessionSource{path: path, harness: harnessCodex})
+			sources = append(sources, nativeSessionSource{path: path, harness: harnessCodex, compressed: codexSourceCompressed(path)})
 			paths = append(paths, path)
 		}
 	}
@@ -283,6 +283,19 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(path), readErr))
 			continue
 		}
+		if source.harness == harnessCodex && source.compressed {
+			raw, readErr = decodeCodexSource(raw)
+			if readErr != nil {
+				incremental.failedSource(source)
+				if sourceErrorIsBusy(readErr) {
+					result.Busy++
+					continue
+				}
+				result.Skipped++
+				result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", filepath.Base(path), readErr))
+				continue
+			}
+		}
 		if source.harness == harnessCodex || (source.harness == harnessDeepSeek && !source.compressed) {
 			raw, readErr = completedNativePrefix(source.harness, raw)
 			if readErr != nil {
@@ -313,8 +326,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		case harnessOMP:
 			session, parseErr = parseOMPSession(raw, opts.OMPHome)
 		default:
-			fallbackID := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-			session, parseErr = parseSession(raw, fallbackID, titles)
+			session, parseErr = parseSession(raw, codexFallbackID(path), titles)
 		}
 		if parseErr != nil {
 			if stableIncomplete(parseErr, expected.info.ModTime(), startedAt) {

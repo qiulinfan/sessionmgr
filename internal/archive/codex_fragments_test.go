@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestExportCoalescesCodexFragmentsForOneNativeSession(t *testing.T) {
@@ -210,6 +212,81 @@ func assertFragmentMarkersOnce(t *testing.T, document string, markers ...string)
 	for _, marker := range markers {
 		if count := strings.Count(document, marker); count != 1 {
 			t.Fatalf("conversation contains %q %d times, want exactly once", marker, count)
+		}
+	}
+}
+
+func TestExportReadsCompressedCodexFragments(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	output := filepath.Join(root, "archive")
+	const (
+		id     = "compressed-session"
+		remote = "https://github.com/example/compressed-contract.git"
+	)
+	first := writeCodexFragmentFixture(t, codexHome, "rollout-"+id+".jsonl", id, remote,
+		"2026-08-05T01:00:00Z", "compressed-one-user", "compressed-one-assistant")
+	second := writeCodexFragmentFixture(t, codexHome, "rollout-"+id+"_continuation.jsonl", id, remote,
+		"2026-08-05T01:02:00Z", "compressed-two-user", "compressed-two-assistant")
+	writeTitles(t, codexHome, titleLine(id, "Compressed contract", "2026-08-05T01:05:00Z"))
+
+	plain, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil || plain.Created != 1 || len(plain.Changes) != 1 {
+		t.Fatalf("export plain fragments: %+v, %v", plain, err)
+	}
+	path := plain.Changes[0].Path
+
+	// Codex later compresses the older fragment. A compressed copy beside a
+	// plain one is the same fragment and must be read only once.
+	compressCodexFixture(t, second, false)
+	compressCodexFixture(t, first, true)
+	files, err := discoverSessionFiles(codexHome, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || files[0] != first+".zst" || files[1] != second {
+		t.Fatalf("compressed discovery = %v", files)
+	}
+
+	compressed, err := Export(context.Background(), testExportOptions(codexHome, output))
+	if err != nil {
+		t.Fatalf("export compressed fragment: %v", err)
+	}
+	if compressed.Sources != 2 || compressed.Unchanged != 1 || compressed.Created != 0 || compressed.Skipped != 0 || len(compressed.Changes) != 0 {
+		t.Fatalf("compressing a fragment changed the logical session: %+v", compressed)
+	}
+	if got, want := filepath.Base(filepath.Dir(path)), "2026-08-05T01-00-00Z--compressed-contract"; got != want {
+		t.Fatalf("session directory = %q, want %q", got, want)
+	}
+	document, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFragmentMarkersOnce(t, string(document),
+		"compressed-one-user", "compressed-one-assistant",
+		"compressed-two-user", "compressed-two-assistant",
+	)
+	if peekCodexSessionID(first+".zst") != id {
+		t.Fatal("session ID was not read from the compressed fragment")
+	}
+}
+
+func compressCodexFixture(t *testing.T, path string, removePlain bool) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderCRC(false), zstd.WithEncoderConcurrency(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".zst", encoder.EncodeAll(raw, nil), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if removePlain {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

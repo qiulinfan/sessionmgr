@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 const defaultStabilityWindow = 350 * time.Millisecond
@@ -69,7 +71,7 @@ func discoverSessionFiles(home string, includeArchived bool) ([]string, error) {
 				}
 				return walkErr
 			}
-			if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".jsonl") {
+			if entry.IsDir() || codexSourceStem(entry.Name()) == "" {
 				return nil
 			}
 			paths = append(paths, path)
@@ -79,8 +81,72 @@ func discoverSessionFiles(home string, includeArchived bool) ([]string, error) {
 			return nil, err
 		}
 	}
+	// Codex compresses older rollout fragments to .jsonl.zst. While both forms
+	// of one fragment exist, the plain file is the live copy and the other is a
+	// duplicate of the same records.
+	plain := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		if !codexSourceCompressed(path) {
+			plain[path] = true
+		}
+	}
+	unique := paths[:0]
+	for _, path := range paths {
+		if codexSourceCompressed(path) && plain[strings.TrimSuffix(path, filepath.Ext(path))] {
+			continue
+		}
+		unique = append(unique, path)
+	}
+	paths = unique
 	sort.Strings(paths)
 	return paths, nil
+}
+
+const maxCodexDecodedBytes = int64(1024 * 1024 * 1024)
+
+// codexSourceStem returns the rollout name without .jsonl or .jsonl.zst, or ""
+// when name is not a Codex rollout source.
+func codexSourceStem(name string) string {
+	lower := strings.ToLower(name)
+	switch {
+	case strings.HasSuffix(lower, ".jsonl.zst"):
+		return name[:len(name)-len(".jsonl.zst")]
+	case strings.HasSuffix(lower, ".jsonl"):
+		return name[:len(name)-len(".jsonl")]
+	}
+	return ""
+}
+
+func codexSourceCompressed(path string) bool {
+	return strings.HasSuffix(strings.ToLower(path), ".jsonl.zst")
+}
+
+func codexFallbackID(path string) string {
+	return codexSourceStem(filepath.Base(path))
+}
+
+// decodeCodexSource expands a .jsonl.zst rollout. The source bytes were already
+// read under the stability checks, so a truncated frame is a busy source.
+func decodeCodexSource(raw []byte) ([]byte, error) {
+	decoder, err := zstd.NewReader(bytes.NewReader(raw),
+		zstd.WithDecoderConcurrency(1),
+		zstd.WithDecoderMaxMemory(uint64(maxCodexDecodedBytes)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("open Codex Zstandard rollout: %w", err)
+	}
+	defer decoder.Close()
+	plaintext, err := io.ReadAll(io.LimitReader(decoder, maxCodexDecodedBytes+1))
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, fmt.Errorf("%w: incomplete Codex Zstandard rollout", errSourceBusy)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("decode Codex Zstandard rollout: %w", err)
+	}
+	if int64(len(plaintext)) > maxCodexDecodedBytes {
+		return nil, fmt.Errorf("Codex rollout exceeds the %d MiB decoded limit", maxCodexDecodedBytes/(1024*1024))
+	}
+	return plaintext, nil
 }
 
 func loadTitles(home string) (map[string]titleRecord, error) {
@@ -180,6 +246,11 @@ func readObservedSource(ctx context.Context, path string, expected sourceFingerp
 	data, err := readObservedFile(ctx, path, expected)
 	if err != nil {
 		return nil, err
+	}
+	if codexSourceCompressed(path) {
+		if data, err = decodeCodexSource(data); err != nil {
+			return nil, err
+		}
 	}
 	if !completeJSONL(data) {
 		return nil, fmt.Errorf("%w: source ends with an incomplete JSONL record", errSourceBusy)

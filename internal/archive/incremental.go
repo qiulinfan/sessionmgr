@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 const exportStateSchema = 2
@@ -199,7 +201,16 @@ func peekCodexSessionID(path string) string {
 		return ""
 	}
 	defer file.Close()
-	scanner := bufio.NewScanner(io.LimitReader(file, 1024*1024))
+	var reader io.Reader = file
+	if codexSourceCompressed(path) {
+		decoder, err := zstd.NewReader(file, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(uint64(maxCodexDecodedBytes)))
+		if err != nil {
+			return ""
+		}
+		defer decoder.Close()
+		reader = decoder
+	}
+	scanner := bufio.NewScanner(io.LimitReader(reader, 1024*1024))
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		var record struct {

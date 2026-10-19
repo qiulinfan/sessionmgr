@@ -17,6 +17,8 @@ type claudeRecord struct {
 	Type                    string          `json:"type"`
 	UUID                    string          `json:"uuid"`
 	ParentUUID              string          `json:"parentUuid"`
+	LogicalParentUUID       string          `json:"logicalParentUuid"`
+	Subtype                 string          `json:"subtype"`
 	SessionID               string          `json:"sessionId"`
 	Timestamp               string          `json:"timestamp"`
 	CWD                     string          `json:"cwd"`
@@ -28,6 +30,7 @@ type claudeRecord struct {
 	IsSidechain             bool            `json:"isSidechain"`
 	AgentID                 string          `json:"agentId"`
 	IsMeta                  bool            `json:"isMeta"`
+	IsCompactSummary        bool            `json:"isCompactSummary"`
 	IsAPIErrorMessage       bool            `json:"isApiErrorMessage"`
 	Error                   json.RawMessage `json:"error"`
 	SourceToolAssistantUUID string          `json:"sourceToolAssistantUUID"`
@@ -231,10 +234,19 @@ func parseClaudeSession(raw []byte, fallbackID string) (Session, error) {
 			return Session{}, fmt.Errorf("Claude Code session %q %s record %d has an invalid timestamp", result.ID, current.record.Type, current.order)
 		}
 		chain = append(chain, current)
-		if current.record.ParentUUID == "" {
+		parentUUID := current.record.ParentUUID
+		// Compaction starts a new physical chain: its boundary has no parent and
+		// names the last pre-compaction record as its logical parent. The boundary
+		// stays the chain root unless that parent was written before it: a
+		// transcript resumed from a compacted state copies the boundary first.
+		if parentUUID == "" && current.record.Type == "system" && current.record.Subtype == "compact_boundary" &&
+			claudeHasEarlierOccurrence(current, occurrences[current.record.LogicalParentUUID]) {
+			parentUUID = current.record.LogicalParentUUID
+		}
+		if parentUUID == "" {
 			break
 		}
-		parent, err := claudeParentOccurrence(current, occurrences[current.record.ParentUUID])
+		parent, err := claudeParentOccurrence(current, parentUUID, occurrences[parentUUID])
 		if err != nil {
 			return Session{}, fmt.Errorf("Claude Code session %q current conversation parent: %w", result.ID, err)
 		}
@@ -259,7 +271,7 @@ func parseClaudeSession(raw []byte, fallbackID string) (Session, error) {
 		node := chain[index]
 		if node.record.Type == "assistant" || (node.record.Type == "user" &&
 			!rawJSONPresent(node.record.ToolUseResult) && node.record.SourceToolAssistantUUID == "" &&
-			!node.record.IsMeta && node.record.Origin.Kind != "task-notification" && node.record.PromptSource != "system") {
+			!node.record.IsMeta && !node.record.IsCompactSummary && node.record.Origin.Kind != "task-notification" && node.record.PromptSource != "system") {
 			activeStart = node.startOffset
 			break
 		}
@@ -418,7 +430,8 @@ func claudeUserMessage(node *claudeNode) (*Message, bool, error) {
 			toolResult = true
 		}
 	}
-	if toolResult || node.record.IsMeta || node.record.Origin.Kind == "task-notification" || node.record.PromptSource == "system" {
+	// A compaction summary is generated context, not something the user typed.
+	if toolResult || node.record.IsMeta || node.record.IsCompactSummary || node.record.Origin.Kind == "task-notification" || node.record.PromptSource == "system" {
 		return nil, true, nil
 	}
 	if node.record.Origin.Kind != "" && node.record.Origin.Kind != "human" {
@@ -557,9 +570,18 @@ func rawJSONPresent(value json.RawMessage) bool {
 	return len(value) > 0 && !bytes.Equal(value, []byte("null"))
 }
 
-func claudeParentOccurrence(child *claudeNode, candidates []*claudeNode) (*claudeNode, error) {
+func claudeHasEarlierOccurrence(child *claudeNode, candidates []*claudeNode) bool {
+	for _, candidate := range candidates {
+		if candidate.order < child.order {
+			return true
+		}
+	}
+	return false
+}
+
+func claudeParentOccurrence(child *claudeNode, parentUUID string, candidates []*claudeNode) (*claudeNode, error) {
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("missing parent %q", child.record.ParentUUID)
+		return nil, fmt.Errorf("missing parent %q", parentUUID)
 	}
 	var previous *claudeNode
 	forward := make([]*claudeNode, 0, len(candidates))
@@ -578,7 +600,7 @@ func claudeParentOccurrence(child *claudeNode, candidates []*claudeNode) (*claud
 	if len(forward) == 1 {
 		return forward[0], nil
 	}
-	return nil, fmt.Errorf("parent %q has %d ambiguous forward occurrences", child.record.ParentUUID, len(forward))
+	return nil, fmt.Errorf("parent %q has %d ambiguous forward occurrences", parentUUID, len(forward))
 }
 
 func validateClaudeReplay(selected *claudeNode, candidates []*claudeNode) error {

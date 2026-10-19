@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestResolveClaudeHomePrecedence(t *testing.T) {
@@ -581,4 +582,72 @@ func marshalClaudeRecords(t *testing.T, records []map[string]any) []byte {
 		}
 	}
 	return output.Bytes()
+}
+
+func TestParseClaudeSessionFollowsCompactBoundaryToFullConversation(t *testing.T) {
+	const id = "11111111-1111-1111-1111-111111111111"
+	cwd := t.TempDir()
+	records := []map[string]any{
+		claudeUserRecord(id, "u1", "", "2026-08-20T01:00:00Z", cwd, []any{
+			map[string]any{"type": "text", "text": "Before compaction"},
+		}),
+		claudeAssistantRecord(id, "a1", "u1", "m1", "2026-08-20T01:00:01Z", cwd, []any{
+			map[string]any{"type": "text", "text": "Earlier answer"},
+		}),
+		{
+			"type": "system", "subtype": "compact_boundary", "uuid": "boundary", "parentUuid": nil,
+			"logicalParentUuid": "a1", "sessionId": id, "timestamp": "2026-08-21T01:00:00Z", "cwd": cwd,
+			"content": "Conversation compacted",
+		},
+		{
+			"type": "user", "uuid": "summary", "parentUuid": "boundary", "sessionId": id,
+			"timestamp": "2026-08-21T01:00:00Z", "cwd": cwd, "userType": "external",
+			"isCompactSummary": true, "isVisibleInTranscriptOnly": true,
+			"message": map[string]any{"role": "user", "content": "This session is being continued from a previous conversation."},
+		},
+		claudeUserRecord(id, "u2", "summary", "2026-08-21T01:00:01Z", cwd, []any{
+			map[string]any{"type": "text", "text": "After compaction"},
+		}),
+		claudeAssistantRecord(id, "a2", "u2", "m2", "2026-08-21T01:00:02Z", cwd, []any{
+			map[string]any{"type": "text", "text": "Later answer"},
+		}),
+	}
+	session, err := parseClaudeSession(marshalClaudeRecords(t, records), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := session.CreatedAt.Format(time.RFC3339), "2026-08-20T01:00:00Z"; got != want {
+		t.Fatalf("CreatedAt = %s, want the pre-compaction start %s", got, want)
+	}
+	var texts []string
+	for _, message := range session.Messages {
+		texts = append(texts, message.Role+":"+message.Text)
+	}
+	want := []string{"user:Before compaction", "assistant:Earlier answer", "user:After compaction", "assistant:Later answer"}
+	if strings.Join(texts, "|") != strings.Join(want, "|") {
+		t.Fatalf("messages = %q, want %q", texts, want)
+	}
+	if session.FilteredUserInput != 1 || session.Title != "Before compaction" {
+		t.Fatalf("compaction summary was not filtered as generated context: %+v", session)
+	}
+
+	// A boundary whose logical parent is absent, or only written after it as in
+	// a transcript resumed from a compacted state, stays the root.
+	orphaned := append([]map[string]any(nil), records[2:]...)
+	resumed := append(append([]map[string]any(nil), records[2:]...), records[0], records[1])
+	resumed[len(resumed)-2] = claudeUserRecord(id, "u1", "a2", "2026-08-21T01:00:03Z", cwd, []any{
+		map[string]any{"type": "text", "text": "Resumed"},
+	})
+	resumed[len(resumed)-1] = claudeAssistantRecord(id, "a1", "u1", "m3", "2026-08-21T01:00:04Z", cwd, []any{
+		map[string]any{"type": "text", "text": "Resumed answer"},
+	})
+	for name, records := range map[string][]map[string]any{"orphaned": orphaned, "resumed": resumed} {
+		session, err = parseClaudeSession(marshalClaudeRecords(t, records), id)
+		if err != nil {
+			t.Fatalf("%s compaction boundary: %v", name, err)
+		}
+		if session.Messages[0].Text != "After compaction" || session.FilteredUserInput != 1 {
+			t.Fatalf("%s compaction boundary messages = %+v", name, session.Messages)
+		}
+	}
 }

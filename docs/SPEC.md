@@ -333,6 +333,12 @@ context-only source 不发布 repository/session 文档，不计为失败；raw 
 tool arguments/results、developer/system message 和 reasoning payload 不进入正文。raw
 bytes 保留在 Codex home；导出器只读源数据。
 
+Codex 会把较旧的 rollout fragment 压缩为 `.jsonl.zst`。discovery 同时接受 `.jsonl` 与
+`.jsonl.zst`；同一 fragment 两种形式并存时只读未压缩的 `.jsonl`。压缩 fragment 先按同样的
+稳定性规则读取 bytes，再解压（上限 1 GiB，截断 frame 记 `busy`），之后与未压缩 fragment
+一样计算完成前缀和 raw hash。因此 hash 针对解压后的 JSONL，fragment 被压缩不改变 logical
+session 的 source hash。
+
 Codex Desktop 可以把同一 native ID 的连续对话写成多个 physical JSONL fragments。读取器先按
 native ID 分组，并且只在每个 fragment 都能证明相同 hosted remote（或相同 canonical local
 workspace）、可按 first-message time 排序、且后段起点不早于前段终点时合并。合并的 logical
@@ -418,7 +424,10 @@ filename identity。读取器：
 1. 选择 source order 最后一个 `sessionId == filename stem` 的 `user`/`assistant` UUID node 为
    current anchor；没有该 node 的 bridge-only source 静默忽略；
 2. 从 anchor 沿 `parentUuid` 回溯。对每个 child 优先选择 source order 中最后一个在 child 前的
-   parent UUID occurrence；仅在没有前项且刚好一个 forward occurrence 时允许 forward reference；
+   parent UUID occurrence；仅在没有前项且刚好一个 forward occurrence 时允许 forward reference。
+   上下文压缩写入的 `type=system, subtype=compact_boundary` 记录 `parentUuid` 为 null，其
+   `logicalParentUuid` 指向压缩前最后一条记录；回溯在边界处改沿 `logicalParentUuid` 继续，
+   使导出包含完整对话和真实开始时间。该 logical parent 不在本文件中时边界仍是根；
 3. 只验证 selected ancestry 的 parent 完整性、cycle、required role/message/timestamp 与 supported
    content blocks。全图 detached roots、off-chain unknown nodes、陈旧 `last-prompt` 与 anchor 后
    attachment 不影响选择；
@@ -438,7 +447,8 @@ conversation projection：
 - `user` 必须 `message.role=user`；`origin.kind=human` 是 canonical direct input。兼容 legacy
   external user 之前必须精确排除 command/local-output/interrupt/system envelopes；未知非空 origin
   fail closed；
-- `toolUseResult`、`sourceToolAssistantUUID`、`tool_result` block、`isMeta`、task-notification、
+- `toolUseResult`、`sourceToolAssistantUUID`、`tool_result` block、`isMeta`、`isCompactSummary`
+  （压缩生成的摘要）、task-notification、
   system prompt source、完整 IDE/system context block 不进入正文；同一 human record 中其余 text 与
   structured attachment 仍保留；
 - `assistant` 必须 `message.role=assistant` 且有 message ID。同一 ID 在新的 assistant ID 或 direct
