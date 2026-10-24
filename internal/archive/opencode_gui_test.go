@@ -13,6 +13,7 @@ func TestOpenCodeGUIListScopeAndBroadExport(t *testing.T) {
 	root := t.TempDir()
 	database := filepath.Join(root, "opencode.db")
 	project := filepath.Join(root, "project")
+	other := filepath.Join(root, "other-cli-project")
 	makeOpenCodeFixture(t, database, project)
 	db, err := sql.Open("sqlite", database)
 	if err != nil {
@@ -20,19 +21,21 @@ func TestOpenCodeGUIListScopeAndBroadExport(t *testing.T) {
 	}
 	for _, query := range []string{
 		`ALTER TABLE session ADD COLUMN time_archived INTEGER`,
-		`INSERT INTO session SELECT 'ses-automatic', '/other-cli-project', title,version,NULL,time_created,time_updated,NULL FROM session WHERE id='ses-primary'`,
 		`INSERT INTO session SELECT 'ses-archived', directory,title,version,NULL,time_created,time_updated,1 FROM session WHERE id='ses-primary'`,
 	} {
 		if _, err := db.Exec(query); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if _, err := db.Exec(`INSERT INTO session SELECT 'ses-automatic', ?, title,version,NULL,time_created,time_updated,NULL FROM session WHERE id='ses-primary'`, other); err != nil {
+		t.Fatal(err)
+	}
 	db.Close()
 	home := filepath.Join(root, "gui")
 	if err := os.Mkdir(home, 0700); err != nil {
 		t.Fatal(err)
 	}
-	state := map[string]any{"server": map[string]any{"projects": map[string]any{"local": []any{map[string]string{"worktree": project}}, "remote": []any{map[string]string{"worktree": "/other-cli-project"}}}}}
+	state := map[string]any{"server": map[string]any{"projects": map[string]any{"local": []any{map[string]string{"worktree": project}}, "remote": []any{map[string]string{"worktree": other}}}}}
 	raw, _ := json.Marshal(state)
 	if err := os.WriteFile(filepath.Join(home, "opencode.global.dat"), raw, 0600); err != nil {
 		t.Fatal(err)

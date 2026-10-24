@@ -99,7 +99,14 @@ directory (override with `--omp-gui-session-dir`), never the CLI sessions in
 Claude Agent threads in Zed run the Claude Agent SDK, so their transcripts carry
 the `sdk-ts` entrypoint; GUI-only export adds such a session only when Zed's
 thread sidebar lists it under `claude-acp` and it is not archived there (default
-database `~/Library/Application Support/Zed/db/0-stable/db.sqlite` on macOS,
-override with `--zed-db`). Other SDK sessions stay out.
+database `~/Library/Application Support/Zed/db/0-stable/db.sqlite` on macOS or
+`%LOCALAPPDATA%\Zed\db\0-stable\db.sqlite` on Windows, override with
+`--zed-db`). Other SDK sessions stay out.
 DeepSeek roots use a separate `export --gui-only=false --sources deepseek`.
 Use `sessionmgr help` for all CLI options.
+
+Each document's hash covers its exact bytes, so Git must not convert its line
+endings. When the archive has no `.gitattributes`, export writes one with
+`* -text`; Git for Windows enables `core.autocrlf` by default and would
+otherwise check documents out with CRLF. An existing `.gitattributes` is left
+as it is: an archive shared with Windows needs `* -text` there too.

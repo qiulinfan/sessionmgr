@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -96,8 +95,7 @@ func ReadOpenCodeGUIIDs(ctx context.Context, database, home string) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	uri := (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs), RawQuery: "mode=ro"}).String()
-	db, err := sql.Open("sqlite", uri)
+	db, err := sql.Open("sqlite", readOnlySQLiteURI(abs))
 	if err != nil {
 		return nil, err
 	}

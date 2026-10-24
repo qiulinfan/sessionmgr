@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -59,8 +58,7 @@ func readZedClaudeIDs(ctx context.Context, path string) (map[string]bool, error)
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("Zed thread database is not a regular file")
 	}
-	uri := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=ro"}).String()
-	db, err := sql.Open("sqlite", uri)
+	db, err := sql.Open("sqlite", readOnlySQLiteURI(path))
 	if err != nil {
 		return nil, err
 	}

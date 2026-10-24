@@ -217,6 +217,8 @@ renderer 产生影响 Markdown 的变化时必须增加 `RendererVersion`。
 ## 5. 文件布局与 schema
 
 ```text
+<export-directory>/.gitattributes   # `* -text`, written only when absent
+
 <export-directory>/<host>-<owner-or-namespace>/<repo>/
 ├── .sessionmgr-repository.json
 └── <device-name>/<created-time>--<session-title>/
@@ -232,6 +234,10 @@ renderer 产生影响 Markdown 的变化时必须增加 `RendererVersion`。
     ├── conversation.md
     └── attachments/
 ```
+
+`document_hash` 覆盖 Markdown 的原始字节，Git 不得转换其换行。export 在 archive 根目录没有
+`.gitattributes` 时写入 `* -text`（Git for Windows 默认开启 `core.autocrlf`）；已有的
+`.gitattributes` 属于用户，从不修改。
 
 DeepSeek session 在相同 hosted/local repository 结构中使用
 `deepseek--<created-time>--<session-title>` 语义目录。Codex 目录名保持原样；该前缀与不同的

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -18,17 +19,25 @@ func TestAbortedCodexIsIncompleteNotBusy(t *testing.T) {
 }
 
 func TestAutomatedDirectoryBoundaries(t *testing.T) {
-	for _, tc := range []struct {
+	type boundary struct {
 		path string
 		want bool
-	}{
+	}
+	cases := []boundary{
 		{filepath.Join(os.TempDir(), "pocket-eval-job", "agent"), true},
-		{filepath.Join("/private"+os.TempDir(), "pocket-eval-job", "agent"), true},
 		{filepath.Join(os.TempDir(), "pocket-debug-eval-job", "agent"), true},
-		{"/private/tmp/claude-501/project/scratchpad/probe", true},
 		{"/Users/owner/Desktop/pocket-eval-project", false},
 		{filepath.Join(os.TempDir(), "normal-user-project"), false},
-	} {
+	}
+	// macOS reaches its temporary root through /private, and Claude Code's
+	// POSIX scratchpads live under /tmp; Windows has neither.
+	if runtime.GOOS != "windows" {
+		cases = append(cases,
+			boundary{filepath.Join("/private"+os.TempDir(), "pocket-eval-job", "agent"), true},
+			boundary{"/private/tmp/claude-501/project/scratchpad/probe", true},
+		)
+	}
+	for _, tc := range cases {
 		if got := automatedOpenCodeDirectory(tc.path); got != tc.want {
 			t.Errorf("%s: %v", tc.path, got)
 		}

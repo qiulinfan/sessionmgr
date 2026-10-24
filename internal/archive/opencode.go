@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -115,8 +114,7 @@ func readOpenCodeSessionsSelected(ctx context.Context, path string, _ time.Durat
 	if err != nil {
 		return result, err
 	}
-	uri := (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs), RawQuery: "mode=ro"}).String()
-	db, err := sql.Open("sqlite", uri)
+	db, err := sql.Open("sqlite", readOnlySQLiteURI(abs))
 	if err != nil {
 		return result, fmt.Errorf("open OpenCode database: %w", err)
 	}

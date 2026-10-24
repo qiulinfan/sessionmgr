@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -41,8 +40,7 @@ func readCodexSidebarIDs(ctx context.Context, home string) (map[string]bool, err
 	if err != nil {
 		return nil, err
 	}
-	uri := (&url.URL{Scheme: "file", Path: filepath.ToSlash(absolute), RawQuery: "mode=ro"}).String()
-	db, err := sql.Open("sqlite", uri)
+	db, err := sql.Open("sqlite", readOnlySQLiteURI(absolute))
 	if err != nil {
 		return nil, err
 	}

@@ -152,6 +152,9 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 	if err := os.MkdirAll(output, 0o755); err != nil {
 		return result, err
 	}
+	if err := ensureByteExactAttributes(output); err != nil {
+		return result, err
+	}
 	existing, err := List(ListOptions{Output: output, History: true})
 	if err != nil {
 		return result, fmt.Errorf("inspect existing archive: %w", err)

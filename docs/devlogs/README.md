@@ -12,7 +12,7 @@ The repository-level requirements are defined in
 
 | Version | Status | Date | Summary |
 | --- | --- | --- | --- |
-| [`v1.7.0`](./v1.7.0.md) | Development | 2026-10-24 | GUI-only export includes OMP sessions from GUI clients (`sessions-gui`) |
+| [`v1.7.0`](./v1.7.0.md) | Development | 2026-10-24 | GUI-only export adds OMP and Zed Claude Agent sessions; native Windows fixes |
 | [`v1.6.0`](./v1.6.0.md) | Released | 2026-10-19 | `export --within` activity window, 30 days by default |
 | [`v1.5.1`](./v1.5.1.md) | Released in v1.6.0 | 2026-10-16 | DeepSeek format-4 generations and explicit personal backup scope |
 | [`v1.5.0`](./v1.5.0.md) | Released in v1.6.0 | 2026-10-15 | Global GUI-only setting and verified OpenCode GUI-list scope |
