@@ -47,7 +47,6 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, fmt.Errorf("GUI-only export cannot include archived sessions")
 		}
 		selected.DeepSeek = false
-		selected.OMP = false
 		result.Scope = "gui-conversations"
 	}
 	if opts.SidebarOnly || opts.DesktopOnly {
@@ -87,7 +86,11 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		if err != nil {
 			return result, err
 		}
-		opts.OMPSessionDir, err = resolveOMPSessionDir(opts.OMPSessionDir, opts.OMPHome)
+		if opts.GUIOnly {
+			opts.OMPSessionDir, err = resolveOMPGUISessionDir(opts.OMPGUISessionDir, opts.OMPHome)
+		} else {
+			opts.OMPSessionDir, err = resolveOMPSessionDir(opts.OMPSessionDir, opts.OMPHome)
+		}
 		if err != nil {
 			return result, err
 		}

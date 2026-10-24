@@ -145,3 +145,39 @@ func TestOMPRunningTurnKeepsCompletedSelectedBranch(t *testing.T) {
 		t.Fatal("exported a completed answer from an abandoned OMP branch")
 	}
 }
+
+func TestGUIOnlyExportReadsOnlyTheOMPGUISessionDirectory(t *testing.T) {
+	root := t.TempDir()
+	cwd := filepath.Join(root, "work")
+	if err := os.MkdirAll(cwd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(root, "omp")
+	write := func(path string) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, ompFixture(cwd), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	export := func(name string) Result {
+		result, err := Export(context.Background(), Options{
+			OMPHome: home, Output: filepath.Join(root, name), AllRepos: true, IncludeNonGit: true,
+			Sources: &SourceSelection{OMP: true}, DeviceID: "device:test", DeviceName: "test",
+			StabilityWindow: -time.Second, GUIOnly: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	write(filepath.Join(home, "sessions", "-work", "2026-09-29_cli.jsonl"))
+	if result := export("cli-only"); result.Sources != 0 || len(result.Changes) != 0 {
+		t.Fatalf("GUI-only export must not read CLI sessions: %+v", result)
+	}
+	write(filepath.Join(home, "sessions-gui", "2026-09-30_gui.jsonl"))
+	if result := export("with-gui"); result.Sources != 1 || len(result.Changes) != 1 || result.Changes[0].Harness != harnessOMP {
+		t.Fatalf("GUI-only export should read the GUI session directory: %+v", result)
+	}
+}

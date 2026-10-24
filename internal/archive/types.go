@@ -24,21 +24,24 @@ type SourceSelection struct {
 }
 
 type Options struct {
-	CodexHome       string
-	ClaudeHome      string
-	DeepSeekHome    string
-	OMPHome         string
-	OMPSessionDir   string
-	OpenCodeDB      string
-	Output          string
-	Repo            string
-	AllRepos        bool
-	SessionID       string
-	Sources         *SourceSelection
-	SidebarOnly     bool
-	DesktopOnly     bool
-	GUIOnly         bool
-	OpenCodeGUIHome string
+	CodexHome     string
+	ClaudeHome    string
+	DeepSeekHome  string
+	OMPHome       string
+	OMPSessionDir string
+	// OMPGUISessionDir holds OMP sessions started by GUI clients such as Zed over
+	// ACP; GUI-only export reads it instead of OMPSessionDir.
+	OMPGUISessionDir string
+	OpenCodeDB       string
+	Output           string
+	Repo             string
+	AllRepos         bool
+	SessionID        string
+	Sources          *SourceSelection
+	SidebarOnly      bool
+	DesktopOnly      bool
+	GUIOnly          bool
+	OpenCodeGUIHome  string
 
 	// IncludeArchived adds Codex archived_sessions/ to discovery. Ordinary
 	// exports inspect only active sessions/ so users can archive a conversation

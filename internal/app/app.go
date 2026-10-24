@@ -19,7 +19,7 @@ import (
 
 // version is a variable so release builds can stamp the reviewed tag version
 // with -ldflags -X. Development builds keep an explicit prerelease suffix.
-var version = "1.6.0"
+var version = "1.7.0"
 
 type commandError struct {
 	exitCode int
@@ -140,6 +140,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	deepSeekSource := flags.String("deepseek-home", "", "DeepSeek Harness state directory (default: DSH_HOME or ~/.dsh)")
 	ompSource := flags.String("omp-home", "", "Oh My Pi agent directory (default: PI_CODING_AGENT_DIR or ~/.omp/agent)")
 	ompSessionDir := flags.String("omp-session-dir", "", "Oh My Pi session directory (default: PI_CODING_AGENT_SESSION_DIR or <omp-home>/sessions)")
+	ompGUISessionDir := flags.String("omp-gui-session-dir", "", "Oh My Pi session directory of GUI clients, read by GUI-only export (default: <omp-home>/sessions-gui)")
 	openCodeDB := flags.String("opencode-db", "", "OpenCode session database (default: XDG_DATA_HOME/opencode/opencode.db)")
 	sourceNames := flags.String("sources", "", "comma-separated harnesses (default: saved selection or all supported sources)")
 	directory := flags.String("directory", "", "export directory to use and remember")
@@ -224,7 +225,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	result, exportErr := archive.Export(ctx, archive.Options{
 		CodexHome: *source, ClaudeHome: *claudeSource, DeepSeekHome: *deepSeekSource,
-		OMPHome: *ompSource, OMPSessionDir: *ompSessionDir, OpenCodeDB: *openCodeDB,
+		OMPHome: *ompSource, OMPSessionDir: *ompSessionDir, OMPGUISessionDir: *ompGUISessionDir, OpenCodeDB: *openCodeDB,
 		Output: resolvedDirectory, Repo: *repo,
 		AllRepos: !repoWasSet || *all, SessionID: *sessionID,
 		IncludeArchived: *includeArchived,
@@ -545,7 +546,7 @@ Usage:
   smg config set-gui-only true|false
   smg config show
   smg export [--all | --repo PATH] [--session ID] [--sources codex,claude-code,deepseek,omp,opencode]
-                    [--omp-home PATH] [--omp-session-dir PATH] [--opencode-db PATH]
+                    [--omp-home PATH] [--omp-session-dir PATH] [--omp-gui-session-dir PATH] [--opencode-db PATH]
                     [--gui-only[=false] | --sidebar-only | --desktop-only] [--opencode-gui-home PATH] [--include-archived] [--include-non-git] [--full-scan] [--within 30d|7d|all] [--directory PATH]
   smg list [--history]
   smg search [QUERY] [--directory PATH] [--repo NAME|REMOTE|PATH] [--session ID]

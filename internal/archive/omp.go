@@ -53,6 +53,15 @@ func DefaultOMPHome() (string, error) { return resolveOMPHome("") }
 
 func DefaultOMPSessionDir(home string) (string, error) { return resolveOMPSessionDir("", home) }
 
+// GUI clients launch OMP with `--session-dir <home>/sessions-gui` so their
+// conversations stay apart from CLI automation in <home>/sessions.
+func resolveOMPGUISessionDir(configured, home string) (string, error) {
+	if strings.TrimSpace(configured) == "" {
+		configured = filepath.Join(home, "sessions-gui")
+	}
+	return resolveOMPSessionDir(configured, home)
+}
+
 func ResolveOMPSessionDir(configured, home string) (string, error) {
 	return resolveOMPSessionDir(configured, home)
 }

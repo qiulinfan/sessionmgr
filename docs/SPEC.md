@@ -62,7 +62,8 @@ CLI 默认扫描五个受支持 source；任何目录不存在都视为
 `--claude-home`、`CLAUDE_CONFIG_DIR`、`~/.claude`；DeepSeek home 取 `--deepseek-home`、
 `DSH_HOME`、`~/.dsh`。OMP home 取 `--omp-home`、`PI_CODING_AGENT_DIR`、`~/.omp/agent`；
 OMP session 目录优先取 `--omp-session-dir`、`PI_CODING_AGENT_SESSION_DIR`，否则是
-`<omp-home>/sessions`；
+`<omp-home>/sessions`；GUI-only export 改读 GUI 客户端（如经 ACP 启动 OMP 的 Zed）
+的 session 目录：`--omp-gui-session-dir`，否则 `<omp-home>/sessions-gui`，不读 CLI 目录；
 OpenCode 数据库取 `--opencode-db` 或 `$XDG_DATA_HOME/opencode/opencode.db`，缺省数据根为
 `~/.local/share`（Windows 优先 `LOCALAPPDATA`）。`export` 默认处理全部 hosted Git repositories；显式 `--repo` 时只处理
 该仓库。`--include-non-git` 开启后，all scope

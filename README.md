@@ -90,7 +90,11 @@ DeepSeek format 0 and 4 logs are supported; discovery selects the latest canonic
 generation (`session.jsonl` or `session.vN.jsonl`, optionally `.zstd`) per session.
 Unknown selected formats fail explicitly rather than falling back to older logs.
 
-`export --gui-only` includes Codex Desktop, Claude Desktop-origin roots, and
-OpenCode Desktop local-project roots. OMP remains a CLI source outside this scope.
+`export --gui-only` includes Codex Desktop, Claude Desktop-origin roots,
+OpenCode Desktop local-project roots, and OMP sessions started by GUI clients.
+A GUI client such as Zed launches OMP over ACP with
+`omp --session-dir <omp-home>/sessions-gui acp`; GUI-only export reads only that
+directory (override with `--omp-gui-session-dir`), never the CLI sessions in
+`<omp-home>/sessions`.
 DeepSeek roots use a separate `export --gui-only=false --sources deepseek`.
 Use `sessionmgr help` for all CLI options.
