@@ -106,6 +106,21 @@ func (store Store) SetGUIOnly(enabled bool) (Config, error) {
 	return current, store.save(current)
 }
 
+// SetDeviceName names this device in export paths. Two homes on one machine
+// (Windows and its WSL) share a host name, so each can take its own.
+func (store Store) SetDeviceName(name string) (Config, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Config{}, fmt.Errorf("device name is required")
+	}
+	current, err := store.EnsureDevice()
+	if err != nil {
+		return Config{}, err
+	}
+	current.DeviceName = name
+	return current, store.save(current)
+}
+
 func (store Store) SetExportDirectory(directory string) (Config, error) {
 	directory = strings.TrimSpace(directory)
 	if directory == "" {

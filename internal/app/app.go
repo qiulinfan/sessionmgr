@@ -19,7 +19,7 @@ import (
 
 // version is a variable so release builds can stamp the reviewed tag version
 // with -ldflags -X. Development builds keep an explicit prerelease suffix.
-var version = "1.7.0"
+var version = "1.8.0"
 
 type commandError struct {
 	exitCode int
@@ -277,6 +277,25 @@ func commandConfig(args []string, stdout, stderr io.Writer) error {
 			return writeJSON(stdout, value)
 		}
 		fmt.Fprintf(stdout, "GUI-only export: %t\n", value.GUIOnly)
+		return nil
+	}
+	if len(args) > 0 && args[0] == "set-device-name" {
+		flags := newFlagSet("config set-device-name", stderr)
+		jsonOutput := flags.Bool("json", false, "emit JSON")
+		if err := flags.Parse(args[1:]); err != nil {
+			return flagError(err)
+		}
+		if flags.NArg() != 1 {
+			return argumentError("config set-device-name requires exactly one name")
+		}
+		value, err := store.SetDeviceName(flags.Arg(0))
+		if err != nil {
+			return err
+		}
+		if *jsonOutput {
+			return writeJSON(stdout, map[string]interface{}{"device_id": value.DeviceID, "device_name": value.DeviceName})
+		}
+		fmt.Fprintf(stdout, "Device name: %s\n", value.DeviceName)
 		return nil
 	}
 	if len(args) == 0 || args[0] == "show" {
@@ -545,6 +564,7 @@ Usage:
                  [--omp-home PATH] [--omp-session-dir PATH] [--opencode-db PATH]
   smg config set-directory PATH
   smg config set-gui-only true|false
+  smg config set-device-name NAME
   smg config show
   smg export [--all | --repo PATH] [--session ID] [--sources codex,claude-code,deepseek,omp,opencode]
                     [--omp-home PATH] [--omp-session-dir PATH] [--omp-gui-session-dir PATH] [--opencode-db PATH]

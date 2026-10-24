@@ -187,7 +187,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		}
 		for _, path := range claudeFiles {
 			if opts.DesktopOnly || opts.GUIOnly {
-				id, scopeErr := claudeDesktopSessionID(path, zedClaudeIDs)
+				id, scopeErr := claudeDesktopSessionID(path, zedClaudeIDs, opts.GUIOnly)
 				if scopeErr != nil {
 					return result, scopeErr
 				}

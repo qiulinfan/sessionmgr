@@ -134,6 +134,19 @@ func TestEnsureDevicePersistsStableMachineIdentity(t *testing.T) {
 	if updated.DeviceID != first.DeviceID || updated.DeviceName != first.DeviceName {
 		t.Fatalf("directory change erased device identity: %+v", updated)
 	}
+	named, err := store.SetDeviceName("  qiulin-wsl ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if named.DeviceID != first.DeviceID || named.DeviceName != "qiulin-wsl" {
+		t.Fatalf("renaming changed the device identity: %+v", named)
+	}
+	if again, err := store.EnsureDevice(); err != nil || again.DeviceName != "qiulin-wsl" || again.DeviceID != first.DeviceID {
+		t.Fatalf("device name did not persist: %+v %v", again, err)
+	}
+	if _, err := store.SetDeviceName(" "); err == nil {
+		t.Fatal("empty device name accepted")
+	}
 }
 
 func TestStoreRefusesConfigSymlink(t *testing.T) {

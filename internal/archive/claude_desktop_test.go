@@ -24,7 +24,7 @@ func TestDesktopScopeIncludesClaudeAndExcludesAutomatedSources(t *testing.T) {
 	if err := os.MkdirAll(project, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for id, entrypoint := range map[string]string{"claude": "claude-desktop", "sdk": "sdk-cli", "cli": "cli", "unknown": ""} {
+	for id, entrypoint := range map[string]string{"claude": "claude-desktop", "vscode": "claude-vscode", "sdk": "sdk-cli", "cli": "cli", "unknown": ""} {
 		u := claudeUserRecord(id, "u", "", "2026-08-20T01:00:00Z", workspace, []any{map[string]any{"type": "text", "text": "Archive this"}})
 		u["entrypoint"] = entrypoint
 		a := claudeAssistantRecord(id, "a", "u", "m", "2026-08-20T01:00:01Z", workspace, []any{map[string]any{"type": "text", "text": "Done"}})
@@ -35,7 +35,8 @@ func TestDesktopScopeIncludesClaudeAndExcludesAutomatedSources(t *testing.T) {
 		}
 	}
 	first := mustExport(t, opts)
-	if first.Scope != "codex-claude-desktop" || first.Created != 2 || first.FilteredInternal != 4 {
+	// The legacy Desktop-only scope keeps VS Code side-panel sessions out.
+	if first.Scope != "codex-claude-desktop" || first.Created != 2 || first.FilteredInternal != 5 {
 		t.Fatalf("scope leaked or omitted sources: %+v", first)
 	}
 	second := mustExport(t, opts)
@@ -59,6 +60,7 @@ func TestClaudeDesktopCannotBeEstablishedByAncestryOrSubagent(t *testing.T) {
 	for name, raw := range map[string]string{
 		"fork":   `{"sessionId":"ancestor","entrypoint":"claude-desktop"}` + "\n" + `{"sessionId":"fork","entrypoint":"sdk-cli"}`,
 		"child":  `{"sessionId":"child","entrypoint":"claude-desktop","isSidechain":true}`,
+		"vscode": `{"sessionId":"vscode","entrypoint":"claude-vscode","isSidechain":true}`,
 		"agent":  `{"sessionId":"agent","entrypoint":"claude-desktop","agentId":"agent-1"}`,
 		"broken": `{"sessionId":"broken","entrypoint":"claude-desktop"}` + "\n{partial",
 	} {
@@ -66,7 +68,7 @@ func TestClaudeDesktopCannotBeEstablishedByAncestryOrSubagent(t *testing.T) {
 		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 			t.Fatal(err)
 		}
-		id, err := claudeDesktopSessionID(path, map[string]bool{"fork": true, "child": true, "agent": true, "broken": true})
+		id, err := claudeDesktopSessionID(path, map[string]bool{"fork": true, "child": true, "agent": true, "broken": true, "vscode": true}, true)
 		if err != nil || id != "" {
 			t.Fatalf("%s accepted: %q %v", name, id, err)
 		}
@@ -86,7 +88,7 @@ func TestGUIOnlyClaudeAddsSDKSessionsListedInTheZedSidebar(t *testing.T) {
 	if err := os.MkdirAll(project, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for id, entrypoint := range map[string]string{"desktop": "claude-desktop", "zed": "sdk-ts", "script": "sdk-ts", "archived": "sdk-ts", "terminal": "cli"} {
+	for id, entrypoint := range map[string]string{"desktop": "claude-desktop", "vscode": "claude-vscode", "zed": "sdk-ts", "script": "sdk-ts", "archived": "sdk-ts", "terminal": "cli"} {
 		u := claudeUserRecord(id, "u", "", "2026-10-24T01:00:00Z", workspace, []any{map[string]any{"type": "text", "text": "Hello"}})
 		u["entrypoint"] = entrypoint
 		a := claudeAssistantRecord(id, "a", "u", "m", "2026-10-24T01:00:01Z", workspace, []any{map[string]any{"type": "text", "text": "Hi"}})
@@ -109,8 +111,8 @@ func TestGUIOnlyClaudeAddsSDKSessionsListedInTheZedSidebar(t *testing.T) {
 		}
 		return result
 	}
-	if result := export("without-zed"); result.Created != 1 || result.FilteredInternal != 4 {
-		t.Fatalf("a missing Zed database should leave only Desktop sessions: %+v", result)
+	if result := export("without-zed"); result.Created != 2 || result.FilteredInternal != 4 {
+		t.Fatalf("a missing Zed database should leave only Desktop and VS Code sessions: %+v", result)
 	}
 	if err := os.MkdirAll(filepath.Dir(zedDB), 0700); err != nil {
 		t.Fatal(err)
@@ -131,7 +133,7 @@ func TestGUIOnlyClaudeAddsSDKSessionsListedInTheZedSidebar(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if result := export("with-zed"); result.Created != 2 || result.FilteredInternal != 3 {
-		t.Fatalf("only listed Claude Agent SDK sessions should join Desktop sessions: %+v", result)
+	if result := export("with-zed"); result.Created != 3 || result.FilteredInternal != 3 {
+		t.Fatalf("only listed Claude Agent SDK sessions should join Desktop and VS Code sessions: %+v", result)
 	}
 }

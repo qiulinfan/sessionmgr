@@ -90,8 +90,10 @@ DeepSeek format 0 and 4 logs are supported; discovery selects the latest canonic
 generation (`session.jsonl` or `session.vN.jsonl`, optionally `.zstd`) per session.
 Unknown selected formats fail explicitly rather than falling back to older logs.
 
-`export --gui-only` includes Codex Desktop, Claude Desktop-origin roots,
-OpenCode Desktop local-project roots, and OMP sessions started by GUI clients.
+`export --gui-only` includes Codex Desktop, Claude Desktop-origin roots, the
+Claude Code sessions of the VS Code extension's side panel (entrypoint
+`claude-vscode`), OpenCode Desktop local-project roots, and OMP sessions started
+by GUI clients.
 A GUI client such as Zed launches OMP over ACP with
 `omp --session-dir <omp-home>/sessions-gui acp`; GUI-only export reads only that
 directory (override with `--omp-gui-session-dir`), never the CLI sessions in
@@ -103,6 +105,10 @@ database `~/Library/Application Support/Zed/db/0-stable/db.sqlite` on macOS or
 `%LOCALAPPDATA%\Zed\db\0-stable\db.sqlite` on Windows, override with
 `--zed-db`). Other SDK sessions stay out.
 DeepSeek roots use a separate `export --gui-only=false --sources deepseek`.
+A WSL distribution on a Windows machine shares the Windows host name; give its
+own Session Manager home a distinct device name with
+`sessionmgr config set-device-name NAME` (for example `qiulin-wsl`) so its
+exports stay apart from the Windows ones.
 Use `sessionmgr help` for all CLI options.
 
 Each document's hash covers its exact bytes, so Git must not convert its line
