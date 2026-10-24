@@ -125,6 +125,18 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, err
 		}
 	}
+	var zedClaudeIDs map[string]bool
+	if opts.GUIOnly && selected.ClaudeCode {
+		var err error
+		opts.ZedDB, err = resolveZedDB(opts.ZedDB)
+		if err != nil {
+			return result, err
+		}
+		zedClaudeIDs, err = readZedClaudeIDs(ctx, opts.ZedDB)
+		if err != nil {
+			return result, err
+		}
+	}
 	if strings.TrimSpace(opts.DeviceID) == "" || strings.TrimSpace(opts.DeviceName) == "" {
 		return result, fmt.Errorf("device identity is required")
 	}
@@ -172,7 +184,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		}
 		for _, path := range claudeFiles {
 			if opts.DesktopOnly || opts.GUIOnly {
-				id, scopeErr := claudeDesktopSessionID(path)
+				id, scopeErr := claudeDesktopSessionID(path, zedClaudeIDs)
 				if scopeErr != nil {
 					return result, scopeErr
 				}

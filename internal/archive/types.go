@@ -42,6 +42,9 @@ type Options struct {
 	DesktopOnly      bool
 	GUIOnly          bool
 	OpenCodeGUIHome  string
+	// ZedDB is Zed's workspace database; GUI-only export adds the Claude Agent
+	// sessions its thread sidebar lists.
+	ZedDB string
 
 	// IncludeArchived adds Codex archived_sessions/ to discovery. Ordinary
 	// exports inspect only active sessions/ so users can archive a conversation

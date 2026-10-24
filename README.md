@@ -96,5 +96,10 @@ A GUI client such as Zed launches OMP over ACP with
 `omp --session-dir <omp-home>/sessions-gui acp`; GUI-only export reads only that
 directory (override with `--omp-gui-session-dir`), never the CLI sessions in
 `<omp-home>/sessions`.
+Claude Agent threads in Zed run the Claude Agent SDK, so their transcripts carry
+the `sdk-ts` entrypoint; GUI-only export adds such a session only when Zed's
+thread sidebar lists it under `claude-acp` and it is not archived there (default
+database `~/Library/Application Support/Zed/db/0-stable/db.sqlite` on macOS,
+override with `--zed-db`). Other SDK sessions stay out.
 DeepSeek roots use a separate `export --gui-only=false --sources deepseek`.
 Use `sessionmgr help` for all CLI options.

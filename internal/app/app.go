@@ -133,6 +133,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	within := flags.String("within", defaultExportWithin, "export only sessions active within this period, e.g. 30d, 7d, 12h; \"all\" for no limit")
 	guiOnly := flags.Bool("gui-only", false, "export GUI conversations only (overrides the saved setting)")
 	openCodeGUIHome := flags.String("opencode-gui-home", "", "OpenCode Desktop application state directory")
+	zedDB := flags.String("zed-db", "", "Zed workspace database whose thread sidebar lists Claude Agent sessions, read by GUI-only export")
 	desktopOnly := flags.Bool("desktop-only", false, "export Codex sidebar roots and Claude Desktop roots; exclude CLI, SDK and other harnesses")
 	sidebarOnly := flags.Bool("sidebar-only", false, "export only active Codex Desktop sidebar root threads")
 	source := flags.String("codex-home", "", "Codex state directory (default: CODEX_HOME or ~/.codex)")
@@ -160,7 +161,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if *all && repoWasSet {
 		return argumentError("--all and --repo are mutually exclusive")
 	}
-	for _, path := range []*string{source, claudeSource, deepSeekSource, ompSource, ompSessionDir, openCodeDB, openCodeGUIHome} {
+	for _, path := range []*string{source, claudeSource, deepSeekSource, ompSource, ompSessionDir, ompGUISessionDir, openCodeDB, openCodeGUIHome, zedDB} {
 		if *path != "" {
 			resolved, err := config.ResolvePath(*path)
 			if err != nil {
@@ -229,7 +230,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 		Output: resolvedDirectory, Repo: *repo,
 		AllRepos: !repoWasSet || *all, SessionID: *sessionID,
 		IncludeArchived: *includeArchived,
-		SidebarOnly:     *sidebarOnly, DesktopOnly: *desktopOnly, GUIOnly: effectiveGUIOnly, OpenCodeGUIHome: *openCodeGUIHome,
+		SidebarOnly:     *sidebarOnly, DesktopOnly: *desktopOnly, GUIOnly: effectiveGUIOnly, OpenCodeGUIHome: *openCodeGUIHome, ZedDB: *zedDB,
 		IncludeNonGit:  *includeNonGit,
 		Sources:        &selection,
 		CheckpointPath: store.ExportStatePath(), FullScan: *fullScan, Within: withinDuration,
@@ -547,7 +548,7 @@ Usage:
   smg config show
   smg export [--all | --repo PATH] [--session ID] [--sources codex,claude-code,deepseek,omp,opencode]
                     [--omp-home PATH] [--omp-session-dir PATH] [--omp-gui-session-dir PATH] [--opencode-db PATH]
-                    [--gui-only[=false] | --sidebar-only | --desktop-only] [--opencode-gui-home PATH] [--include-archived] [--include-non-git] [--full-scan] [--within 30d|7d|all] [--directory PATH]
+                    [--gui-only[=false] | --sidebar-only | --desktop-only] [--opencode-gui-home PATH] [--zed-db PATH] [--include-archived] [--include-non-git] [--full-scan] [--within 30d|7d|all] [--directory PATH]
   smg list [--history]
   smg search [QUERY] [--directory PATH] [--repo NAME|REMOTE|PATH] [--session ID]
                     [--harness NAME] [--device ID|NAME] [--since TIME] [--until TIME]

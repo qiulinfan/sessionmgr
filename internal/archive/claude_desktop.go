@@ -10,7 +10,9 @@ import (
 
 // The physical transcript ID owns membership. Copied fork ancestry cannot
 // establish desktop identity for a CLI/SDK child. Unknown entrypoints fail closed.
-func claudeDesktopSessionID(path string) (string, error) {
+// SDK transcripts count only when their ID is in sdkIDs, the GUI sessions a
+// client such as Zed lists in its own thread sidebar.
+func claudeDesktopSessionID(path string, sdkIDs map[string]bool) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -35,7 +37,7 @@ func claudeDesktopSessionID(path string) (string, error) {
 			return "", nil
 		}
 		if record.Entrypoint != "" {
-			if record.Entrypoint != "claude-desktop" {
+			if record.Entrypoint != "claude-desktop" && !(record.Entrypoint == "sdk-ts" && sdkIDs[id]) {
 				return "", nil
 			}
 			seen = true

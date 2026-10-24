@@ -2,9 +2,11 @@ package archive
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDesktopScopeIncludesClaudeAndExcludesAutomatedSources(t *testing.T) {
@@ -64,9 +66,72 @@ func TestClaudeDesktopCannotBeEstablishedByAncestryOrSubagent(t *testing.T) {
 		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 			t.Fatal(err)
 		}
-		id, err := claudeDesktopSessionID(path)
+		id, err := claudeDesktopSessionID(path, map[string]bool{"fork": true, "child": true, "agent": true, "broken": true})
 		if err != nil || id != "" {
 			t.Fatalf("%s accepted: %q %v", name, id, err)
 		}
+	}
+}
+
+func TestGUIOnlyClaudeAddsSDKSessionsListedInTheZedSidebar(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "work")
+	if err := os.MkdirAll(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, workspace, "init")
+	runGit(t, workspace, "remote", "add", "origin", "https://github.com/example/zed.git")
+	claudeHome := filepath.Join(root, "claude")
+	project := filepath.Join(claudeHome, "projects", "fixture")
+	if err := os.MkdirAll(project, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for id, entrypoint := range map[string]string{"desktop": "claude-desktop", "zed": "sdk-ts", "script": "sdk-ts", "archived": "sdk-ts", "terminal": "cli"} {
+		u := claudeUserRecord(id, "u", "", "2026-10-24T01:00:00Z", workspace, []any{map[string]any{"type": "text", "text": "Hello"}})
+		u["entrypoint"] = entrypoint
+		a := claudeAssistantRecord(id, "a", "u", "m", "2026-10-24T01:00:01Z", workspace, []any{map[string]any{"type": "text", "text": "Hi"}})
+		a["entrypoint"] = entrypoint
+		a["message"].(map[string]any)["stop_reason"] = "end_turn"
+		if err := os.WriteFile(filepath.Join(project, id+".jsonl"), marshalClaudeRecords(t, []map[string]any{u, a}), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	zedDB := filepath.Join(root, "zed", "db.sqlite")
+	export := func(name string) Result {
+		t.Helper()
+		result, err := Export(context.Background(), Options{
+			ClaudeHome: claudeHome, ZedDB: zedDB, Output: filepath.Join(root, name), AllRepos: true,
+			Sources: &SourceSelection{ClaudeCode: true}, DeviceID: "device:test", DeviceName: "test",
+			StabilityWindow: -time.Second, GUIOnly: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	if result := export("without-zed"); result.Created != 1 || result.FilteredInternal != 4 {
+		t.Fatalf("a missing Zed database should leave only Desktop sessions: %+v", result)
+	}
+	if err := os.MkdirAll(filepath.Dir(zedDB), 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", zedDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec("CREATE TABLE sidebar_threads(session_id TEXT, agent_id TEXT, archived INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []struct {
+		id, agent string
+		archived  int
+	}{{"zed", "claude-acp", 0}, {"archived", "claude-acp", 1}, {"terminal", "claude-acp", 0}, {"script", "OMP", 0}} {
+		if _, err = db.Exec("INSERT INTO sidebar_threads VALUES(?,?,?)", r.id, r.agent, r.archived); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if result := export("with-zed"); result.Created != 2 || result.FilteredInternal != 3 {
+		t.Fatalf("only listed Claude Agent SDK sessions should join Desktop sessions: %+v", result)
 	}
 }

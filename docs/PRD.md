@@ -72,7 +72,8 @@ hosted Git remote key | device-local directory key
 - Claude Code 来源开启时，扫描 `CLAUDE_CONFIG_DIR`（默认 `~/.claude`）下恰好一层
   `projects/*/*.jsonl`；不得递归扫描 subagents、tool-results、memory、file-history、history、
   settings、auth 或 session-env；有 `teleported-from` 或已知 cloud
-  entrypoint 的本地副本也必须排除，只导出本机发起的会话；
+  entrypoint 的本地副本也必须排除，只导出本机发起的会话；GUI-only 时只收 Claude Desktop
+  会话，以及 Zed 线程侧栏登记为 Claude Agent（`claude-acp`）且未归档的 SDK 会话；
 - OMP 来源扫描默认 agent home 或显式/环境变量指定的 session 目录下的 `**/*.jsonl`，
   只提取可验证的当前分支；GUI-only 时只扫描 GUI 客户端的 session 目录
   （默认 `<omp-home>/sessions-gui`），CLI 自动化会话不进入 GUI 导出；

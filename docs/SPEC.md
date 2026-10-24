@@ -415,6 +415,13 @@ home 的 transcript discovery 只枚举 `<CLAUDE_HOME>/projects/*/*.jsonl` regul
 `teleported-from` 与已知 web/cloud/mobile entrypoint 表示云端来源；
 即使该 JSONL 已复制进 `projects`，也标记 `filtered_internal`。本地 Remote Control 会话
 仍按其本机 transcript 处理。
+GUI-only export 的 Claude 成员是 root transcript 自身记录（不看 fork 祖先）的
+`entrypoint=claude-desktop`，或 `entrypoint=sdk-ts` 且其 ID 出现在 Zed 线程侧栏：
+`--zed-db`（缺省为 Zed stable 的 `db/0-stable/db.sqlite`，macOS 在
+`~/Library/Application Support/Zed`，Linux 在 `$XDG_DATA_HOME/zed` 或
+`~/.local/share/zed`，Windows 在 `%LOCALAPPDATA%\Zed`）的 `sidebar_threads` 中
+`agent_id='claude-acp'`、`archived=0` 的 `session_id`。数据库不存在视为未安装 Zed，
+只取 Desktop 会话；存在但无法读取则整个 export 失败，不猜测来源。
 官方声明 transcript entry schema 是可随任何 Claude Code release 改变的内部格式，因此该
 adapter 是 shape-validated、fail-closed 的只读兼容层，而不是稳定 native schema 声明。
 
