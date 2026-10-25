@@ -2,6 +2,7 @@ package archive
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -146,8 +147,9 @@ func TestOMPRunningTurnKeepsCompletedSelectedBranch(t *testing.T) {
 	}
 }
 
-func TestGUIOnlyExportReadsOnlyTheOMPGUISessionDirectory(t *testing.T) {
+func TestGUIOnlyExportReadsOnlyTheOMPGUISessionsZedLists(t *testing.T) {
 	root := t.TempDir()
+	zedDB := filepath.Join(root, "zed", "db.sqlite")
 	cwd := filepath.Join(root, "work")
 	if err := os.MkdirAll(cwd, 0o700); err != nil {
 		t.Fatal(err)
@@ -163,7 +165,7 @@ func TestGUIOnlyExportReadsOnlyTheOMPGUISessionDirectory(t *testing.T) {
 	}
 	export := func(name string) Result {
 		result, err := Export(context.Background(), Options{
-			OMPHome: home, Output: filepath.Join(root, name), AllRepos: true, IncludeNonGit: true,
+			OMPHome: home, ZedDB: zedDB, Output: filepath.Join(root, name), AllRepos: true, IncludeNonGit: true,
 			Sources: &SourceSelection{OMP: true}, DeviceID: "device:test", DeviceName: "test",
 			StabilityWindow: -time.Second, GUIOnly: true,
 		})
@@ -177,7 +179,32 @@ func TestGUIOnlyExportReadsOnlyTheOMPGUISessionDirectory(t *testing.T) {
 		t.Fatalf("GUI-only export must not read CLI sessions: %+v", result)
 	}
 	write(filepath.Join(home, "sessions-gui", "2026-09-30_gui.jsonl"))
+	// Zed keeps an OMP session's file after deleting its thread, so a session
+	// counts only while the Zed sidebar lists it unarchived.
+	if result := export("without-zed"); result.Sources != 0 || result.FilteredInternal != 1 {
+		t.Fatalf("an OMP session Zed does not list was exported: %+v", result)
+	}
+	if err := os.MkdirAll(filepath.Dir(zedDB), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", zedDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec("CREATE TABLE sidebar_threads(session_id TEXT, agent_id TEXT, archived INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("INSERT INTO sidebar_threads VALUES('omp-fixture', 'OMP', 1)"); err != nil {
+		t.Fatal(err)
+	}
+	if result := export("archived"); result.Sources != 0 || result.FilteredInternal != 1 {
+		t.Fatalf("an OMP session archived in Zed was exported: %+v", result)
+	}
+	if _, err = db.Exec("UPDATE sidebar_threads SET archived = 0"); err != nil {
+		t.Fatal(err)
+	}
 	if result := export("with-gui"); result.Sources != 1 || len(result.Changes) != 1 || result.Changes[0].Harness != harnessOMP {
-		t.Fatalf("GUI-only export should read the GUI session directory: %+v", result)
+		t.Fatalf("GUI-only export should read the GUI sessions Zed lists: %+v", result)
 	}
 }

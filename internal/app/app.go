@@ -134,6 +134,8 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	guiOnly := flags.Bool("gui-only", false, "export GUI conversations only (overrides the saved setting)")
 	openCodeGUIHome := flags.String("opencode-gui-home", "", "OpenCode Desktop application state directory")
 	zedDB := flags.String("zed-db", "", "Zed workspace database whose thread sidebar lists Claude Agent sessions, read by GUI-only export")
+	vscodeState := flags.String("vscode-state", "", "VS Code global state database listing the Claude Code side-panel sessions archived there, read by GUI-only export")
+	claudeDesktopData := flags.String("claude-desktop-data", "", "Claude Desktop data folder whose session list decides Desktop and GUI-only membership (default: the folders the app uses)")
 	desktopOnly := flags.Bool("desktop-only", false, "export Codex sidebar roots and Claude Desktop roots; exclude CLI, SDK and other harnesses")
 	sidebarOnly := flags.Bool("sidebar-only", false, "export only active Codex Desktop sidebar root threads")
 	source := flags.String("codex-home", "", "Codex state directory (default: CODEX_HOME or ~/.codex)")
@@ -161,7 +163,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if *all && repoWasSet {
 		return argumentError("--all and --repo are mutually exclusive")
 	}
-	for _, path := range []*string{source, claudeSource, deepSeekSource, ompSource, ompSessionDir, ompGUISessionDir, openCodeDB, openCodeGUIHome, zedDB} {
+	for _, path := range []*string{source, claudeSource, deepSeekSource, ompSource, ompSessionDir, ompGUISessionDir, openCodeDB, openCodeGUIHome, zedDB, claudeDesktopData, vscodeState} {
 		if *path != "" {
 			resolved, err := config.ResolvePath(*path)
 			if err != nil {
@@ -230,7 +232,7 @@ func commandExport(ctx context.Context, args []string, stdout, stderr io.Writer)
 		Output: resolvedDirectory, Repo: *repo,
 		AllRepos: !repoWasSet || *all, SessionID: *sessionID,
 		IncludeArchived: *includeArchived,
-		SidebarOnly:     *sidebarOnly, DesktopOnly: *desktopOnly, GUIOnly: effectiveGUIOnly, OpenCodeGUIHome: *openCodeGUIHome, ZedDB: *zedDB,
+		SidebarOnly:     *sidebarOnly, DesktopOnly: *desktopOnly, GUIOnly: effectiveGUIOnly, OpenCodeGUIHome: *openCodeGUIHome, ZedDB: *zedDB, ClaudeDesktopData: *claudeDesktopData, VSCodeState: *vscodeState,
 		IncludeNonGit:  *includeNonGit,
 		Sources:        &selection,
 		CheckpointPath: store.ExportStatePath(), FullScan: *fullScan, Within: withinDuration,
@@ -568,7 +570,7 @@ Usage:
   smg config show
   smg export [--all | --repo PATH] [--session ID] [--sources codex,claude-code,deepseek,omp,opencode]
                     [--omp-home PATH] [--omp-session-dir PATH] [--omp-gui-session-dir PATH] [--opencode-db PATH]
-                    [--gui-only[=false] | --sidebar-only | --desktop-only] [--opencode-gui-home PATH] [--zed-db PATH] [--include-archived] [--include-non-git] [--full-scan] [--within 30d|7d|all] [--directory PATH]
+                    [--gui-only[=false] | --sidebar-only | --desktop-only] [--opencode-gui-home PATH] [--zed-db PATH] [--claude-desktop-data PATH] [--vscode-state PATH] [--include-archived] [--include-non-git] [--full-scan] [--within 30d|7d|all] [--directory PATH]
   smg list [--history]
   smg search [QUERY] [--directory PATH] [--repo NAME|REMOTE|PATH] [--session ID]
                     [--harness NAME] [--device ID|NAME] [--since TIME] [--until TIME]

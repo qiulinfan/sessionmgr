@@ -90,20 +90,37 @@ DeepSeek format 0 and 4 logs are supported; discovery selects the latest canonic
 generation (`session.jsonl` or `session.vN.jsonl`, optionally `.zstd`) per session.
 Unknown selected formats fail explicitly rather than falling back to older logs.
 
-`export --gui-only` includes Codex Desktop, Claude Desktop-origin roots, the
-Claude Code sessions of the VS Code extension's side panel (entrypoint
+`export --gui-only` includes Codex Desktop, Claude Desktop roots, the Claude
+Code sessions of the VS Code extension's side panel (entrypoint
 `claude-vscode`), OpenCode Desktop local-project roots, and OMP sessions started
-by GUI clients.
-A GUI client such as Zed launches OMP over ACP with
-`omp --session-dir <omp-home>/sessions-gui acp`; GUI-only export reads only that
-directory (override with `--omp-gui-session-dir`), never the CLI sessions in
-`<omp-home>/sessions`.
+by Zed.
+A Claude Desktop root counts only while Claude Desktop lists it unarchived: a
+CLI run started inside a Desktop session inherits the `claude-desktop`
+entrypoint, so the app's own session records decide membership, including the
+CLI sessions a record replaced. They are `claude-code-sessions/**/local_*.json`
+in the app's data folder, which it names Claude-Data, Claude-3p or Claude under
+`%LOCALAPPDATA%` or `%APPDATA%` on Windows, `~/Library/Application Support` on
+macOS and `~/.config` on Linux (override with `--claude-desktop-data`). No such
+folder means no Desktop session is in scope; the receipt's
+`claude_desktop_sessions` names the folders read. `--desktop-only` uses the same
+list.
+Zed launches OMP over ACP with `omp --session-dir <omp-home>/sessions-gui acp`;
+GUI-only export reads only that directory (override with
+`--omp-gui-session-dir`), never the CLI sessions in `<omp-home>/sessions`.
 Claude Agent threads in Zed run the Claude Agent SDK, so their transcripts carry
-the `sdk-ts` entrypoint; GUI-only export adds such a session only when Zed's
-thread sidebar lists it under `claude-acp` and it is not archived there (default
-database `~/Library/Application Support/Zed/db/0-stable/db.sqlite` on macOS or
-`%LOCALAPPDATA%\Zed\db\0-stable\db.sqlite` on Windows, override with
-`--zed-db`). Other SDK sessions stay out.
+the `sdk-ts` entrypoint. Zed deletes a Claude Agent transcript with its thread
+but keeps an OMP session's file, so both count only while Zed's thread sidebar
+lists them unarchived, under `claude-acp` or under the custom agent `OMP`
+(default database `~/Library/Application Support/Zed/db/0-stable/db.sqlite` on
+macOS or `%LOCALAPPDATA%\Zed\db\0-stable\db.sqlite` on Windows, override with
+`--zed-db`). Other SDK sessions stay out. A root `claude-vscode` transcript
+counts unless the extension archived it: VS Code's global state database
+(`Code/User/globalStorage/state.vscdb` under `%APPDATA%`,
+`~/Library/Application Support` or `~/.config`; override with `--vscode-state`)
+lists archived side-panel sessions in the `hiddenSessionIds` of its
+`Anthropic.claude-code` entry, and a Remote-WSL window keeps that entry in the
+Windows database. The extension keeps no list of the sessions it started, so a
+CLI run started inside a VS Code session counts too.
 DeepSeek roots use a separate `export --gui-only=false --sources deepseek`.
 A WSL distribution on a Windows machine shares the Windows host name; give its
 own Session Manager home a distinct device name with

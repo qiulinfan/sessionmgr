@@ -45,6 +45,13 @@ type Options struct {
 	// ZedDB is Zed's workspace database; GUI-only export adds the Claude Agent
 	// sessions its thread sidebar lists.
 	ZedDB string
+	// ClaudeDesktopData is Claude Desktop's data folder; Desktop and GUI-only
+	// export keep only the Claude Desktop sessions it lists. Empty searches the
+	// folders the app uses.
+	ClaudeDesktopData string
+	// VSCodeState is VS Code's global state database; GUI-only export leaves out
+	// the side-panel sessions archived in the Claude Code extension.
+	VSCodeState string
 
 	// IncludeArchived adds Codex archived_sessions/ to discovery. Ordinary
 	// exports inspect only active sessions/ so users can archive a conversation
@@ -106,6 +113,10 @@ type Result struct {
 	LastExportAt        string        `json:"last_export_at,omitempty"`
 	Changes             []Change      `json:"changes"`
 	Warnings            []string      `json:"warnings,omitempty"`
+
+	// ClaudeDesktopSessions are the Claude Desktop session folders whose list
+	// decided Desktop membership; none means no Desktop session was in scope.
+	ClaudeDesktopSessions []string `json:"claude_desktop_sessions,omitempty"`
 }
 
 type CleanupOptions struct {

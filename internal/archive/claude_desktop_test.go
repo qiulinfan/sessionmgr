@@ -3,17 +3,40 @@ package archive
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
+// claudeDesktopDataFixture writes a Claude Desktop data folder whose session
+// list holds records, laid out as the packaged Windows app keeps it.
+func claudeDesktopDataFixture(t *testing.T, records ...map[string]any) string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, "claude_pkg", claudeDesktopSessionsDir, "org", "account")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for i, record := range records {
+		raw, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "local_"+string(rune('a'+i))+".json"), raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
 func TestDesktopScopeIncludesClaudeAndExcludesAutomatedSources(t *testing.T) {
 	opts := checkpointOptions(t)
 	sidebarFixture(t, opts.CodexHome)
 	opts.ClaudeHome = t.TempDir()
 	opts.DesktopOnly = true
+	opts.ClaudeDesktopData = claudeDesktopDataFixture(t, map[string]any{"cliSessionId": "claude"})
 	workspace := t.TempDir()
 	runGit(t, workspace, "init")
 	runGit(t, workspace, "remote", "add", "origin", "https://github.com/example/desktop.git")
@@ -24,7 +47,9 @@ func TestDesktopScopeIncludesClaudeAndExcludesAutomatedSources(t *testing.T) {
 	if err := os.MkdirAll(project, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for id, entrypoint := range map[string]string{"claude": "claude-desktop", "vscode": "claude-vscode", "sdk": "sdk-cli", "cli": "cli", "unknown": ""} {
+	// "child" is a CLI run started inside a Desktop session: it inherits the
+	// Desktop entrypoint, but the app does not list it.
+	for id, entrypoint := range map[string]string{"claude": "claude-desktop", "child": "claude-desktop", "vscode": "claude-vscode", "sdk": "sdk-cli", "cli": "cli", "unknown": ""} {
 		u := claudeUserRecord(id, "u", "", "2026-08-20T01:00:00Z", workspace, []any{map[string]any{"type": "text", "text": "Archive this"}})
 		u["entrypoint"] = entrypoint
 		a := claudeAssistantRecord(id, "a", "u", "m", "2026-08-20T01:00:01Z", workspace, []any{map[string]any{"type": "text", "text": "Done"}})
@@ -36,7 +61,7 @@ func TestDesktopScopeIncludesClaudeAndExcludesAutomatedSources(t *testing.T) {
 	}
 	first := mustExport(t, opts)
 	// The legacy Desktop-only scope keeps VS Code side-panel sessions out.
-	if first.Scope != "codex-claude-desktop" || first.Created != 2 || first.FilteredInternal != 5 {
+	if first.Scope != "codex-claude-desktop" || first.Created != 2 || first.FilteredInternal != 6 {
 		t.Fatalf("scope leaked or omitted sources: %+v", first)
 	}
 	second := mustExport(t, opts)
@@ -68,7 +93,8 @@ func TestClaudeDesktopCannotBeEstablishedByAncestryOrSubagent(t *testing.T) {
 		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 			t.Fatal(err)
 		}
-		id, err := claudeDesktopSessionID(path, map[string]bool{"fork": true, "child": true, "agent": true, "broken": true, "vscode": true}, true)
+		listed := map[string]bool{"fork": true, "child": true, "agent": true, "broken": true, "vscode": true}
+		id, err := claudeDesktopSessionID(path, listed, listed, true, nil)
 		if err != nil || id != "" {
 			t.Fatalf("%s accepted: %q %v", name, id, err)
 		}
@@ -88,7 +114,7 @@ func TestGUIOnlyClaudeAddsSDKSessionsListedInTheZedSidebar(t *testing.T) {
 	if err := os.MkdirAll(project, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for id, entrypoint := range map[string]string{"desktop": "claude-desktop", "vscode": "claude-vscode", "zed": "sdk-ts", "script": "sdk-ts", "archived": "sdk-ts", "terminal": "cli"} {
+	for id, entrypoint := range map[string]string{"desktop": "claude-desktop", "vscode": "claude-vscode", "zed": "sdk-ts", "script": "sdk-ts", "archived": "sdk-ts", "terminal": "cli", "vscode-archived": "claude-vscode"} {
 		u := claudeUserRecord(id, "u", "", "2026-10-24T01:00:00Z", workspace, []any{map[string]any{"type": "text", "text": "Hello"}})
 		u["entrypoint"] = entrypoint
 		a := claudeAssistantRecord(id, "a", "u", "m", "2026-10-24T01:00:01Z", workspace, []any{map[string]any{"type": "text", "text": "Hi"}})
@@ -99,10 +125,27 @@ func TestGUIOnlyClaudeAddsSDKSessionsListedInTheZedSidebar(t *testing.T) {
 		}
 	}
 	zedDB := filepath.Join(root, "zed", "db.sqlite")
+	desktopData := claudeDesktopDataFixture(t, map[string]any{"cliSessionId": "desktop"})
+	// The extension keeps the side-panel sessions archived in VS Code's state.
+	vscodeState := filepath.Join(root, "vscode", "state.vscdb")
+	if err := os.MkdirAll(filepath.Dir(vscodeState), 0700); err != nil {
+		t.Fatal(err)
+	}
+	state, err := sql.Open("sqlite", vscodeState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	if _, err = state.Exec("CREATE TABLE ItemTable(key TEXT UNIQUE, value BLOB)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = state.Exec("INSERT INTO ItemTable VALUES(?, ?)", vscodeClaudeStateKey, `{"hiddenSessionIds":["vscode-archived"]}`); err != nil {
+		t.Fatal(err)
+	}
 	export := func(name string) Result {
 		t.Helper()
 		result, err := Export(context.Background(), Options{
-			ClaudeHome: claudeHome, ZedDB: zedDB, Output: filepath.Join(root, name), AllRepos: true,
+			ClaudeHome: claudeHome, ZedDB: zedDB, ClaudeDesktopData: desktopData, VSCodeState: vscodeState, Output: filepath.Join(root, name), AllRepos: true,
 			Sources: &SourceSelection{ClaudeCode: true}, DeviceID: "device:test", DeviceName: "test",
 			StabilityWindow: -time.Second, GUIOnly: true,
 		})
@@ -111,7 +154,7 @@ func TestGUIOnlyClaudeAddsSDKSessionsListedInTheZedSidebar(t *testing.T) {
 		}
 		return result
 	}
-	if result := export("without-zed"); result.Created != 2 || result.FilteredInternal != 4 {
+	if result := export("without-zed"); result.Created != 2 || result.FilteredInternal != 5 {
 		t.Fatalf("a missing Zed database should leave only Desktop and VS Code sessions: %+v", result)
 	}
 	if err := os.MkdirAll(filepath.Dir(zedDB), 0700); err != nil {
@@ -133,7 +176,46 @@ func TestGUIOnlyClaudeAddsSDKSessionsListedInTheZedSidebar(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if result := export("with-zed"); result.Created != 3 || result.FilteredInternal != 3 {
+	if result := export("with-zed"); result.Created != 3 || result.FilteredInternal != 4 {
 		t.Fatalf("only listed Claude Agent SDK sessions should join Desktop and VS Code sessions: %+v", result)
+	}
+}
+
+func TestClaudeDesktopListDecidesDesktopMembership(t *testing.T) {
+	root := claudeDesktopDataFixture(t,
+		map[string]any{"cliSessionId": "current", "priorCliSessionIds": []string{"before-rewind"}},
+		map[string]any{"cliSessionId": "archived", "isArchived": true},
+		map[string]any{"cliSessionId": ""},
+	)
+	if err := os.WriteFile(filepath.Join(root, "claude_pkg", claudeDesktopSessionsDir, "org", "account", "archived-sessions.idx"), []byte(`{"v":1}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ids, dirs, err := readClaudeDesktopIDs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirs) != 1 || len(ids) != 2 || !ids["current"] || !ids["before-rewind"] {
+		t.Fatalf("listed sessions: %v from %v", ids, dirs)
+	}
+	// Claude Desktop keeps its sessions at the top of an unpackaged data folder.
+	flat := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(flat, claudeDesktopSessionsDir), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(flat, claudeDesktopSessionsDir, "local_x.json"), []byte(`{"cliSessionId":"flat"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if ids, _, err := readClaudeDesktopIDs(flat); err != nil || !ids["flat"] {
+		t.Fatalf("flat layout: %v %v", ids, err)
+	}
+	if _, _, err := readClaudeDesktopIDs(t.TempDir()); err == nil {
+		t.Fatal("a named data folder without sessions was accepted")
+	}
+	broken := claudeDesktopDataFixture(t, map[string]any{"cliSessionId": "x"})
+	if err := os.WriteFile(filepath.Join(broken, "claude_pkg", claudeDesktopSessionsDir, "org", "account", "local_z.json"), []byte("{partial"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readClaudeDesktopIDs(broken); err == nil {
+		t.Fatal("an unreadable session record was accepted")
 	}
 }

@@ -125,15 +125,36 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, err
 		}
 	}
-	var zedClaudeIDs map[string]bool
+	var desktopClaudeIDs map[string]bool
+	if (opts.DesktopOnly || opts.GUIOnly) && selected.ClaudeCode {
+		var err error
+		desktopClaudeIDs, result.ClaudeDesktopSessions, err = readClaudeDesktopIDs(opts.ClaudeDesktopData)
+		if err != nil {
+			return result, err
+		}
+	}
+	var vscodeArchivedIDs map[string]bool
 	if opts.GUIOnly && selected.ClaudeCode {
+		var err error
+		opts.VSCodeState, err = resolveVSCodeState(opts.VSCodeState)
+		if err != nil {
+			return result, err
+		}
+		if vscodeArchivedIDs, err = readVSCodeArchivedIDs(ctx, opts.VSCodeState); err != nil {
+			return result, err
+		}
+	}
+	var zedClaudeIDs, zedOMPIDs map[string]bool
+	if opts.GUIOnly && (selected.ClaudeCode || selected.OMP) {
 		var err error
 		opts.ZedDB, err = resolveZedDB(opts.ZedDB)
 		if err != nil {
 			return result, err
 		}
-		zedClaudeIDs, err = readZedClaudeIDs(ctx, opts.ZedDB)
-		if err != nil {
+		if zedClaudeIDs, err = readZedSidebarIDs(ctx, opts.ZedDB, zedClaudeAgentID); err != nil {
+			return result, err
+		}
+		if zedOMPIDs, err = readZedSidebarIDs(ctx, opts.ZedDB, zedOMPAgentID); err != nil {
 			return result, err
 		}
 	}
@@ -187,7 +208,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		}
 		for _, path := range claudeFiles {
 			if opts.DesktopOnly || opts.GUIOnly {
-				id, scopeErr := claudeDesktopSessionID(path, zedClaudeIDs, opts.GUIOnly)
+				id, scopeErr := claudeDesktopSessionID(path, desktopClaudeIDs, zedClaudeIDs, opts.GUIOnly, vscodeArchivedIDs)
 				if scopeErr != nil {
 					return result, scopeErr
 				}
@@ -219,6 +240,10 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, discoverErr
 		}
 		for _, path := range ompFiles {
+			if opts.GUIOnly && !zedOMPIDs[peekOMPSessionID(path)] {
+				result.FilteredInternal++
+				continue
+			}
 			sources = append(sources, nativeSessionSource{path: path, harness: harnessOMP})
 			paths = append(paths, path)
 		}

@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -128,6 +129,34 @@ func discoverOMPSessionFiles(root string) ([]string, error) {
 	}
 	sort.Strings(paths)
 	return paths, nil
+}
+
+// peekOMPSessionID returns the session ID from an OMP file's header, which may
+// follow a title slot; "" when the file has no readable header.
+func peekOMPSessionID(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for i := 0; i < 2 && scanner.Scan(); i++ {
+		var record struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		}
+		if json.Unmarshal(bytes.TrimSpace(scanner.Bytes()), &record) != nil {
+			return ""
+		}
+		if record.Type == "session" {
+			return record.ID
+		}
+		if record.Type != "title" {
+			return ""
+		}
+	}
+	return ""
 }
 
 func parseOMPSession(raw []byte, home string) (Session, error) {

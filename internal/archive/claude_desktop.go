@@ -10,10 +10,12 @@ import (
 
 // The physical transcript ID owns membership. Copied fork ancestry cannot
 // establish desktop identity for a CLI/SDK child. Unknown entrypoints fail closed.
-// SDK transcripts count only when their ID is in sdkIDs, the GUI sessions a
-// client such as Zed lists in its own thread sidebar. With vscode, the sessions
-// of the VS Code extension's side panel (entrypoint claude-vscode) count too.
-func claudeDesktopSessionID(path string, sdkIDs map[string]bool, vscode bool) (string, error) {
+// Desktop transcripts count only when their ID is in desktopIDs, the sessions
+// Claude Desktop itself lists, and SDK transcripts only when it is in sdkIDs, the
+// GUI sessions a client such as Zed lists in its own thread sidebar. With vscode,
+// the sessions of the VS Code extension's side panel (entrypoint claude-vscode)
+// count too, except those archived there (vscodeArchived).
+func claudeDesktopSessionID(path string, desktopIDs, sdkIDs map[string]bool, vscode bool, vscodeArchived map[string]bool) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -38,7 +40,7 @@ func claudeDesktopSessionID(path string, sdkIDs map[string]bool, vscode bool) (s
 			return "", nil
 		}
 		if record.Entrypoint != "" {
-			if record.Entrypoint != "claude-desktop" && !(vscode && record.Entrypoint == "claude-vscode") &&
+			if !(record.Entrypoint == "claude-desktop" && desktopIDs[id]) && !(vscode && record.Entrypoint == "claude-vscode" && !vscodeArchived[id]) &&
 				!(record.Entrypoint == "sdk-ts" && sdkIDs[id]) {
 				return "", nil
 			}

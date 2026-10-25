@@ -62,8 +62,10 @@ CLI 默认扫描五个受支持 source；任何目录不存在都视为
 `--claude-home`、`CLAUDE_CONFIG_DIR`、`~/.claude`；DeepSeek home 取 `--deepseek-home`、
 `DSH_HOME`、`~/.dsh`。OMP home 取 `--omp-home`、`PI_CODING_AGENT_DIR`、`~/.omp/agent`；
 OMP session 目录优先取 `--omp-session-dir`、`PI_CODING_AGENT_SESSION_DIR`，否则是
-`<omp-home>/sessions`；GUI-only export 改读 GUI 客户端（如经 ACP 启动 OMP 的 Zed）
-的 session 目录：`--omp-gui-session-dir`，否则 `<omp-home>/sessions-gui`，不读 CLI 目录；
+`<omp-home>/sessions`；GUI-only export 改读经 ACP 启动 OMP 的 Zed 的 session 目录：
+`--omp-gui-session-dir`，否则 `<omp-home>/sessions-gui`，不读 CLI 目录，且只收 Zed 线程
+侧栏以 `agent_id='OMP'`、`archived=0` 列出的 session（Zed 删除线程后会留下 OMP 的
+session 文件；侧栏见 6.2）；
 OpenCode 数据库取 `--opencode-db` 或 `$XDG_DATA_HOME/opencode/opencode.db`，缺省数据根为
 `~/.local/share`（Windows 优先 `LOCALAPPDATA`）。`export` 默认处理全部 hosted Git repositories；显式 `--repo` 时只处理
 该仓库。`--include-non-git` 开启后，all scope
@@ -421,13 +423,25 @@ home 的 transcript discovery 只枚举 `<CLAUDE_HOME>/projects/*/*.jsonl` regul
 `teleported-from` 与已知 web/cloud/mobile entrypoint 表示云端来源；
 即使该 JSONL 已复制进 `projects`，也标记 `filtered_internal`。本地 Remote Control 会话
 仍按其本机 transcript 处理。
-GUI-only export 的 Claude 成员是 root transcript 自身记录（不看 fork 祖先）的
-`entrypoint=claude-desktop`，或 `entrypoint=sdk-ts` 且其 ID 出现在 Zed 线程侧栏：
-`--zed-db`（缺省为 Zed stable 的 `db/0-stable/db.sqlite`，macOS 在
+GUI-only export 的 Claude 成员看 root transcript 自身记录（不看 fork 祖先）的 entrypoint：
+`claude-desktop` 且其 ID 出现在 Claude Desktop 的会话列表里；`claude-vscode`（VS Code
+扩展侧栏）且未在扩展里归档；`sdk-ts` 且其 ID 出现在 Zed 线程侧栏。扩展把归档的会话记在
+VS Code 全局状态库（`%APPDATA%`、`~/Library/Application Support` 或 `~/.config` 下的
+`Code/User/globalStorage/state.vscdb`，`--vscode-state` 覆盖）`ItemTable` 中
+`Anthropic.claude-code` 一项的 `hiddenSessionIds`，Remote-WSL 窗口也记在 Windows 这份库里；
+库或该项不存在视为没有归档，无法读取则整个 export 失败。扩展不记录它启动过哪些会话，所以
+VS Code 会话里启动的 CLI 也计入。Desktop 会话里启动的 CLI 会继承 `claude-desktop` entrypoint，所以由 Desktop 自己
+的会话记录决定成员：数据目录（Windows 为 `%LOCALAPPDATA%` 或 `%APPDATA%` 下的
+Claude-Data、Claude-3p 或 Claude，macOS 在 `~/Library/Application Support`，Linux 在
+`~/.config`；`--claude-desktop-data` 覆盖）顶层或下一层的 `claude-code-sessions/**/local_*.json`
+中 `isArchived` 不为真的 `cliSessionId` 与 `priorCliSessionIds`。没有该目录视为未安装 Claude
+Desktop，不收 Desktop 会话；显式给出的目录里没有会话目录、或记录无法解析，则整个 export
+失败；receipt 的 `claude_desktop_sessions` 列出读到的目录。`--desktop-only` 用同一份列表。
+Zed 线程侧栏是 `--zed-db`（缺省为 Zed stable 的 `db/0-stable/db.sqlite`，macOS 在
 `~/Library/Application Support/Zed`，Linux 在 `$XDG_DATA_HOME/zed` 或
 `~/.local/share/zed`，Windows 在 `%LOCALAPPDATA%\Zed`）的 `sidebar_threads` 中
 `agent_id='claude-acp'`、`archived=0` 的 `session_id`。数据库不存在视为未安装 Zed，
-只取 Desktop 会话；存在但无法读取则整个 export 失败，不猜测来源。
+不收 Zed 会话；存在但无法读取则整个 export 失败，不猜测来源。
 官方声明 transcript entry schema 是可随任何 Claude Code release 改变的内部格式，因此该
 adapter 是 shape-validated、fail-closed 的只读兼容层，而不是稳定 native schema 声明。
 
