@@ -147,7 +147,7 @@ func TestOMPRunningTurnKeepsCompletedSelectedBranch(t *testing.T) {
 	}
 }
 
-func TestGUIOnlyExportReadsOnlyTheOMPGUISessionsZedLists(t *testing.T) {
+func TestGUIOnlyExportReadsTheOMPSessionsZedListsOrOMPGUIHosted(t *testing.T) {
 	root := t.TempDir()
 	zedDB := filepath.Join(root, "zed", "db.sqlite")
 	cwd := filepath.Join(root, "work")
@@ -155,11 +155,17 @@ func TestGUIOnlyExportReadsOnlyTheOMPGUISessionsZedLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := filepath.Join(root, "omp")
-	write := func(path string) {
+	// One store holds every OMP session; the header's origin and Zed's sidebar tell GUI conversations apart.
+	write := func(path, id, origin string) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, ompFixture(cwd), 0o600); err != nil {
+		header := fmt.Sprintf(`"id":%q,`, id)
+		if origin != "" {
+			header += `"origin":` + origin + ","
+		}
+		data := strings.Replace(string(ompFixture(cwd)), `"id":"omp-fixture",`, header, 1)
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -174,15 +180,13 @@ func TestGUIOnlyExportReadsOnlyTheOMPGUISessionsZedLists(t *testing.T) {
 		}
 		return result
 	}
-	write(filepath.Join(home, "sessions", "-work", "2026-09-29_cli.jsonl"))
-	if result := export("cli-only"); result.Sources != 0 || len(result.Changes) != 0 {
-		t.Fatalf("GUI-only export must not read CLI sessions: %+v", result)
-	}
-	write(filepath.Join(home, "sessions-gui", "2026-09-30_gui.jsonl"))
-	// Zed keeps an OMP session's file after deleting its thread, so a session
-	// counts only while the Zed sidebar lists it unarchived.
-	if result := export("without-zed"); result.Sources != 0 || result.FilteredInternal != 1 {
-		t.Fatalf("an OMP session Zed does not list was exported: %+v", result)
+	write(filepath.Join(home, "sessions", "-work", "2026-09-29_cli.jsonl"), "cli", `{"mode":"print"}`)
+	write(filepath.Join(home, "sessions", "-work", "2026-09-30_zed.jsonl"), "zed", `{"mode":"acp","client":"zed"}`)
+	write(filepath.Join(home, "sessions", "-work", "2026-09-30_zed", "subagents", "2026-09-30_sub.jsonl"), "sub", `{"mode":"tui","client":"omp-gui"}`)
+	// Zed keeps an OMP session's file after deleting its thread, so a Zed
+	// session counts only while the Zed sidebar lists it unarchived.
+	if result := export("without-zed"); result.Sources != 0 || result.FilteredInternal != 3 {
+		t.Fatalf("an OMP session that neither Zed lists nor omp gui hosted was exported: %+v", result)
 	}
 	if err := os.MkdirAll(filepath.Dir(zedDB), 0o700); err != nil {
 		t.Fatal(err)
@@ -195,16 +199,20 @@ func TestGUIOnlyExportReadsOnlyTheOMPGUISessionsZedLists(t *testing.T) {
 	if _, err = db.Exec("CREATE TABLE sidebar_threads(session_id TEXT, agent_id TEXT, archived INTEGER)"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec("INSERT INTO sidebar_threads VALUES('omp-fixture', 'OMP', 1)"); err != nil {
+	if _, err = db.Exec("INSERT INTO sidebar_threads VALUES('zed', 'OMP', 1)"); err != nil {
 		t.Fatal(err)
 	}
-	if result := export("archived"); result.Sources != 0 || result.FilteredInternal != 1 {
+	if result := export("archived"); result.Sources != 0 || result.FilteredInternal != 3 {
 		t.Fatalf("an OMP session archived in Zed was exported: %+v", result)
 	}
 	if _, err = db.Exec("UPDATE sidebar_threads SET archived = 0"); err != nil {
 		t.Fatal(err)
 	}
-	if result := export("with-gui"); result.Sources != 1 || len(result.Changes) != 1 || result.Changes[0].Harness != harnessOMP {
-		t.Fatalf("GUI-only export should read the GUI sessions Zed lists: %+v", result)
+	if result := export("with-zed"); result.Sources != 1 || len(result.Changes) != 1 || result.Changes[0].Harness != harnessOMP {
+		t.Fatalf("GUI-only export should read the OMP sessions Zed lists: %+v", result)
+	}
+	write(filepath.Join(home, "sessions", "-work", "2026-10-01_gui.jsonl"), "gui", `{"mode":"tui","client":"omp-gui"}`)
+	if result := export("with-gui"); result.Sources != 2 || result.FilteredInternal != 2 {
+		t.Fatalf("GUI-only export should add the OMP sessions omp gui hosted, not their subagents: %+v", result)
 	}
 }

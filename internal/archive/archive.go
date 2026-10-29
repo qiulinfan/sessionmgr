@@ -86,11 +86,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		if err != nil {
 			return result, err
 		}
-		if opts.GUIOnly {
-			opts.OMPSessionDir, err = resolveOMPGUISessionDir(opts.OMPGUISessionDir, opts.OMPHome)
-		} else {
-			opts.OMPSessionDir, err = resolveOMPSessionDir(opts.OMPSessionDir, opts.OMPHome)
-		}
+		opts.OMPSessionDir, err = resolveOMPSessionDir(opts.OMPSessionDir, opts.OMPHome)
 		if err != nil {
 			return result, err
 		}
@@ -240,7 +236,7 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, discoverErr
 		}
 		for _, path := range ompFiles {
-			if opts.GUIOnly && !zedOMPIDs[peekOMPSessionID(path)] {
+			if opts.GUIOnly && !ompGUISession(path, opts.OMPSessionDir, zedOMPIDs) {
 				result.FilteredInternal++
 				continue
 			}

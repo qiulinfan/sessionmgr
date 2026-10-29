@@ -54,15 +54,6 @@ func DefaultOMPHome() (string, error) { return resolveOMPHome("") }
 
 func DefaultOMPSessionDir(home string) (string, error) { return resolveOMPSessionDir("", home) }
 
-// GUI clients launch OMP with `--session-dir <home>/sessions-gui` so their
-// conversations stay apart from CLI automation in <home>/sessions.
-func resolveOMPGUISessionDir(configured, home string) (string, error) {
-	if strings.TrimSpace(configured) == "" {
-		configured = filepath.Join(home, "sessions-gui")
-	}
-	return resolveOMPSessionDir(configured, home)
-}
-
 func ResolveOMPSessionDir(configured, home string) (string, error) {
 	return resolveOMPSessionDir(configured, home)
 }
@@ -131,32 +122,52 @@ func discoverOMPSessionFiles(root string) ([]string, error) {
 	return paths, nil
 }
 
-// peekOMPSessionID returns the session ID from an OMP file's header, which may
-// follow a title slot; "" when the file has no readable header.
-func peekOMPSessionID(path string) string {
+// ompGUIClient is the origin client OMP records in the header of a session
+// that omp gui (its desktop app, browser page or Obsidian sidebar) hosted.
+const ompGUIClient = "omp-gui"
+
+// ompGUISession reports whether a session in root, OMP's session store, is a
+// GUI conversation: Zed's sidebar lists it unarchived (whatever started it),
+// or omp gui started it. Only a project folder's own transcripts count;
+// subagent transcripts nest deeper.
+func ompGUISession(path, root string, zedIDs map[string]bool) bool {
+	id, client := peekOMPHeader(path)
+	if zedIDs[id] {
+		return true
+	}
+	return client == ompGUIClient && filepath.Dir(filepath.Dir(path)) == filepath.Clean(root)
+}
+
+// peekOMPHeader returns the session ID and the origin client from an OMP
+// file's header, which may follow a title slot; empty strings when the file
+// has no readable header.
+func peekOMPHeader(path string) (string, string) {
 	file, err := os.Open(path)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	defer file.Close()
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for i := 0; i < 2 && scanner.Scan(); i++ {
 		var record struct {
-			Type string `json:"type"`
-			ID   string `json:"id"`
+			Type   string `json:"type"`
+			ID     string `json:"id"`
+			Origin struct {
+				Client string `json:"client"`
+			} `json:"origin"`
 		}
 		if json.Unmarshal(bytes.TrimSpace(scanner.Bytes()), &record) != nil {
-			return ""
+			return "", ""
 		}
 		if record.Type == "session" {
-			return record.ID
+			return record.ID, record.Origin.Client
 		}
 		if record.Type != "title" {
-			return ""
+			return "", ""
 		}
 	}
-	return ""
+	return "", ""
 }
 
 func parseOMPSession(raw []byte, home string) (Session, error) {

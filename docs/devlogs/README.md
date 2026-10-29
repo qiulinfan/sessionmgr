@@ -12,6 +12,7 @@ The repository-level requirements are defined in
 
 | Version | Status | Date | Summary |
 | --- | --- | --- | --- |
+| [`v1.9.0`](./v1.9.0.md) | Development | 2026-10-29 | GUI-only OMP export reads the shared session store by header origin and Zed's sidebar |
 | [`v1.8.0`](./v1.8.0.md) | Released | 2026-10-24 | GUI-only export adds VS Code side-panel sessions; each GUI's own list decides membership; `config set-device-name` |
 | [`v1.7.0`](./v1.7.0.md) | Released | 2026-10-24 | GUI-only export adds OMP and Zed Claude Agent sessions; native Windows fixes |
 | [`v1.6.0`](./v1.6.0.md) | Released | 2026-10-19 | `export --within` activity window, 30 days by default |

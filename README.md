@@ -104,9 +104,11 @@ macOS and `~/.config` on Linux (override with `--claude-desktop-data`). No such
 folder means no Desktop session is in scope; the receipt's
 `claude_desktop_sessions` names the folders read. `--desktop-only` uses the same
 list.
-Zed launches OMP over ACP with `omp --session-dir <omp-home>/sessions-gui acp`;
-GUI-only export reads only that directory (override with
-`--omp-gui-session-dir`), never the CLI sessions in `<omp-home>/sessions`.
+OMP keeps every session in `<omp-home>/sessions` and records in each header the
+front end that started it (`origin`). GUI-only export takes the OMP sessions
+Zed's thread sidebar lists, whatever started them, and the ones omp gui hosted
+(origin client `omp-gui`, from its desktop app, browser page or Obsidian
+sidebar), never CLI or automation sessions.
 Claude Agent threads in Zed run the Claude Agent SDK, so their transcripts carry
 the `sdk-ts` entrypoint. Zed deletes a Claude Agent transcript with its thread
 but keeps an OMP session's file, so both count only while Zed's thread sidebar
