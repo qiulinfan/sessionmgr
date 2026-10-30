@@ -105,15 +105,16 @@ folder means no Desktop session is in scope; the receipt's
 `claude_desktop_sessions` names the folders read. `--desktop-only` uses the same
 list.
 OMP keeps every session in `<omp-home>/sessions` and records in each header the
-front end that started it (`origin`). GUI-only export takes the OMP sessions
-Zed's thread sidebar lists, whatever started them, and the ones omp gui hosted
-(origin client `omp-gui`, from its desktop app, browser page or Obsidian
-sidebar), never CLI or automation sessions.
+front end that started it (`origin`). GUI-only export takes the OMP sessions a
+GUI started: origin client `omp-gui` (omp gui's desktop app, browser page and
+its Obsidian and VS Code side bars, which share one server), `zed` or `iina`,
+plus every chat omp gui keeps outside projects in `<omp-home>/sessions-chats`.
+A session the CLI or an automation started stays out, wherever it was continued
+later: the header's origin never changes. Each session is exported once.
 Claude Agent threads in Zed run the Claude Agent SDK, so their transcripts carry
-the `sdk-ts` entrypoint. Zed deletes a Claude Agent transcript with its thread
-but keeps an OMP session's file, so both count only while Zed's thread sidebar
-lists them unarchived, under `claude-acp` or under the custom agent `OMP`
-(default database `~/Library/Application Support/Zed/db/0-stable/db.sqlite` on
+the `sdk-ts` entrypoint. Zed deletes a Claude Agent transcript with its thread,
+so they count only while Zed's thread sidebar lists them unarchived under
+`claude-acp` (default database `~/Library/Application Support/Zed/db/0-stable/db.sqlite` on
 macOS or `%LOCALAPPDATA%\Zed\db\0-stable\db.sqlite` on Windows, override with
 `--zed-db`). Other SDK sessions stay out. A root `claude-vscode` transcript
 counts unless the extension archived it: VS Code's global state database

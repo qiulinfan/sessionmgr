@@ -2,10 +2,10 @@ package archive
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -147,15 +147,14 @@ func TestOMPRunningTurnKeepsCompletedSelectedBranch(t *testing.T) {
 	}
 }
 
-func TestGUIOnlyExportReadsTheOMPSessionsZedListsOrOMPGUIHosted(t *testing.T) {
+func TestGUIOnlyExportReadsTheOMPSessionsAGUIStarted(t *testing.T) {
 	root := t.TempDir()
-	zedDB := filepath.Join(root, "zed", "db.sqlite")
 	cwd := filepath.Join(root, "work")
 	if err := os.MkdirAll(cwd, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	home := filepath.Join(root, "omp")
-	// One store holds every OMP session; the header's origin and Zed's sidebar tell GUI conversations apart.
+	// One store holds every OMP session; the header's origin tells the ones a GUI started.
 	write := func(path, id, origin string) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
@@ -169,50 +168,32 @@ func TestGUIOnlyExportReadsTheOMPSessionsZedListsOrOMPGUIHosted(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	export := func(name string) Result {
-		result, err := Export(context.Background(), Options{
-			OMPHome: home, ZedDB: zedDB, Output: filepath.Join(root, name), AllRepos: true, IncludeNonGit: true,
-			Sources: &SourceSelection{OMP: true}, DeviceID: "device:test", DeviceName: "test",
-			StabilityWindow: -time.Second, GUIOnly: true,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return result
-	}
-	write(filepath.Join(home, "sessions", "-work", "2026-09-29_cli.jsonl"), "cli", `{"mode":"print"}`)
-	write(filepath.Join(home, "sessions", "-work", "2026-09-30_zed.jsonl"), "zed", `{"mode":"acp","client":"zed"}`)
-	write(filepath.Join(home, "sessions", "-work", "2026-09-30_zed", "subagents", "2026-09-30_sub.jsonl"), "sub", `{"mode":"tui","client":"omp-gui"}`)
-	// Zed keeps an OMP session's file after deleting its thread, so a Zed
-	// session counts only while the Zed sidebar lists it unarchived.
-	if result := export("without-zed"); result.Sources != 0 || result.FilteredInternal != 3 {
-		t.Fatalf("an OMP session that neither Zed lists nor omp gui hosted was exported: %+v", result)
-	}
-	if err := os.MkdirAll(filepath.Dir(zedDB), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", zedDB)
+	project := filepath.Join(home, "sessions", "-work")
+	write(filepath.Join(project, "2026-09-29_cli.jsonl"), "cli", `{"mode":"print"}`)
+	// A CLI session stays out even after a GUI took it up: its origin is the CLI's.
+	write(filepath.Join(project, "2026-09-29_tui.jsonl"), "tui", `{"mode":"tui"}`)
+	write(filepath.Join(project, "2026-09-29_probe.jsonl"), "probe", `{"mode":"acp","client":"probe"}`)
+	write(filepath.Join(project, "2026-09-30_zed.jsonl"), "zed", `{"mode":"acp","client":"zed"}`)
+	write(filepath.Join(project, "2026-09-30_zed", "subagents", "2026-09-30_sub.jsonl"), "sub", `{"mode":"tui","client":"omp-gui"}`)
+	write(filepath.Join(project, "2026-09-30_iina.jsonl"), "iina", `{"mode":"acp","client":"iina"}`)
+	write(filepath.Join(project, "2026-10-01_gui.jsonl"), "gui", `{"mode":"tui","client":"omp-gui"}`)
+	// omp gui's chats live in their own store, written by nothing else; older ones carry no origin.
+	write(filepath.Join(home, "sessions-chats", "2026-10-02_chat.jsonl"), "chat", "")
+
+	result, err := Export(context.Background(), Options{
+		OMPHome: home, Output: filepath.Join(root, "out"), AllRepos: true, IncludeNonGit: true,
+		Sources: &SourceSelection{OMP: true}, DeviceID: "device:test", DeviceName: "test",
+		StabilityWindow: -time.Second, GUIOnly: true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	if _, err = db.Exec("CREATE TABLE sidebar_threads(session_id TEXT, agent_id TEXT, archived INTEGER)"); err != nil {
-		t.Fatal(err)
+	exported := make([]string, 0, len(result.Changes))
+	for _, change := range result.Changes {
+		exported = append(exported, change.SessionID)
 	}
-	if _, err = db.Exec("INSERT INTO sidebar_threads VALUES('zed', 'OMP', 1)"); err != nil {
-		t.Fatal(err)
-	}
-	if result := export("archived"); result.Sources != 0 || result.FilteredInternal != 3 {
-		t.Fatalf("an OMP session archived in Zed was exported: %+v", result)
-	}
-	if _, err = db.Exec("UPDATE sidebar_threads SET archived = 0"); err != nil {
-		t.Fatal(err)
-	}
-	if result := export("with-zed"); result.Sources != 1 || len(result.Changes) != 1 || result.Changes[0].Harness != harnessOMP {
-		t.Fatalf("GUI-only export should read the OMP sessions Zed lists: %+v", result)
-	}
-	write(filepath.Join(home, "sessions", "-work", "2026-10-01_gui.jsonl"), "gui", `{"mode":"tui","client":"omp-gui"}`)
-	if result := export("with-gui"); result.Sources != 2 || result.FilteredInternal != 2 {
-		t.Fatalf("GUI-only export should add the OMP sessions omp gui hosted, not their subagents: %+v", result)
+	sort.Strings(exported)
+	if want := []string{"chat", "gui", "iina", "zed"}; strings.Join(exported, ",") != strings.Join(want, ",") || result.FilteredInternal != 4 {
+		t.Fatalf("GUI-only export should read the sessions a GUI started and omp gui's chats, not CLI, other ACP clients or subagents: exported %v, %+v", exported, result)
 	}
 }

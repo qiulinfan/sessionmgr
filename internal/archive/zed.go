@@ -11,12 +11,8 @@ import (
 )
 
 // zedClaudeAgentID is the agent_id Zed records for threads of its Claude Agent
-// (the registry agent claude-acp, which runs the Claude Agent SDK); zedOMPAgentID
-// is the name of the custom agent server that starts OMP over ACP.
-const (
-	zedClaudeAgentID = "claude-acp"
-	zedOMPAgentID    = "OMP"
-)
+// (the registry agent claude-acp, which runs the Claude Agent SDK).
+const zedClaudeAgentID = "claude-acp"
 
 func resolveZedDB(value string) (string, error) {
 	if value != "" {

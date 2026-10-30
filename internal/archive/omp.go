@@ -122,20 +122,27 @@ func discoverOMPSessionFiles(root string) ([]string, error) {
 	return paths, nil
 }
 
-// ompGUIClient is the origin client OMP records in the header of a session
-// that omp gui (its desktop app, browser page or Obsidian sidebar) hosted.
-const ompGUIClient = "omp-gui"
+// ompGUIClients are the origin clients OMP records in the header of a session
+// a GUI started: omp gui (its desktop app, browser page and the Obsidian and
+// VS Code side bars, which share one server) and the ACP clients Zed and IINA.
+var ompGUIClients = map[string]bool{"omp-gui": true, "zed": true, "iina": true}
 
-// ompGUISession reports whether a session in root, OMP's session store, is a
-// GUI conversation: Zed's sidebar lists it unarchived (whatever started it),
-// or omp gui started it. Only a project folder's own transcripts count;
-// subagent transcripts nest deeper.
-func ompGUISession(path, root string, zedIDs map[string]bool) bool {
-	id, client := peekOMPHeader(path)
-	if zedIDs[id] {
+// ompChatSessionDir is where omp gui keeps its chats, the sessions it starts
+// outside any project. Only omp gui writes there.
+func ompChatSessionDir(home string) string { return filepath.Join(home, "sessions-chats") }
+
+// ompGUISession reports whether a session is a GUI conversation. In root,
+// OMP's session store, that is a project folder's own session that a GUI
+// started: one the CLI started stays out wherever it was continued later,
+// and the header's origin never changes. Every session of chats, omp gui's
+// chat store, counts. Subagent transcripts nest deeper and never count.
+func ompGUISession(path, root, chats string) bool {
+	parent := filepath.Dir(path)
+	if parent == filepath.Clean(chats) {
 		return true
 	}
-	return client == ompGUIClient && filepath.Dir(filepath.Dir(path)) == filepath.Clean(root)
+	_, client := peekOMPHeader(path)
+	return ompGUIClients[client] && filepath.Dir(parent) == filepath.Clean(root)
 }
 
 // peekOMPHeader returns the session ID and the origin client from an OMP

@@ -140,17 +140,14 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 			return result, err
 		}
 	}
-	var zedClaudeIDs, zedOMPIDs map[string]bool
-	if opts.GUIOnly && (selected.ClaudeCode || selected.OMP) {
+	var zedClaudeIDs map[string]bool
+	if opts.GUIOnly && selected.ClaudeCode {
 		var err error
 		opts.ZedDB, err = resolveZedDB(opts.ZedDB)
 		if err != nil {
 			return result, err
 		}
 		if zedClaudeIDs, err = readZedSidebarIDs(ctx, opts.ZedDB, zedClaudeAgentID); err != nil {
-			return result, err
-		}
-		if zedOMPIDs, err = readZedSidebarIDs(ctx, opts.ZedDB, zedOMPAgentID); err != nil {
 			return result, err
 		}
 	}
@@ -235,8 +232,13 @@ func Export(ctx context.Context, opts Options) (Result, error) {
 		if discoverErr != nil {
 			return result, discoverErr
 		}
-		for _, path := range ompFiles {
-			if opts.GUIOnly && !ompGUISession(path, opts.OMPSessionDir, zedOMPIDs) {
+		chatDir := ompChatSessionDir(opts.OMPHome)
+		chatFiles, discoverErr := discoverOMPSessionFiles(chatDir)
+		if discoverErr != nil {
+			return result, discoverErr
+		}
+		for _, path := range append(ompFiles, chatFiles...) {
+			if opts.GUIOnly && !ompGUISession(path, opts.OMPSessionDir, chatDir) {
 				result.FilteredInternal++
 				continue
 			}

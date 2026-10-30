@@ -75,8 +75,9 @@ hosted Git remote key | device-local directory key
   entrypoint 的本地副本也必须排除，只导出本机发起的会话；GUI-only 时只收 Claude Desktop
   会话，以及 Zed 线程侧栏登记为 Claude Agent（`claude-acp`）且未归档的 SDK 会话；
 - OMP 来源扫描默认 agent home 或显式/环境变量指定的 session 目录下的 `**/*.jsonl`，
-  只提取可验证的当前分支；GUI-only 时只收 Zed 侧栏列出的会话和会话头 origin
-  client 为 `omp-gui` 的会话，CLI 自动化会话不进入 GUI 导出；
+  只提取可验证的当前分支；GUI-only 时只收会话头 origin client 为 `omp-gui`、`zed`
+  或 `iina` 的会话（由 GUI 开启），以及 omp gui 的项目外聊天 `<omp-home>/sessions-chats`；
+  CLI 与自动化开启的会话即使后来在 GUI 里继续，也不进入 GUI 导出；
 - OpenCode 来源只读其 SQLite 会话库的 session/message/part 表，不归档数据库本体；
 - 五个 harness source 都是可选的。缺少任一原生目录必须安静视为零 source；GUI 允许五个
   滑动开关全部关闭，export 返回空 changeset 而不是配置错误；
